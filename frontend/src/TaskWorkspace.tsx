@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import TaskCreator from './TaskCreator'
 import TaskEventTimeline from './TaskEventTimeline'
+import WorkspaceDetails from './WorkspaceDetails'
 import type { Task } from './task'
 
 type TaskListResponse = {
@@ -175,6 +176,7 @@ export default function TaskWorkspace() {
                     </button>
                   )}
                 </div>
+                {task.status === 'QUEUED' && <WorkspaceDetails task={task} />}
                 <TaskEventTimeline task={task} />
               </li>
             ))}

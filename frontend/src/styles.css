@@ -188,6 +188,7 @@ h1 {
 }
 
 .task-creator select,
+.task-creator input,
 .task-creator textarea {
   width: 100%;
   border: 1px solid #bdc8c2;
@@ -201,6 +202,11 @@ h1 {
   padding: 0 12px;
 }
 
+.task-creator input {
+  height: 46px;
+  padding: 0 12px;
+}
+
 .task-creator textarea {
   min-height: 112px;
   padding: 12px;
@@ -209,9 +215,16 @@ h1 {
 }
 
 .task-creator select:focus,
+.task-creator input:focus,
 .task-creator textarea:focus {
   outline: 3px solid rgb(40 122 91 / 18%);
   border-color: #287a5b;
+}
+
+.task-creator-fixed-value {
+  margin: 8px 0 0;
+  color: #66706b;
+  font-size: 0.9rem;
 }
 
 .task-creator button {
@@ -318,7 +331,10 @@ h1 {
 }
 
 .task-list-footer button,
-.task-event-timeline > button {
+.task-event-timeline > button,
+.workspace-details > button,
+.workspace-registration > button,
+.workspace-details [role='group'] > button {
   padding: 7px 12px;
   border: 1px solid #287a5b;
   border-radius: 999px;
@@ -330,27 +346,78 @@ h1 {
 }
 
 .task-list-footer button:hover:not(:disabled),
-.task-event-timeline > button:hover:not(:disabled) {
+.task-event-timeline > button:hover:not(:disabled),
+.workspace-details > button:hover:not(:disabled),
+.workspace-registration > button:hover:not(:disabled),
+.workspace-details [role='group'] > button:hover:not(:disabled) {
   color: #fff;
   background: #1f6f52;
 }
 
 .task-list-footer button:focus-visible,
-.task-event-timeline > button:focus-visible {
+.task-event-timeline > button:focus-visible,
+.workspace-details > button:focus-visible,
+.workspace-registration > button:focus-visible,
+.workspace-details [role='group'] > button:focus-visible {
   outline: 3px solid rgb(40 122 91 / 22%);
   outline-offset: 2px;
 }
 
 .task-list-footer button:disabled,
-.task-event-timeline > button:disabled {
+.task-event-timeline > button:disabled,
+.workspace-details > button:disabled,
+.workspace-registration > button:disabled,
+.workspace-details [role='group'] > button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
 
-.task-event-timeline {
+.task-event-timeline,
+.workspace-details {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid rgb(24 32 39 / 9%);
+}
+
+.workspace-registration {
+  margin-top: 12px;
+}
+
+.workspace-registration > p {
+  margin: 0 0 4px;
+  color: #66706b;
+  font-size: 0.82rem;
+}
+
+.workspace-registration > button {
+  margin-top: 4px;
+}
+
+.workspace-details [role='group'] > button {
+  margin-top: 10px;
+}
+
+.workspace-details dl {
+  display: grid;
+  gap: 9px;
+  margin: 12px 0 0;
+}
+
+.workspace-details dl div {
+  min-width: 0;
+}
+
+.workspace-details dt {
+  color: #77817c;
+  font-size: 0.72rem;
+}
+
+.workspace-details dd {
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  color: #39423e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
 }
 
 .task-event-timeline ol {

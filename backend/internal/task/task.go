@@ -21,15 +21,23 @@ var (
 	ErrInvalidTransition   = errors.New("task status transition is not allowed")
 )
 
+type RepositoryReference struct {
+	Provider     string `json:"provider"`
+	RepositoryID string `json:"repositoryId"`
+	BaseSHA      string `json:"baseSha"`
+	HeadSHA      string `json:"headSha"`
+}
+
 type Task struct {
-	ID             string    `json:"id"`
-	TenantID       string    `json:"tenantId"`
-	IdempotencyKey string    `json:"idempotencyKey"`
-	Type           string    `json:"type"`
-	Goal           string    `json:"goal"`
-	Status         Status    `json:"status"`
-	Version        uint64    `json:"version"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             string              `json:"id"`
+	TenantID       string              `json:"tenantId"`
+	IdempotencyKey string              `json:"idempotencyKey"`
+	Type           string              `json:"type"`
+	Goal           string              `json:"goal"`
+	Repository     RepositoryReference `json:"repository"`
+	Status         Status              `json:"status"`
+	Version        uint64              `json:"version"`
+	CreatedAt      time.Time           `json:"createdAt"`
 }
 
 type EventType string
@@ -63,6 +71,7 @@ type CreateInput struct {
 	IdempotencyKey string
 	Type           string
 	Goal           string
+	Repository     RepositoryReference
 }
 
 type CreateResult struct {
@@ -118,7 +127,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}
 	if taskID, ok := s.idempotency[scope]; ok {
 		existing := s.tasks[taskID]
-		if existing.Type != input.Type || existing.Goal != input.Goal {
+		if existing.Type != input.Type || existing.Goal != input.Goal || existing.Repository != input.Repository {
 			return CreateResult{}, ErrIdempotencyConflict
 		}
 		return CreateResult{Task: existing}, nil
@@ -132,6 +141,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 		IdempotencyKey: input.IdempotencyKey,
 		Type:           input.Type,
 		Goal:           input.Goal,
+		Repository:     input.Repository,
 		Status:         StatusCreated,
 		Version:        1,
 		CreatedAt:      now,

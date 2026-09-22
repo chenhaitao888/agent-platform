@@ -7,6 +7,21 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+function fillValidTaskForm() {
+  fireEvent.change(screen.getByLabelText('任务目标'), {
+    target: { value: 'Review pull request 42' },
+  })
+  fireEvent.change(screen.getByLabelText('仓库 ID'), {
+    target: { value: 'project-7' },
+  })
+  fireEvent.change(screen.getByLabelText('Base SHA'), {
+    target: { value: '1111111111111111111111111111111111111111' },
+  })
+  fireEvent.change(screen.getByLabelText('Head SHA'), {
+    target: { value: '2222222222222222222222222222222222222222' },
+  })
+}
+
 describe('TaskCreator', () => {
   it('creates a task and shows the server result', async () => {
     vi.stubGlobal('crypto', {
@@ -24,6 +39,12 @@ describe('TaskCreator', () => {
             'task-create:00000000-0000-4000-8000-000000000002',
           type: 'PR_REVIEW',
           goal: 'Review pull request 42',
+          repository: {
+            provider: 'gitlab',
+            repositoryId: 'project-7',
+            baseSha: '1111111111111111111111111111111111111111',
+            headSha: '2222222222222222222222222222222222222222',
+          },
           status: 'CREATED',
           version: 1,
           createdAt: '2026-09-21T10:00:00Z',
@@ -37,9 +58,7 @@ describe('TaskCreator', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(<TaskCreator />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     expect(await screen.findByText('task-1')).toBeInTheDocument()
@@ -54,6 +73,12 @@ describe('TaskCreator', () => {
         tenantId: 'tenant-local',
         type: 'PR_REVIEW',
         goal: 'Review pull request 42',
+        repository: {
+          provider: 'gitlab',
+          repositoryId: 'project-7',
+          baseSha: '1111111111111111111111111111111111111111',
+          headSha: '2222222222222222222222222222222222222222',
+        },
       }),
     })
   })
@@ -62,9 +87,7 @@ describe('TaskCreator', () => {
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})))
 
     render(<TaskCreator />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     expect(screen.getByRole('button', { name: '创建中…' })).toBeDisabled()
@@ -88,9 +111,7 @@ describe('TaskCreator', () => {
     )
 
     render(<TaskCreator />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -103,9 +124,7 @@ describe('TaskCreator', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
 
     render(<TaskCreator />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(

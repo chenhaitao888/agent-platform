@@ -14,6 +14,12 @@ const task: Task = {
   idempotencyKey: 'create-task-1',
   type: 'PR_REVIEW',
   goal: 'Review pull request 42',
+  repository: {
+    provider: 'gitlab',
+    repositoryId: 'project-7',
+    baseSha: '1111111111111111111111111111111111111111',
+    headSha: '2222222222222222222222222222222222222222',
+  },
   status: 'QUEUED',
   version: 2,
   createdAt: '2026-09-22T01:00:00Z',

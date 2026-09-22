@@ -1,12 +1,25 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"agent-platform/backend/internal/repository"
+	"agent-platform/backend/internal/task"
+	"agent-platform/backend/internal/workspace"
 )
+
+const testRepositoryJSON = `"repository":{
+	"provider":"gitlab",
+	"repositoryId":"project-7",
+	"baseSha":"1111111111111111111111111111111111111111",
+	"headSha":"2222222222222222222222222222222222222222"
+}`
 
 func TestHealthz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -54,7 +67,19 @@ func TestCreateTask(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
-		strings.NewReader(`{"requestId":"req-create-1","idempotencyKey":"review-42","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request 42"}`),
+		strings.NewReader(`{
+			"requestId":"req-create-1",
+			"idempotencyKey":"review-42",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			"repository":{
+				"provider":"gitlab",
+				"repositoryId":"project-7",
+				"baseSha":"1111111111111111111111111111111111111111",
+				"headSha":"2222222222222222222222222222222222222222"
+			}
+		}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -74,6 +99,12 @@ func TestCreateTask(t *testing.T) {
 		Status         string `json:"status"`
 		Version        uint64 `json:"version"`
 		CreatedAt      string `json:"createdAt"`
+		Repository     struct {
+			Provider     string `json:"provider"`
+			RepositoryID string `json:"repositoryId"`
+			BaseSHA      string `json:"baseSha"`
+			HeadSHA      string `json:"headSha"`
+		} `json:"repository"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -103,6 +134,12 @@ func TestCreateTask(t *testing.T) {
 	if body.Version != 1 {
 		t.Errorf("expected version 1, got %d", body.Version)
 	}
+	if body.Repository.Provider != "gitlab" || body.Repository.RepositoryID != "project-7" {
+		t.Errorf("expected gitlab/project-7 repository, got %#v", body.Repository)
+	}
+	if body.Repository.BaseSHA != "1111111111111111111111111111111111111111" || body.Repository.HeadSHA != "2222222222222222222222222222222222222222" {
+		t.Errorf("expected immutable base/head SHA, got %#v", body.Repository)
+	}
 	if requestID := response.Header().Get("X-Request-ID"); requestID != "req-create-1" {
 		t.Errorf("expected X-Request-ID req-create-1, got %q", requestID)
 	}
@@ -120,7 +157,8 @@ func TestCreateTaskReplaysTheSameIdempotentRequest(t *testing.T) {
 		"idempotencyKey":"review:project-7:mr-42:head-a13f",
 		"tenantId":"tenant-a",
 		"type":"PR_REVIEW",
-		"goal":"Review pull request 42"
+		"goal":"Review pull request 42",
+		` + testRepositoryJSON + `
 	}`
 
 	firstRequest := httptest.NewRequest(
@@ -178,7 +216,8 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentContent(t *testing.T) {
 			"idempotencyKey":"review:project-7:mr-42:head-a13f",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	firstResponse := httptest.NewRecorder()
@@ -195,7 +234,8 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentContent(t *testing.T) {
 			"idempotencyKey":"review:project-7:mr-42:head-a13f",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review a different pull request"
+			"goal":"Review a different pull request",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	conflictingResponse := httptest.NewRecorder()
@@ -220,6 +260,59 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentContent(t *testing.T) {
 	}
 }
 
+func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentRepositoryReference(t *testing.T) {
+	handler := NewHandler()
+	firstRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-repository-conflict-1",
+			"idempotencyKey":"repository-conflict",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, firstRequest)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("expected first status %d, got %d", http.StatusCreated, firstResponse.Code)
+	}
+
+	conflictingRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-repository-conflict-2",
+			"idempotencyKey":"repository-conflict",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			"repository":{
+				"provider":"gitlab",
+				"repositoryId":"project-7",
+				"baseSha":"1111111111111111111111111111111111111111",
+				"headSha":"3333333333333333333333333333333333333333"
+			}
+		}`),
+	)
+	conflictingResponse := httptest.NewRecorder()
+	handler.ServeHTTP(conflictingResponse, conflictingRequest)
+
+	if conflictingResponse.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, conflictingResponse.Code)
+	}
+
+	var body errorResponse
+	if err := json.NewDecoder(conflictingResponse.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "idempotency_conflict" {
+		t.Errorf("expected idempotency_conflict, got %q", body.Error)
+	}
+}
+
 func TestCreateTaskScopesIdempotencyKeysByTenant(t *testing.T) {
 	handler := NewHandler()
 	firstRequest := httptest.NewRequest(
@@ -230,7 +323,8 @@ func TestCreateTaskScopesIdempotencyKeysByTenant(t *testing.T) {
 			"idempotencyKey":"review:project-7:mr-42:head-a13f",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	firstResponse := httptest.NewRecorder()
@@ -247,7 +341,8 @@ func TestCreateTaskScopesIdempotencyKeysByTenant(t *testing.T) {
 			"idempotencyKey":"review:project-7:mr-42:head-a13f",
 			"tenantId":"tenant-b",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	secondResponse := httptest.NewRecorder()
@@ -280,7 +375,7 @@ func TestGetTask(t *testing.T) {
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
-		strings.NewReader(`{"requestId":"req-get-1","idempotencyKey":"bug-fix-checkout","tenantId":"tenant-a","type":"BUG_FIX","goal":"Fix checkout timeout"}`),
+		strings.NewReader(`{"requestId":"req-get-1","idempotencyKey":"bug-fix-checkout","tenantId":"tenant-a","type":"BUG_FIX","goal":"Fix checkout timeout",`+testRepositoryJSON+`}`),
 	)
 	createResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createResponse, createRequest)
@@ -334,7 +429,8 @@ func TestUpdateTaskQueuesACreatedTask(t *testing.T) {
 			"idempotencyKey":"create-for-queue",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	createResponse := httptest.NewRecorder()
@@ -399,7 +495,8 @@ func TestUpdateTaskRejectsAStaleVersion(t *testing.T) {
 			"idempotencyKey":"create-stale",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -463,7 +560,8 @@ func TestUpdateTaskReplaysTheSameTransition(t *testing.T) {
 			"idempotencyKey":"create-replay",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -529,7 +627,8 @@ func TestUpdateTaskRejectsANewTransitionFromQueuedToQueued(t *testing.T) {
 			"idempotencyKey":"create-invalid-transition",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -590,7 +689,8 @@ func TestUpdateTaskRejectsReusingAKeyForDifferentTransitionContent(t *testing.T)
 			"idempotencyKey":"create-update-conflict",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -644,8 +744,8 @@ func TestUpdateTaskRejectsReusingAKeyForDifferentTransitionContent(t *testing.T)
 func TestListTasksReturnsNewestFirst(t *testing.T) {
 	handler := NewHandler()
 	requestBodies := []string{
-		`{"requestId":"req-list-1","idempotencyKey":"review-42","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request 42"}`,
-		`{"requestId":"req-list-2","idempotencyKey":"bug-fix-checkout","tenantId":"tenant-a","type":"BUG_FIX","goal":"Fix checkout timeout"}`,
+		`{"requestId":"req-list-1","idempotencyKey":"review-42","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request 42",` + testRepositoryJSON + `}`,
+		`{"requestId":"req-list-2","idempotencyKey":"bug-fix-checkout","tenantId":"tenant-a","type":"BUG_FIX","goal":"Fix checkout timeout",` + testRepositoryJSON + `}`,
 	}
 	for _, body := range requestBodies {
 		request := httptest.NewRequest(
@@ -744,6 +844,105 @@ func TestCreateTaskRejectsBlankRequiredFields(t *testing.T) {
 	}
 	if body.Message != "type and goal are required" {
 		t.Errorf("unexpected error message %q", body.Message)
+	}
+}
+
+func TestCreateTaskRequiresRepositoryReference(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-missing-repository",
+			"idempotencyKey":"missing-repository",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42"
+		}`),
+	)
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+	}
+
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "validation_error" || body.Message != "repository provider, repositoryId, baseSha and headSha are required" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func TestCreateTaskRejectsAnUnsupportedRepositoryProvider(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-unsupported-provider",
+			"idempotencyKey":"unsupported-provider",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			"repository":{
+				"provider":"github",
+				"repositoryId":"project-7",
+				"baseSha":"1111111111111111111111111111111111111111",
+				"headSha":"2222222222222222222222222222222222222222"
+			}
+		}`),
+	)
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+	}
+
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "validation_error" || body.Message != "repository provider must be gitlab" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func TestCreateTaskRejectsBranchNamesAsRepositorySHA(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-branch-name",
+			"idempotencyKey":"branch-name",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			"repository":{
+				"provider":"gitlab",
+				"repositoryId":"project-7",
+				"baseSha":"main",
+				"headSha":"2222222222222222222222222222222222222222"
+			}
+		}`),
+	)
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
+	}
+
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "validation_error" || body.Message != "baseSha and headSha must be 40 or 64 hexadecimal characters" {
+		t.Errorf("unexpected error response: %#v", body)
 	}
 }
 
@@ -847,7 +1046,8 @@ func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
 			"idempotencyKey":"create-event",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	createResponse := httptest.NewRecorder()
@@ -920,7 +1120,8 @@ func TestListTaskEventsReturnsTheQueuedEventAfterCreation(t *testing.T) {
 			"idempotencyKey":"create-before-queue-event",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -993,7 +1194,8 @@ func TestListTaskEventsDoesNotDuplicateAnIdempotentTransition(t *testing.T) {
 			"idempotencyKey":"create-before-event-replay",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -1046,7 +1248,8 @@ func TestListTaskEventsHidesTasksFromOtherTenants(t *testing.T) {
 			"idempotencyKey":"create-private-events",
 			"tenantId":"tenant-a",
 			"type":"PR_REVIEW",
-			"goal":"Review pull request 42"
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
 		}`),
 	)
 	handler.ServeHTTP(httptest.NewRecorder(), createRequest)
@@ -1093,4 +1296,677 @@ func TestListTaskEventsRequiresTenantID(t *testing.T) {
 	if body.Error != "validation_error" || body.Message != "tenantId is required" {
 		t.Errorf("unexpected error response: %#v", body)
 	}
+}
+
+func TestCreateWorkspaceForQueuedTask(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createTaskRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-create-task-for-workspace",
+			"idempotencyKey":"create-task-for-workspace",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), createTaskRequest)
+
+	queueTaskRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/tasks/task-1",
+		strings.NewReader(`{
+			"requestId":"req-queue-task-for-workspace",
+			"idempotencyKey":"queue-task-for-workspace",
+			"tenantId":"tenant-a",
+			"expectedVersion":1,
+			"status":"QUEUED"
+		}`),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), queueTaskRequest)
+
+	workspaceRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-create-workspace",
+			"idempotencyKey":"workspace:task-1",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	workspaceResponse := httptest.NewRecorder()
+	handler.ServeHTTP(workspaceResponse, workspaceRequest)
+
+	if workspaceResponse.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, workspaceResponse.Code)
+	}
+	if location := workspaceResponse.Header().Get("Location"); location != "/api/v1/tasks/task-1/workspace" {
+		t.Fatalf("unexpected Location header %q", location)
+	}
+	if requestID := workspaceResponse.Header().Get("X-Request-ID"); requestID != "req-create-workspace" {
+		t.Fatalf("expected request ID req-create-workspace, got %q", requestID)
+	}
+
+	var created struct {
+		ID         string `json:"id"`
+		TenantID   string `json:"tenantId"`
+		TaskID     string `json:"taskId"`
+		Repository struct {
+			Provider     string `json:"provider"`
+			RepositoryID string `json:"repositoryId"`
+		} `json:"repository"`
+		BaseSHA   string `json:"baseSha"`
+		HeadSHA   string `json:"headSha"`
+		State     string `json:"state"`
+		Version   uint64 `json:"version"`
+		CreatedAt string `json:"createdAt"`
+	}
+	if err := json.NewDecoder(workspaceResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode workspace response: %v", err)
+	}
+	if created.ID != "workspace-1" || created.TenantID != "tenant-a" || created.TaskID != "task-1" {
+		t.Errorf("unexpected workspace identity: %#v", created)
+	}
+	if created.Repository.Provider != "gitlab" || created.Repository.RepositoryID != "project-7" {
+		t.Errorf("unexpected repository: %#v", created.Repository)
+	}
+	if created.BaseSHA != "1111111111111111111111111111111111111111" || created.HeadSHA != "2222222222222222222222222222222222222222" {
+		t.Errorf("unexpected immutable refs: %#v", created)
+	}
+	if created.State != "REGISTERED" || created.Version != 1 || created.CreatedAt == "" {
+		t.Errorf("unexpected workspace state: %#v", created)
+	}
+}
+
+func TestPrepareRegisteredWorkspace(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	handler, err := NewHandlerWithWorkspacePreparer(
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
+		workspaceRoot,
+	)
+	if err != nil {
+		t.Fatalf("create handler: %v", err)
+	}
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace/prepare",
+		strings.NewReader(`{
+			"requestId":"req-prepare-workspace-1",
+			"idempotencyKey":"prepare-workspace-1",
+			"tenantId":"tenant-a",
+			"expectedVersion":1
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
+	}
+	if requestID := response.Header().Get("X-Request-ID"); requestID != "req-prepare-workspace-1" {
+		t.Fatalf("expected request ID req-prepare-workspace-1, got %q", requestID)
+	}
+	var prepared struct {
+		State   string `json:"state"`
+		Version uint64 `json:"version"`
+		Path    string `json:"path"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&prepared); err != nil {
+		t.Fatalf("decode prepared Workspace: %v", err)
+	}
+	if prepared.State != "READY" || prepared.Version != 3 {
+		t.Fatalf("expected READY version 3, got %#v", prepared)
+	}
+	if !strings.HasSuffix(prepared.Path, "/workspace-1/worktree") {
+		t.Fatalf("expected generated worktree path, got %q", prepared.Path)
+	}
+}
+
+func TestPrepareWorkspaceFailureReturnsAStableErrorAndRestoresRegistration(t *testing.T) {
+	handler, err := NewHandlerWithWorkspacePreparer(
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
+			return errors.New("Git output that must stay internal")
+		}),
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create handler: %v", err)
+	}
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace/prepare",
+		strings.NewReader(`{
+			"requestId":"req-prepare-workspace-failure",
+			"idempotencyKey":"prepare-workspace-failure",
+			"tenantId":"tenant-a",
+			"expectedVersion":1
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode preparation error: %v", err)
+	}
+	if body.Error != "workspace_preparation_failed" || body.Message != "workspace preparation failed" {
+		t.Fatalf("unexpected preparation error: %#v", body)
+	}
+	getRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/tasks/task-1/workspace?tenantId=tenant-a",
+		nil,
+	)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, getRequest)
+	var restored struct {
+		State   string `json:"state"`
+		Version uint64 `json:"version"`
+		Path    string `json:"path"`
+	}
+	if err := json.NewDecoder(getResponse.Body).Decode(&restored); err != nil {
+		t.Fatalf("decode restored Workspace: %v", err)
+	}
+	if restored.State != "REGISTERED" || restored.Version != 3 || restored.Path != "" {
+		t.Fatalf("expected retryable REGISTERED version 3, got %#v", restored)
+	}
+}
+
+func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
+	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			return repository.ErrRepositoryNotFound
+		},
+	))
+	createQueuedTaskForWorkspaceTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-unknown-repository",
+			"idempotencyKey":"unknown-repository",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "repository_not_found" || body.Message != "repository was not found or is not accessible" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+
+	getRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/tasks/task-1/workspace?tenantId=tenant-a",
+		nil,
+	)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, getRequest)
+	if getResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected no workspace after failed verification, got %d", getResponse.Code)
+	}
+}
+
+func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
+	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			return repository.ErrBaseCommitNotFound
+		},
+	))
+	createQueuedTaskForWorkspaceTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-unknown-base",
+			"idempotencyKey":"unknown-base",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "base_commit_not_found" || body.Message != "base commit was not found in repository" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
+	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			return repository.ErrHeadCommitNotFound
+		},
+	))
+	createQueuedTaskForWorkspaceTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-unknown-head",
+			"idempotencyKey":"unknown-head",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected status %d, got %d", http.StatusUnprocessableEntity, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "head_commit_not_found" || body.Message != "head commit was not found in repository" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func TestCreateWorkspaceFailsClosedWhenRepositoryVerificationIsUnavailable(t *testing.T) {
+	handler := NewHandler()
+	createQueuedTaskForWorkspaceTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-verification-unavailable",
+			"idempotencyKey":"verification-unavailable",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "repository_verification_unavailable" || body.Message != "repository verification is unavailable" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func TestCreateWorkspaceRejectsATaskThatIsNotQueued(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createTaskRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-create-unqueued-task",
+			"idempotencyKey":"create-unqueued-task",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), createTaskRequest)
+
+	workspaceRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-workspace-before-queue",
+			"idempotencyKey":"workspace-before-queue",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	workspaceResponse := httptest.NewRecorder()
+	handler.ServeHTTP(workspaceResponse, workspaceRequest)
+
+	if workspaceResponse.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, workspaceResponse.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(workspaceResponse.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "task_not_queued" {
+		t.Errorf("expected task_not_queued, got %q", body.Error)
+	}
+}
+
+func TestCreateWorkspaceReplaysTheSameIdempotentRequest(t *testing.T) {
+	verificationAttempts := 0
+	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			verificationAttempts++
+			if verificationAttempts > 1 {
+				return repository.ErrVerificationUnavailable
+			}
+			return nil
+		},
+	))
+	createTaskRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-create-task-for-workspace-replay",
+			"idempotencyKey":"create-task-for-workspace-replay",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), createTaskRequest)
+	queueTaskRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/tasks/task-1",
+		strings.NewReader(`{
+			"requestId":"req-queue-task-for-workspace-replay",
+			"idempotencyKey":"queue-task-for-workspace-replay",
+			"tenantId":"tenant-a",
+			"expectedVersion":1,
+			"status":"QUEUED"
+		}`),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), queueTaskRequest)
+
+	register := func(requestID string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/v1/tasks/task-1/workspace",
+			strings.NewReader(`{
+				"requestId":"`+requestID+`",
+				"idempotencyKey":"workspace-replay",
+				"tenantId":"tenant-a"
+			}`),
+		)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	first := register("req-workspace-first")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first status %d, got %d", http.StatusCreated, first.Code)
+	}
+	replay := register("req-workspace-replay")
+	if replay.Code != http.StatusOK {
+		t.Fatalf("expected replay status %d, got %d", http.StatusOK, replay.Code)
+	}
+
+	var replayed struct {
+		ID      string `json:"id"`
+		Version uint64 `json:"version"`
+	}
+	if err := json.NewDecoder(replay.Body).Decode(&replayed); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if replayed.ID != "workspace-1" || replayed.Version != 1 {
+		t.Errorf("unexpected replayed workspace: %#v", replayed)
+	}
+	if requestID := replay.Header().Get("X-Request-ID"); requestID != "req-workspace-replay" {
+		t.Errorf("expected replay request ID, got %q", requestID)
+	}
+}
+
+func TestGetWorkspaceForTask(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/tasks/task-1/workspace?tenantId=tenant-a",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
+	}
+	var found struct {
+		ID       string `json:"id"`
+		TenantID string `json:"tenantId"`
+		TaskID   string `json:"taskId"`
+		BaseSHA  string `json:"baseSha"`
+		HeadSHA  string `json:"headSha"`
+		State    string `json:"state"`
+		Version  uint64 `json:"version"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&found); err != nil {
+		t.Fatalf("decode workspace response: %v", err)
+	}
+	if found.ID != "workspace-1" || found.TenantID != "tenant-a" || found.TaskID != "task-1" {
+		t.Errorf("unexpected workspace identity: %#v", found)
+	}
+	if found.BaseSHA != "1111111111111111111111111111111111111111" || found.HeadSHA != "2222222222222222222222222222222222222222" {
+		t.Errorf("unexpected immutable refs: %#v", found)
+	}
+	if found.State != "REGISTERED" || found.Version != 1 {
+		t.Errorf("unexpected workspace state: %#v", found)
+	}
+}
+
+func TestCreateWorkspaceRejectsReusingAKeyForAnotherTask(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	createSecondTask := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-create-second-task",
+			"idempotencyKey":"create-second-task",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review another pull request",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	createSecondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createSecondResponse, createSecondTask)
+	if createSecondResponse.Code != http.StatusCreated {
+		t.Fatalf("expected second task create status %d, got %d", http.StatusCreated, createSecondResponse.Code)
+	}
+
+	queueSecondTask := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/tasks/task-2",
+		strings.NewReader(`{
+			"requestId":"req-queue-second-task",
+			"idempotencyKey":"queue-second-task",
+			"tenantId":"tenant-a",
+			"expectedVersion":1,
+			"status":"QUEUED"
+		}`),
+	)
+	queueSecondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(queueSecondResponse, queueSecondTask)
+	if queueSecondResponse.Code != http.StatusOK {
+		t.Fatalf("expected second task queue status %d, got %d", http.StatusOK, queueSecondResponse.Code)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-2/workspace",
+		strings.NewReader(`{
+			"requestId":"req-workspace-idempotency-conflict",
+			"idempotencyKey":"register-workspace-for-get",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "idempotency_conflict" {
+		t.Errorf("expected idempotency_conflict, got %q", body.Error)
+	}
+}
+
+func TestCreateWorkspaceRejectsASecondWorkspaceForTheSameTask(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-second-workspace",
+			"idempotencyKey":"second-workspace",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "workspace_already_exists" {
+		t.Errorf("expected workspace_already_exists, got %q", body.Error)
+	}
+}
+
+func TestGetWorkspaceHidesItFromOtherTenants(t *testing.T) {
+	handler := newHandlerWithVerifiedRepositories()
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/tasks/task-1/workspace?tenantId=tenant-b",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, response.Code)
+	}
+	var body errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != "not_found" || body.Message != "workspace not found" {
+		t.Errorf("unexpected error response: %#v", body)
+	}
+}
+
+func createQueuedTaskForWorkspaceTest(t *testing.T, handler http.Handler) {
+	t.Helper()
+	createRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{
+			"requestId":"req-create-task-for-workspace-get",
+			"idempotencyKey":"create-task-for-workspace-get",
+			"tenantId":"tenant-a",
+			"type":"PR_REVIEW",
+			"goal":"Review pull request 42",
+			`+testRepositoryJSON+`
+		}`),
+	)
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected create status %d, got %d", http.StatusCreated, createResponse.Code)
+	}
+
+	queueRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/tasks/task-1",
+		strings.NewReader(`{
+			"requestId":"req-queue-task-for-workspace-get",
+			"idempotencyKey":"queue-task-for-workspace-get",
+			"tenantId":"tenant-a",
+			"expectedVersion":1,
+			"status":"QUEUED"
+		}`),
+	)
+	queueResponse := httptest.NewRecorder()
+	handler.ServeHTTP(queueResponse, queueRequest)
+	if queueResponse.Code != http.StatusOK {
+		t.Fatalf("expected queue status %d, got %d", http.StatusOK, queueResponse.Code)
+	}
+}
+
+func registerWorkspaceForTest(t *testing.T, handler http.Handler) {
+	t.Helper()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks/task-1/workspace",
+		strings.NewReader(`{
+			"requestId":"req-register-workspace-for-get",
+			"idempotencyKey":"register-workspace-for-get",
+			"tenantId":"tenant-a"
+		}`),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected workspace status %d, got %d", http.StatusCreated, response.Code)
+	}
+}
+
+type repositoryVerifierFunc func(context.Context, task.RepositoryReference) error
+
+func (verify repositoryVerifierFunc) Verify(ctx context.Context, reference task.RepositoryReference) error {
+	return verify(ctx, reference)
+}
+
+type workspacePreparerFunc func(context.Context, task.RepositoryReference, string) error
+
+var _ workspace.Preparer = workspacePreparerFunc(nil)
+
+func (prepare workspacePreparerFunc) Prepare(ctx context.Context, reference task.RepositoryReference, destination string) error {
+	return prepare(ctx, reference, destination)
+}
+
+func newHandlerWithVerifiedRepositories() http.Handler {
+	return NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			return nil
+		},
+	))
 }

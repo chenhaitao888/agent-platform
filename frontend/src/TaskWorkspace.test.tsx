@@ -13,6 +13,28 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+const repositoryReference = {
+  provider: 'gitlab',
+  repositoryId: 'project-7',
+  baseSha: '1111111111111111111111111111111111111111',
+  headSha: '2222222222222222222222222222222222222222',
+}
+
+function fillValidTaskForm() {
+  fireEvent.change(screen.getByLabelText('任务目标'), {
+    target: { value: 'Review pull request 42' },
+  })
+  fireEvent.change(screen.getByLabelText('仓库 ID'), {
+    target: { value: 'project-7' },
+  })
+  fireEvent.change(screen.getByLabelText('Base SHA'), {
+    target: { value: repositoryReference.baseSha },
+  })
+  fireEvent.change(screen.getByLabelText('Head SHA'), {
+    target: { value: repositoryReference.headSha },
+  })
+}
+
 describe('TaskWorkspace', () => {
   it('loads and shows the most recent tasks', async () => {
     vi.stubGlobal(
@@ -101,6 +123,7 @@ describe('TaskWorkspace', () => {
                 id: 'task-1',
                 type: 'PR_REVIEW',
                 goal: 'Review pull request 42',
+                repository: repositoryReference,
                 status: 'CREATED',
                 createdAt: '2026-09-21T10:00:00Z',
               }),
@@ -125,9 +148,7 @@ describe('TaskWorkspace', () => {
     render(<TaskWorkspace />)
     await screen.findByText('暂无 Task')
 
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     const list = await screen.findByRole('list', { name: '最近 Task' })
@@ -149,6 +170,7 @@ describe('TaskWorkspace', () => {
                 id: 'task-1',
                 type: 'PR_REVIEW',
                 goal: 'Review pull request 42',
+                repository: repositoryReference,
                 status: 'CREATED',
                 createdAt: '2026-09-21T10:00:00Z',
               }),
@@ -164,9 +186,7 @@ describe('TaskWorkspace', () => {
     )
 
     render(<TaskWorkspace />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     const list = await screen.findByRole('list', { name: '最近 Task' })
@@ -215,6 +235,7 @@ describe('TaskWorkspace', () => {
                 id: 'task-1',
                 type: 'PR_REVIEW',
                 goal: 'Review pull request 42',
+                repository: repositoryReference,
                 status: 'CREATED',
                 createdAt: '2026-09-21T10:00:00Z',
               }),
@@ -230,9 +251,7 @@ describe('TaskWorkspace', () => {
     )
 
     render(<TaskWorkspace />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
 
     await screen.findByRole('list', { name: '最近 Task' })
@@ -315,6 +334,9 @@ describe('TaskWorkspace', () => {
     expect(
       screen.queryByRole('button', { name: '将 task-1 加入队列' }),
     ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    ).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/tasks/task-1', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -413,6 +435,7 @@ describe('TaskWorkspace', () => {
                 idempotencyKey: 'create-task-1',
                 type: 'PR_REVIEW',
                 goal: 'Review pull request 42',
+                repository: repositoryReference,
                 status: 'CREATED',
                 version: 1,
                 createdAt: '2026-09-21T10:00:00Z',
@@ -449,9 +472,7 @@ describe('TaskWorkspace', () => {
     )
 
     render(<TaskWorkspace />)
-    fireEvent.change(screen.getByLabelText('任务目标'), {
-      target: { value: 'Review pull request 42' },
-    })
+    fillValidTaskForm()
     fireEvent.click(screen.getByRole('button', { name: '创建 Task' }))
     fireEvent.click(
       await screen.findByRole('button', { name: '将 task-1 加入队列' }),

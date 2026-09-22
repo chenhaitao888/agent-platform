@@ -29,9 +29,10 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 | 前端测试 | Vitest、Testing Library、jsdom | JUnit + 面向用户行为的 UI 测试 |
 | 持久化 | 进程内存 | 临时的 InMemoryRepository，重启即丢失 |
 
-当前代码只覆盖健康检查、Task 幂等创建、按 ID 查询、最近列表、第一条状态迁移、Task 事件
-时间线和对应前端闭环。数据库、工作流执行、Codex app-server、Connector、鉴权与企业凭据
-仍未接入。
+当前代码只覆盖健康检查、持有不可变仓库引用的 Task 幂等创建、查询、第一条状态迁移、Task
+事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
+真实 path 与对应前端闭环。数据库、工作流执行、Codex app-server、Credential Broker、鉴权与其他
+企业 Connector 仍未接入。
 
 ## 3. 当前目录与职责
 
@@ -40,9 +41,14 @@ agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java main 启动类
 │   └── internal/
+│       ├── connector/gitlab/    # GitLab 验证与可信 clone URL adapter
+│       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
-│       └── task/                # Task 模型与内存 Store
+│       ├── repository/          # 验证接口与 provider 无关的错误分类
+│       ├── task/                # Task 模型与内存 Store
+│       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
+├── CONTEXT.md                   # 领域统一语言
 ├── docs/development-handbook.md # 本手册
 └── README.md                    # 快速启动与使用方式
 ```
@@ -295,6 +301,311 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 - 真实 Vite → Go 联调返回 `task.created / sequence 1` 与 `task.queued / sequence 2`。
 - 重放准入请求后再次查询，仍为原来的两条事件，没有重复追加。
 
+### M8：最小 Workspace 元数据
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档第 8 节规定平台 Workspace Manager 是 clone/worktree、base/head SHA 和清理的
+  唯一 owner；Phase 0 的 PR Review 必须固定不可变 base/head SHA。
+- 新增 `POST /api/v1/tasks/{id}/workspace` 与
+  `GET /api/v1/tasks/{id}/workspace?tenantId={tenantId}`。
+- Workspace 包含 ID、tenant/task、repository provider/repositoryId、base/head SHA、state、
+  version 和 createdAt。
+- M8 只定义 `REGISTERED`：元数据已登记，但仓库尚未 clone，路径尚未创建，Runtime 尚未绑定。
+- 只有 `QUEUED` Task 可以登记；同一 Task 至多一份 Workspace。
+- 首次登记返回 201；同一幂等操作重放返回 200；同键不同内容和第二份 Workspace 分别返回
+  `idempotency_conflict` 与 `workspace_already_exists`。
+- 前端只为 `QUEUED` Task 提供 Workspace 入口，按需查询；404 时才展示登记表单。
+- 新增根目录 `CONTEXT.md`，记录 Task、Workspace、Registered Workspace、Repository Reference
+  与 Task Event 的统一语言。
+- 本步不做：Git clone/worktree、真实 path、Runtime、容器、挂载、缓存、清理与 Workspace 事件。
+
+#### M8 后端代码拆解
+
+1. 新的 `workspace` package 是独立模块。`Workspace` 与 `Repository` 是数据 struct，`State` 使用
+   字符串别名和 `StateRegistered` 常量，类似 Java record 加 enum 的组合。
+2. `workspace.Manager` 显式持有 `*task.Store`。登记前先读取 Task 并检查租户与 `QUEUED` 状态；
+   它类似模块化单体中的领域服务，但没有引入只有一个实现的 Repository interface。
+3. Manager 用自己的 `RWMutex` 保护 Workspace ID、Task 索引和幂等索引。一 Task 一 Workspace
+   的检查与写入在同一写锁中完成，两个并发登记请求不能都成功。
+4. 幂等检查先于业务唯一约束：同操作重放返回第一次结果；同键不同内容返回幂等冲突；新 key
+   再创建才返回 Workspace 已存在。这个顺序避免把安全重试误判成第二次创建。
+5. `RegisterResult` 用 `Created` 区分首次和重放，作用类似 Java
+   `record RegisterResult(Workspace workspace, boolean created)`；Handler 据此映射 201/200。
+6. GET 在读锁中返回 Workspace 值拷贝，并核对 tenantId。错误租户和不存在统一返回 404，减少
+   资源枚举信息，但显式 tenantId 仍不能代替真实身份认证。
+
+#### M8 前端代码拆解
+
+1. `workspace.ts` 单独定义 Workspace DTO，不把两个领域对象堆进 `task.ts`。
+2. `WorkspaceDetails` 只接受一个 Task prop，并封装 GET、POST、表单和详情展示；父工作区只负责
+   在 Task 为 QUEUED 时挂载它。
+3. UI 状态使用 `idle | loading | absent | registering | ready | failed` 联合类型。`absent` 是可登记的
+   业务状态，不是系统错误；类比 Java sealed interface，它让每种分支携带自己真正需要的数据。
+4. 表单使用受控输入，repositoryId、baseSHA、headSHA 都通过 `useState` 保存；提交前去除首尾空白。
+5. Phase 0 只有单 Git 平台，前端暂时固定 provider 为 `gitlab`；后端契约仍明确携带 provider。
+6. Workspace 查询和事件一样按需触发，不在 Task 列表加载时制造 N+1 请求。
+
+#### M8 开发过程记录
+
+1. 后端先写“QUEUED Task 可登记 Workspace”的 HTTP 测试，旧实现返回 404；增加 workspace
+   package、Manager 和 POST 路由后变绿。
+2. 未准入测试直接通过，确认 CREATED Task 返回 `task_not_queued`。
+3. 幂等重放测试最初返回 `workspace_already_exists`；加入登记记录并调整检查顺序后变为 200。
+4. GET 测试最初返回 405；加入 Manager 读取方法和 GET 路由后变绿。
+5. 增加同键不同内容、第二份 Workspace 和跨租户读取测试，分别锁定三个冲突/隔离行为。
+6. 前端先导入不存在的 `WorkspaceDetails` 得到模块解析 RED，再实现已有 Workspace 的按需读取。
+7. 404 场景测试最初只看到“workspace not found”；增加 `absent` 状态和登记表单后变绿。
+8. Task 准入测试先要求出现 Workspace 入口，得到找不到按钮的 RED；按 QUEUED 条件接入后变绿。
+
+#### M8 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- 前端 5 个测试文件、19 条测试：全部通过；生产构建通过。
+- 真实 Vite → Go 联调依次得到：未登记查询 404、首次登记 201、再次查询 200、幂等重放 200。
+- 重放保持 `workspace-1 / REGISTERED / version 1` 以及原 createdAt。
+
+### M9：Repository Reference 前移到 Task
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档附录 A.1 在创建 Task 时接收 repository provider/repositoryId/baseSha/headSha；
+  分支名不是可复现输入，PR Review 必须固定不可变 base/head SHA。
+- `POST /api/v1/tasks` 新增必填 `repository` 对象，Task 响应、按 ID 查询和列表都返回同一份引用。
+- Phase 0 只接受 `gitlab`；base/head SHA 必须是 40 或 64 位十六进制对象 ID。
+- Task 创建幂等比较现在覆盖 type、goal 和完整 Repository Reference，同 key 改变任一仓库字段均
+  返回 `idempotency_conflict`。
+- `POST /api/v1/tasks/{id}/workspace` 只接收 requestId、idempotencyKey、tenantId；Workspace
+  Manager 从 QUEUED Task 派生仓库和 SHA，调用方不再重复输入。
+- Workspace 登记幂等内容缩小为目标 Task：同一 key、同一 Task 可重放；同一租户把 key 用于
+  另一个 Task 时冲突。
+- 本步不做：连接 GitLab、验证仓库归属或 commit 存在性、解析分支、clone/worktree、准备路径。
+
+#### M9 后端代码拆解
+
+1. `task.RepositoryReference` 把 provider、repositoryId、baseSha、headSha 组成一个值对象，并由
+   `Task` 和 `CreateInput` 持有。它近似 Java `record RepositoryReference(...)`；四个字段都是
+   可比较字符串，因此 Go struct 可以直接用 `==`/`!=` 做完整值比较。
+2. HTTP Handler 在系统边界去除首尾空白并校验必填、provider 和对象 ID 形状。它类似 Java
+   Controller DTO 上的 Bean Validation；这里只判断格式，不把网络调用塞进 Controller。
+3. `Store.Create` 的幂等检查比较完整 Repository Reference。这样重试时误换 head SHA 不会被
+   当作同一个 command 返回旧结果。
+4. `workspace.RegisterInput` 不再包含仓库字段。`Manager.Register` 先读取 Task、核对租户与
+   QUEUED 状态，再从 `currentTask.Repository` 构造 Workspace；它像 Java Application Service
+   通过聚合读取事实，而不是信任第二份 Web 表单。
+5. Workspace 登记记录只保存 taskID 和首次结果。同 key 指向另一 Task 才是内容冲突；同一 Task
+   的安全重放仍返回第一次的 Workspace。
+
+#### M9 前端代码拆解
+
+1. `RepositoryReference` TypeScript 类型成为 `Task` 的必填字段，作用接近 Java record 的编译期
+   契约；`response.json()` 仍不会做运行时 schema 校验。
+2. `TaskCreator` 新增 repositoryId、baseSHA、headSHA 三个受控输入，provider 在 Phase 0 固定为
+   gitlab。三个 `useState` 类似表单 backing bean 字段，但 React 通过 setter 触发重新渲染。
+3. Workspace 404 分支删除了三份输入 state 和登记表单，改为展示 `task.repository` 的只读投影
+   和一个按钮。用户现在能看见将使用什么输入，但不能制造第二份不一致值。
+4. 测试使用统一合法表单 helper 和 Repository Reference fixture，避免每个竞态/错误测试重复
+   关心长 SHA；服务端 mock 若遗漏新必填字段会直接暴露契约不一致。
+
+#### M9 开发过程记录
+
+1. 后端先让创建测试要求响应保存仓库引用；旧实现返回 201，但四个字段为空。补齐请求 DTO、
+   CreateInput 与 Task 的连续映射后转绿。
+2. 缺少仓库引用的测试先得到 201，再加入必填校验得到 400；随后更新所有本应成功的旧夹具。
+3. 分别用 GitHub provider 和 `main` 分支名制造 RED，再加入单 GitLab 与 40/64 位十六进制校验。
+4. 同 key、同 type/goal、不同 head SHA 最初错误返回 200；幂等比较加入 Repository Reference
+   后返回 409。
+5. Workspace 主路径测试删除重复仓库参数后先得到 400；Manager 改为读取 Task 后得到 201，且
+   响应仍是 Task 中的仓库和 SHA。旧“同 key 改 head”测试随之改成“同 key 登记另一 Task”。
+6. 前端创建测试先因找不到“仓库 ID”标签失败；增加 Task 表单字段和嵌套请求后转绿。
+7. Workspace 测试先因找不到只读仓库引用分组失败；删除输入 state/表单并使用 Task 引用后转绿。
+8. 全套前端测试第一次运行发现四个旧 mock 缺少 repository，组件访问 undefined；修正测试夹具，
+   不在生产代码里用可选链掩盖坏响应。
+
+#### M9 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- 前端 5 个测试文件、19 条测试：全部通过；生产构建通过。
+- 真实 Vite → Go 联调依次验证：带仓库引用创建 Task、准入、仅用操作元数据登记 Workspace、查询
+  以及登记幂等重放。
+- Workspace 返回的 provider/repositoryId/base/head 与 Task 完全相同，重放没有产生第二份记录。
+
+### M10：可信 GitLab Repository Reference 验证
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档 8.1 要求 Workspace Manager 统一拥有 base/head SHA；9.1 要求 Repository 读取
+  通过 Connector 平面，以固定仓库和 SHA；服务凭据不能进入 Runtime 或任意 shell。
+- Workspace 首次登记前，通过 GitLab HTTPS API 依次确认项目、base commit 与 head commit。
+- Workspace HTTP 请求契约不变，仍只含 requestId、idempotencyKey、tenantId；验证对象只来自
+  Task 的 Repository Reference。
+- 仓库不存在、base 不存在、head 不存在分别返回三个 422 业务错误；GitLab 未配置、认证失败、
+  网络异常、非 2xx/404 响应或重定向统一返回 503。
+- `AGENT_PLATFORM_GITLAB_BASE_URL` 与 `AGENT_PLATFORM_GITLAB_TOKEN` 必须成对配置。两者都缺失时
+  服务仍启动，但 Workspace 登记失败关闭；只有一个存在时服务拒绝启动。
+- GitLab Base URL 必须是 HTTPS，且不能内嵌凭据、query 或 fragment；adapter 不跟随重定向，避免
+  `PRIVATE-TOKEN` 被带到其他主机。
+- 本步不做：clone/worktree、base 是否为 head 祖先、Merge Request 归属验证、缓存、重试、限流、
+  熔断、Credential Broker、token 轮换与其他 Git provider。
+
+#### M10 后端代码拆解
+
+1. `repository.ReferenceVerifier` 只有一个 `Verify(ctx, reference)` 方法，是 Workspace 需要的最小
+   interface。它类似 Java 应用层 port；GitLab adapter 通过方法集合隐式实现，不写 `implements`。
+2. `connector/gitlab.Verifier` 隐藏项目 ID URL 编码、三个 GET、token header、响应关闭和错误分类。
+   调用方不需要知道 `/api/v4` 路径，删除这个 module 会迫使这些细节散落回 Workspace Manager。
+3. 构造器要求 HTTPS、非空 token 和显式 `http.Client`。它复制 client 后禁用重定向，不修改调用方
+   对象；main 注入的 client 有 5 秒超时。
+4. Workspace Manager 先在锁内处理已有幂等结果，再释放锁调用 verifier，成功后重新加锁检查并
+   创建。Java 中相当于不拿着全局 `synchronized` 锁等待 RestClient，同时用第二次检查关闭竞态窗口。
+5. 已成功登记的幂等重放直接返回本地结果，即使 GitLab 随后不可用也不重新验证；成功事实不会被
+   短暂下游故障推翻。
+6. HTTP Handler 将 provider 无关的验证错误映射为稳定错误码。`cmd/api` 只负责读取进程配置、
+   构造 adapter 并注入，不把 token 写日志或下发给 Workspace/Runtime。
+
+#### M10 前端代码拆解
+
+1. Workspace 接口和登记按钮不变，前端继续展示 Task 中的只读仓库引用。
+2. 已有联合状态可承载 422/503，无需增加新的 boolean；服务端 message 直接显示给开发阶段用户。
+3. 失败文案由“Workspace 加载失败”改为“Workspace 操作失败”，同时覆盖查询和登记阶段。
+
+#### M10 开发过程记录
+
+1. 第一条 HTTP 测试要求未知仓库返回 422；最初因 `internal/repository` 不存在而编译失败。增加最小
+   verifier interface、错误和 Manager 注入后转绿。
+2. base/head 不存在的测试分别先因错误值不存在而编译失败，再逐条加入错误分类与 HTTP 映射。
+3. 默认未配置 verifier 的测试最初得到 500；加入 `repository_verification_unavailable` 映射后得到 503。
+4. GitLab 成功测试最初因 `NewVerifier` 不存在而失败；加入标准库 HTTPS adapter 后，项目、base、
+   head 三次读取及 `%2F` 项目 ID 编码通过。
+5. 恶意重定向测试最初错误返回成功，证明 client 跟随了 302；复制 client 并禁用重定向后，token
+   不再到达目标服务器，结果归类为验证不可用。
+6. GitLab 404 分类、5xx 分类和不安全/不完整配置测试直接通过，记录为特征确认，没有伪造 RED。
+7. 幂等重放测试把 verifier 改为“只成功一次”；第二次登记仍返回原 Workspace，证明不会重复依赖 GitLab。
+8. 前端 503 测试先看到“加载失败”，改成“操作失败”后转绿。
+
+#### M10 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- 前端 5 个测试文件、20 条测试：全部通过；生产构建通过。
+- GitLab adapter 通过本地 TLS 假服务验证三个真实 HTTPS 请求、token header、URL 编码、404/5xx
+  分类和重定向防泄漏。
+- 真实 Go HTTP 进程在未配置 GitLab 时依次得到 Task 创建 201、准入 200、Workspace 登记 503、
+  查询 404，确认失败关闭且没有留下半成品。
+- 未提供企业 GitLab 地址与令牌，因此本步未对真实企业 GitLab 发请求；真实凭据联调仍需在受控环境完成。
+
+### M11：平台准备真实 Git Workspace
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档 5.3 把 `prepareWorkspace` 放在 Runtime 之前；8.1 明确 Workspace Manager 是
+  clone、worktree 和 base/head SHA 的唯一 owner，Codex 不得再自行创建 worktree。
+- 新增 `POST /api/v1/tasks/{id}/workspace/prepare`。请求只含操作元数据、tenant 与
+  `expectedVersion`；仓库和 SHA 继续只从已登记 Workspace 读取。
+- Workspace 状态最小扩展为 `REGISTERED → PREPARING → READY`，成功时 version 从 1 依次变为
+  2、3，并在 READY 响应中出现实际 `path`。
+- 平台创建 `workspace-{id}/repository.git` bare clone 和 `workspace-{id}/worktree` detached
+  worktree；base/head 必须都能按 commit 对象读取，worktree HEAD 必须等于固定的 head SHA。
+- 准备失败时删除本次创建的整个 `workspace-{id}` 半成品目录，状态从 PREPARING 回到
+  REGISTERED，version 仍继续增加到 3。这样读过 PREPARING/v2 的客户端不会把旧数据当成新数据。
+- 本步不做：共享 clone cache、清理接口、磁盘配额、Runtime/容器、挂载、Codex、异步队列、
+  crash recovery、数据库持久化与企业 GitLab 真凭据联调。
+
+#### M11 状态与 Manager 代码拆解
+
+1. `StateRegistered`、`StatePreparing`、`StateReady` 是有类型的字符串常量。JSON 仍是人能读懂的
+   大写字符串，但 Go 编译器会阻止把任意普通字符串误当成 Workspace 状态。Java 中可类比 enum，
+   只是 Go 不会自动生成 `values()` 等方法。
+2. `Workspace.Path` 使用 `omitempty`。REGISTERED/PREPARING 时不返回假路径；只有准备全部成功后
+   才赋值。这里的关键不是节省一个 JSON 字段，而是防止调用方把正在写入的目录当成可用目录。
+3. `Preparer` 只有 `Prepare(ctx, repositoryReference, destination)` 一个方法。Manager 只知道“把这份
+   不可变代码输入准备到这个平台路径”，不知道 GitLab API、token、askpass 或 Git CLI 参数。它类似
+   Java Application Service 依赖的 port；生产 adapter 和测试 adapter 让这个 seam 成为真实变化点。
+4. `NewManagerWithPreparer` 要求绝对根目录、在符号链接解析前后都拒绝文件系统根目录、用 `0700`
+   创建目录，并通过 `EvalSymlinks` 保存规范路径。macOS 的 `/var` 常映射到 `/private/var`；规范化可
+   避免同一目录有两种字符串身份，也防止“看似普通目录、实际指向 `/`”的配置绕过安全检查。
+5. `Prepare` 先在锁内检查租户、幂等记录、version 和 REGISTERED 状态，再写入 PREPARING/v2，随后
+   释放锁才调用 Preparer。Java 类比：先在短事务内更新实体，再在事务外做慢 `ProcessBuilder` I/O；
+   不能拿着 JVM 全局 `synchronized` 锁等网络和磁盘。
+6. Git 成功后再次加锁写 READY、path 和 v3；失败后再次加锁恢复 REGISTERED/v3。PREPARING 因此可被
+   并发 GET 观察到，但半成品 path 永远不可见。
+7. 准备幂等记录保存 task、原 expectedVersion 与成功结果。同一输入重放直接返回 READY，不再 clone；
+   同 key 换 Task 或版本则冲突。失败不记录成功结果，调用方需要 GET 新 version 后重试。
+8. 登记幂等记录现在只保存 taskID，重放时从 `byTask` 读取当前 Workspace。原因是 Workspace 进入
+   READY 后再重放登记，应该返回当前 READY/v3，而不是 M8 时代缓存的 REGISTERED/v1 快照。
+
+#### M11 Git 与 GitLab adapter 代码拆解
+
+1. `gitworkspace.Preparer` 是一个深模块：调用者只给 clone URL、两个 SHA、目标 path 和凭据；内部
+   负责目录边界、askpass、四类 Git 命令、输出上限、失败清理和 detached HEAD。删除这个模块会让
+   这些易错细节散落到 Manager 或 Handler。
+2. 目标必须形如绝对路径 `.../workspace-{id}/worktree`。模块只用 `os.Mkdir` 创建一个原本不存在的
+   `workspace-{id}`，因此失败时的 `RemoveAll` 只会删除本次亲手创建、且名称已验证的目录，不会递归
+   删除调用方已有目录。
+3. Git 顺序为：`clone --bare --no-local`、`fetch origin base head`、两个 `cat-file -e SHA^{commit}`、
+   `worktree add --detach path head`。bare repository 保存对象，worktree 给后续 Runtime 使用；detached
+   HEAD 避免把“当前分支”误当成不可变输入。Java 中可把它理解成一个受控的 `ProcessBuilder` 流水线。
+4. SHA 在 HTTP 层和 Git 深模块各校验一次 40/64 位十六进制。前者给调用方清楚的 400，后者保护
+   非 HTTP 调用路径，避免不可信文本变成 Git 参数。
+5. token 不进入 URL 或 argv。clone/fetch 通过一个不含 secret 的临时 `git-askpass.sh` 读取子进程
+   环境中的用户名/密码。这个文件不是源码资源：`Prepare` 在运行时根据文件末尾的 `askPassScript`
+   常量，把它写到 `workspace-{id}/git-askpass.sh`；fetch 完成立即删除，后续本地命令使用空凭据环境。
+6. 子进程不再继承控制平面的整个环境，而使用 PATH、TMPDIR、locale、proxy、CA 等明确白名单，再
+   添加本次 Git 所需变量。这阻止 `AGENT_PLATFORM_GITLAB_TOKEN` 以及其他无关服务 secret 被顺带
+   交给 Git。命令输出最多保留 64 KiB，HTTP 只返回稳定错误，不回显这些内部文本。
+7. `gitLabProjectsAPIPath = "/api/v4/projects/"` 是 GitLab REST API v4 的协议常量，`projectAPIPath`
+   负责把可变的 repositoryID 做 URL path 编码后拼到它后面；它不是企业项目地址的硬编码。
+8. `connector/gitlab.WorkspacePreparer` 再读一次项目 API 的 `http_url_to_repo`，要求 HTTPS、无内嵌
+   凭据/query/fragment，且 host 与配置的 GitLab Base URL 完全相同。即使 GitLab 响应被异常改写，
+   token 也不会被送往另一台主机。
+9. M10 的 `Verifier.get` 被提取成包内共享方法：它仍负责 PRIVATE-TOKEN、禁重定向和错误分类；
+   verifier 丢弃响应体，WorkspacePreparer 则只解析受限大小的项目 JSON。这是复用实现，不扩大对外
+   interface。
+
+#### M11 HTTP、进程装配与前端代码拆解
+
+1. prepare 请求必须有 requestId、idempotencyKey、tenantId、expectedVersion。Handler 像 Java
+   Controller，只做 JSON/空值校验、调用 Manager、把领域错误翻译成 404/409/503；它不执行 Git。
+2. Git 内部失败统一映射为 `503 workspace_preparation_failed`，不会向浏览器返回 URL、文件路径之外
+   的 Git 输出或 token。version 过期和状态不允许分别是 `version_conflict` 与
+   `invalid_workspace_state`。
+3. `cmd/api` 是 composition root，类似 Spring `@Configuration`：读取三个环境变量，构造 HTTP
+   verifier、Git Preparer、GitLab WorkspacePreparer、Manager，最后交给 Handler。Base URL、token、
+   Workspace root 必须全有或全无，避免“验证能用、准备悄悄不可用”的半配置。
+4. 前端 `Workspace` DTO 增加 PREPARING/READY 与可选 path。可选是因为 path 只属于 READY，而不是
+   TypeScript 忘记判空。
+5. React 本地联合状态增加 `preparing`，原先名为 `ready` 的“HTTP 已加载”状态改名为 `loaded`，避免
+   它和领域 READY 混为一谈。这相当于 Java 中区分 `LoadState.LOADED` 与
+   `WorkspaceState.READY` 两个不同 enum。
+6. REGISTERED 才显示“准备 Workspace”按钮，请求期间显示 clone/worktree 进度并禁用刷新按钮；
+   READY 才展示真实工作目录；服务端返回 PREPARING 时只提示稍后刷新，不允许再次发起准备。
+
+#### M11 开发过程记录
+
+1. Manager 第一条测试先引用不存在的 PREPARING、READY、PrepareInput 和构造器，得到编译 RED；补入
+   最小状态迁移后，测试在准备期间读到 PREPARING/v2，释放阻塞 adapter 后读到 READY/v3 和规范 path。
+2. macOS 测试第一次因 `/var/...` 与 `/private/var/...` 不相等失败；没有硬改测试字符串，而是在
+   Manager 构造时规范化根目录，并让测试按真实路径比较。
+3. 幂等重放测试第一次得到 `version_conflict`；增加成功准备记录后，同一输入只调用一次 Preparer。
+4. 登记重放测试第一次拿到过期 REGISTERED/v1；把登记记录从“保存 Workspace 快照”改成“保存 taskID
+   并读取当前资源”后得到 READY/v3。
+5. Git 贯穿测试最初因 `NewPreparer` 与 `Input` 不存在而编译失败；最小实现随后真的创建两次 commit、
+   bare clone 和 detached worktree，并验证 HEAD 与 base 对象。
+6. GitLab 准备测试最初因 `NewWorkspacePreparer` 不存在而失败；实现后验证可信 clone URL、固定 SHA、
+   destination 和环境凭据正确传递。另一条测试确认跨 host URL 在 Git 启动前失败关闭。
+7. HTTP 测试最初找不到 prepare 构造器与路由；接入后得到 READY/v3/path。失败测试确认只返回稳定
+   503，随后 GET 得到 REGISTERED/v3，内部 Git 文本没有出现在响应字段中。
+8. 前端测试最初找不到“准备 Workspace”按钮；增加请求与渲染后，断言 READY、path、expectedVersion
+   和幂等键全部通过。
+9. 自审发现父进程环境仍会把原始 GitLab token 继承给 Git。先扩展假 Git 可执行文件测试，再把环境
+   改成白名单；最终专用密码只在 clone/fetch 环境中可见，原始控制平面变量不可见。
+
+#### M11 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- 本地 Git 集成测试使用真实 Git 2.52.0 创建两个 commit，验证 bare clone、base/head commit、
+  detached HEAD、askpass 删除和失败目录清理。
+- 前端 5 个测试文件、21 条测试全部通过；Vite 生产构建通过。
+- 真实 `cmd/api` 在显式清空三项配置后正常启动，`GET /healthz` 返回 200；日志明确提示 Workspace
+  操作失败关闭，验证未配置模式没有破坏基础服务。只提供 GitLab Base URL 时进程按预期拒绝启动，
+  验证三项配置不会进入半配置状态。
+- 未提供企业 GitLab 地址与服务令牌，因此没有对企业 GitLab 执行真实 clone；该联调仍需在受控环境完成。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -319,6 +630,15 @@ node --run build
 - request ID 目前只用于响应关联，还没有进入结构化日志和审计存储。
 - Task 事件与 ID 只存在于单进程内存；它们还不是事务 Outbox，也没有发布到 Event Bus。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
+- Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
+  清理 API、runtimeId、挂载或孤儿目录回收。
+- Workspace prepare 当前在一个 HTTP 请求内同步执行；大仓库尚未进入持久化异步 Activity，也没有
+  独立的 wall-clock timeout、进度事件或取消后的 reconciliation。
+- GitLab 验证只确认项目和两个 commit 可读取，尚未确认 base/head 祖先关系、Merge Request 归属或
+  diff 规模；也没有缓存、重试、限流、熔断与持久化验证证据。
+- GitLab token 暂由控制平面环境变量提供，并只进入受控 clone/fetch 子进程；尚未接入 Credential
+  Broker、短时凭据与自动轮换。
+- Repository Connector 目前只支持 GitLab；真实企业 GitLab 凭据联调尚未执行。
 - Task 目前只支持 `CREATED → QUEUED`；`QUEUED` 只是状态投影，还没有真实队列、调度器或
   工作流执行。
 - 列表一次返回进程内的全部 Task，尚无分页协议。

@@ -13,6 +13,9 @@ type ErrorResponse = {
 export default function TaskCreator({ onCreated }: TaskCreatorProps) {
   const [taskType, setTaskType] = useState('PR_REVIEW')
   const [goal, setGoal] = useState('')
+  const [repositoryID, setRepositoryID] = useState('')
+  const [baseSHA, setBaseSHA] = useState('')
+  const [headSHA, setHeadSHA] = useState('')
   const [createdTask, setCreatedTask] = useState<Task | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -34,6 +37,12 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           tenantId: LOCAL_TENANT_ID,
           type: taskType,
           goal,
+          repository: {
+            provider: 'gitlab',
+            repositoryId: repositoryID.trim(),
+            baseSha: baseSHA.trim(),
+            headSha: headSHA.trim(),
+          },
         }),
       })
       if (!response.ok) {
@@ -74,9 +83,36 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
         <label htmlFor="task-goal">任务目标</label>
         <textarea
           id="task-goal"
+          required
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
           rows={4}
+        />
+
+        <p className="task-creator-fixed-value">Git provider：gitlab</p>
+
+        <label htmlFor="task-repository-id">仓库 ID</label>
+        <input
+          id="task-repository-id"
+          required
+          value={repositoryID}
+          onChange={(event) => setRepositoryID(event.target.value)}
+        />
+
+        <label htmlFor="task-base-sha">Base SHA</label>
+        <input
+          id="task-base-sha"
+          required
+          value={baseSHA}
+          onChange={(event) => setBaseSHA(event.target.value)}
+        />
+
+        <label htmlFor="task-head-sha">Head SHA</label>
+        <input
+          id="task-head-sha"
+          required
+          value={headSHA}
+          onChange={(event) => setHeadSHA(event.target.value)}
         />
 
         <button type="submit" disabled={isSubmitting}>
@@ -97,6 +133,10 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           </p>
           <p>
             状态：<strong>{createdTask.status}</strong>
+          </p>
+          <p>
+            仓库：{createdTask.repository.provider} /{' '}
+            {createdTask.repository.repositoryId}
           </p>
           <p>{createdTask.goal}</p>
         </section>

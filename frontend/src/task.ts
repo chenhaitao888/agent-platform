@@ -2,12 +2,20 @@ export const LOCAL_TENANT_ID = 'tenant-local'
 
 export type TaskStatus = 'CREATED' | 'QUEUED'
 
+export type RepositoryReference = {
+  provider: 'gitlab'
+  repositoryId: string
+  baseSha: string
+  headSha: string
+}
+
 export type Task = {
   id: string
   tenantId: string
   idempotencyKey: string
   type: string
   goal: string
+  repository: RepositoryReference
   status: TaskStatus
   version: number
   createdAt: string

@@ -3,11 +3,13 @@
 这是“企业研发智能体与工作流平台”的最小可运行骨架。当前只完成：
 
 - Go HTTP 服务与 `GET /healthz`
-- 内存版 Task 幂等创建、查询、最近列表、状态迁移与事件时间线
-- React + TypeScript 状态页、Task 创建表单、最近列表、准入操作与事件展示
+- 内存版 Task 幂等创建、不可变仓库引用、查询、最近列表、状态迁移与事件时间线
+- GitLab 仓库/commit 可信验证，以及 Workspace 登记、bare clone、detached worktree 和状态查询
+- React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
 - Go 接口测试与 React 组件测试
 
-这一阶段没有接入数据库、Temporal、Codex app-server、Connector 或企业凭据。
+这一阶段没有接入数据库、Temporal、Codex app-server 或 Credential Broker。GitLab 只读验证和
+Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进程环境变量提供。
 
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
@@ -19,8 +21,13 @@ agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java 的 main 启动类
 │   └── internal/
+│       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
+│       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
-│       └── task/                # Task 模型与内存仓库，类似精简的领域/Repository 层
+│       ├── repository/          # Repository Reference 验证接口与错误分类
+│       ├── task/                # Task 模型与内存仓库，类似精简的领域/Repository 层
+│       └── workspace/           # Workspace 登记、准备状态机与路径所有权
+├── CONTEXT.md                   # 领域统一语言，不包含实现细节
 └── frontend/
     └── src/                     # 状态页、Task 表单、样式和组件测试
 ```
@@ -29,6 +36,23 @@ agent-platform/
 
 本项目使用 Go 1.27.1。请确认 `go version` 显示 `go1.27.1 darwin/arm64`
 或对应平台的 Go 1.27.1。
+
+Workspace 登记和准备需要同时配置 GitLab 地址、只读服务令牌和一个绝对路径的 Workspace 根目录。
+Base URL 必须使用 HTTPS，不能包含用户名、密码、query 或 fragment，也不包含 `/api/v4`；平台会
+自行拼接 API 路径。不要把 token 写进代码、README 或命令行参数：
+
+```bash
+export AGENT_PLATFORM_GITLAB_BASE_URL='https://gitlab.example.com'
+read -s -p 'GitLab token: ' AGENT_PLATFORM_GITLAB_TOKEN
+printf '\n'
+export AGENT_PLATFORM_GITLAB_TOKEN
+export AGENT_PLATFORM_WORKSPACE_ROOT='/var/lib/agent-platform/workspaces'
+```
+
+三个变量都未配置时，服务仍可启动，健康检查和 Task 接口仍可使用，但 Workspace 操作会失败关闭。
+只配置其中一部分时，服务拒绝启动。根目录必须是绝对路径，且不能是文件系统根目录；服务启动时会
+以 `0700` 创建不存在的目录。当前 token 只属于控制平面及其受控 Git 子进程，不会写入 clone URL、
+命令参数、Workspace、Runtime 或 Codex shell；后续仍要接入 Credential Broker。
 
 ```bash
 cd backend
@@ -60,7 +84,13 @@ curl -i \
     "idempotencyKey":"review:project-7:mr-42:head-a13f",
     "tenantId":"tenant-local",
     "type":"PR_REVIEW",
-    "goal":"Review pull request 42"
+    "goal":"Review pull request 42",
+    "repository":{
+      "provider":"gitlab",
+      "repositoryId":"project-7",
+      "baseSha":"1111111111111111111111111111111111111111",
+      "headSha":"2222222222222222222222222222222222222222"
+    }
   }'
 ```
 
@@ -73,6 +103,12 @@ curl -i \
   "idempotencyKey": "review:project-7:mr-42:head-a13f",
   "type": "PR_REVIEW",
   "goal": "Review pull request 42",
+  "repository": {
+    "provider": "gitlab",
+    "repositoryId": "project-7",
+    "baseSha": "1111111111111111111111111111111111111111",
+    "headSha": "2222222222222222222222222222222222222222"
+  },
   "status": "CREATED",
   "version": 1,
   "createdAt": "2026-09-21T10:00:00Z"
@@ -80,8 +116,11 @@ curl -i \
 ```
 
 服务端会回显 `X-Request-ID`。同一租户使用同一 `idempotencyKey` 和相同任务内容
-重放时返回 `200 OK` 以及原 Task；如果复用该 key 却改变 `type` 或 `goal`，返回
+重放时返回 `200 OK` 以及原 Task；如果复用该 key 却改变 `type`、`goal` 或仓库引用，返回
 `409 Conflict`。不同租户可以使用相同的幂等键。
+
+Phase 0 只接受 `gitlab` provider。`baseSha` 和 `headSha` 必须是 40 或 64 位十六进制对象 ID；
+这里仅校验格式，尚未连接 Git 平台验证仓库和 commit 是否真实存在。
 
 按 ID 查询：
 
@@ -106,6 +145,12 @@ curl -i http://localhost:8080/api/v1/tasks
       "idempotencyKey": "review:project-7:mr-42:head-a13f",
       "type": "PR_REVIEW",
       "goal": "Review pull request 42",
+      "repository": {
+        "provider": "gitlab",
+        "repositoryId": "project-7",
+        "baseSha": "1111111111111111111111111111111111111111",
+        "headSha": "2222222222222222222222222222222222222222"
+      },
       "status": "CREATED",
       "version": 1,
       "createdAt": "2026-09-21T10:00:00Z"
@@ -165,6 +210,84 @@ curl -i \
 Task 准入后会追加 `task.queued`。创建或准入请求被幂等重放时，不会重复追加事件。
 `tenantId` 当前是显式查询参数；它只能提供最小租户范围校验，不能替代后续的身份认证与授权。
 
+### 登记和查询 Workspace 元数据
+
+Task 必须先进入 `QUEUED`，才能登记 Workspace：
+
+```bash
+curl -i \
+  -X POST http://localhost:8080/api/v1/tasks/task-1/workspace \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requestId":"req-03",
+    "idempotencyKey":"workspace:tenant-local:task-1",
+    "tenantId":"tenant-local"
+  }'
+```
+
+Workspace Manager 从 Task 读取仓库与不可变 SHA，调用方不再重复提交。首次成功返回
+`201 Created` 和 `REGISTERED / version 1`。同一幂等键、同一 Task 重放返回
+`200 OK` 以及原 Workspace；同一 Task 使用新 key 再登记返回
+`409 workspace_already_exists`。同一租户使用同一 key 登记另一个 Task 时返回
+`409 idempotency_conflict`。
+
+首次登记前，GitLab adapter 会通过 HTTPS 依次确认项目、base commit 和 head commit。项目不存在或
+不可访问时返回 `422 repository_not_found`；两个 commit 不存在时分别返回
+`422 base_commit_not_found` 或 `422 head_commit_not_found`；认证失败、网络错误、GitLab 5xx 或
+重定向返回 `503 repository_verification_unavailable`。adapter 不跟随重定向，避免把
+`PRIVATE-TOKEN` 转发到其他地址。
+
+查询 Workspace：
+
+```bash
+curl -i \
+  'http://localhost:8080/api/v1/tasks/task-1/workspace?tenantId=tenant-local'
+```
+
+`REGISTERED` 表示仓库标识和不可变 SHA 已经 GitLab 验证并登记。处于这个状态时还没有 clone 仓库、
+创建工作目录、挂载文件系统或启动 Runtime，因此它不等于“Workspace 已准备好执行”。
+
+### 准备 Workspace
+
+登记完成后，使用当前 `version` 发起准备：
+
+```bash
+curl -i \
+  -X POST http://localhost:8080/api/v1/tasks/task-1/workspace/prepare \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requestId":"req-04",
+    "idempotencyKey":"workspace-prepare:tenant-local:task-1:v1",
+    "tenantId":"tenant-local",
+    "expectedVersion":1
+  }'
+```
+
+准备过程依次经历 `REGISTERED / version 1 → PREPARING / version 2 → READY / version 3`。平台在
+`AGENT_PLATFORM_WORKSPACE_ROOT/workspace-1/` 下创建 `repository.git` bare clone，再创建
+`worktree/`，并把它以 detached HEAD 固定到 Task 的 `headSha`。成功响应包含真实 `path`：
+
+```json
+{
+  "id": "workspace-1",
+  "state": "READY",
+  "version": 3,
+  "path": "/var/lib/agent-platform/workspaces/workspace-1/worktree"
+}
+```
+
+GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必须与已配置的 GitLab Base URL
+同源。Git token 通过临时 `GIT_ASKPASS` 和白名单环境传给 clone/fetch，随后立即删除 helper；
+这个 helper 由 Go 临时写到 `workspace-{id}/git-askpass.sh`，脚本模板位于
+`backend/internal/gitworkspace/preparer.go`，并不是需要手工准备的部署文件。`cat-file` 和
+`worktree add` 不再携带 token。失败时平台删除本次新建的半成品目录，并把 Workspace 恢复为
+`REGISTERED`，但 version 增加到 3，调用方应重新 GET 后再重试。
+
+同一准备幂等键和相同输入重放不会再次 clone；复用该 key 改变 Task 或 `expectedVersion` 返回
+`409 idempotency_conflict`。版本过期返回 `409 version_conflict`，状态不允许返回
+`409 invalid_workspace_state`，Git/API 失败返回稳定的 `503 workspace_preparation_failed`，不会把
+内部 Git 输出返回给调用方。
+
 这里的 `QUEUED` 目前只是 Task 的状态投影，表示“已准入”；还没有真实消息队列或执行器。
 Task 只保存在 Go 进程内存中，重启服务后数据会丢失。本阶段也还没有数据库、完整状态机
 或工作流执行。
@@ -191,13 +314,15 @@ node --run dev
 业务接口，所以需要同时启动 Go 后端。
 
 页面会先调用 `GET /api/v1/tasks` 加载最近 Task。“创建 Task”表单调用
-`POST /api/v1/tasks`；提交成功后会显示后端生成的 Task ID、状态和目标，并立即
-更新最近列表。前端在 Phase 0 固定使用 `tenant-local`，并为每次提交生成 request ID
-和 idempotency key。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的
+`POST /api/v1/tasks`；表单同时采集仓库 ID 与不可变 base/head SHA，提交成功后会显示后端生成的
+Task ID、状态、仓库和目标，并立即更新最近列表。前端在 Phase 0 固定使用 `tenant-local` 与
+GitLab provider，并为每次提交生成 request ID 和 idempotency key。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的
 `QUEUED / version 2` 替换旧对象。请求期间按钮会禁用，后端校验错误或网络错误会直接
 显示在对应区域。列表请求晚到时，前端按 Task ID 和 version 合并，不让旧快照覆盖新状态。
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动
-发起额外请求。
+发起额外请求。`QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
+登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
+会显示“准备 Workspace”；成功后页面展示 READY 和后端记录的真实工作目录。
 
 运行前端测试与构建：
 
@@ -223,3 +348,13 @@ universal Node 的 macOS 上，它能稳定保持 arm64 架构；脚本内容与
   防止旧对象覆盖新对象。
 - Task 事件类似只追加的 Domain Event/Audit Log；当前和 Task 共用一把内存锁，未来落数据库时
   应由业务更新与 Outbox 在同一事务中提交。
+- `workspace.Manager` 类似一个小型 Java 领域服务：它读取 Task 状态，并集中执行“一 Task 一
+  Workspace”、不可变引用和幂等规则，但当前仍是单进程内存实现。
+- `RepositoryReference` 类似不可变 Java record：Task 在创建时持有它，Workspace 只从 Task
+  派生自己的仓库元数据，避免两份请求参数产生分歧。
+- `repository.ReferenceVerifier` 类似应用层 port，`connector/gitlab.Verifier` 是 HTTPS adapter。
+  Go 通过方法集合隐式实现接口，不需要写 `implements`。
+- `workspace.Preparer` 类似 Java 应用层定义的基础设施 port；GitLab adapter 负责取得可信 clone URL，
+  `gitworkspace.Preparer` 则像封装好的 `ProcessBuilder`，集中控制参数、环境、目录和失败清理。
+- `REGISTERED → PREPARING → READY` 类似带 `@Version` 的实体状态迁移。慢 Git I/O 发生时不会持有
+  Manager 的互斥锁，因此 GET 仍能读取 PREPARING；失败回到 REGISTERED 时也递增 version。
