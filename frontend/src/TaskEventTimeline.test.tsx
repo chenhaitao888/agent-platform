@@ -1,0 +1,104 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import TaskEventTimeline from './TaskEventTimeline'
+import type { Task } from './task'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+const task: Task = {
+  id: 'task-1',
+  tenantId: 'tenant-local',
+  idempotencyKey: 'create-task-1',
+  type: 'PR_REVIEW',
+  goal: 'Review pull request 42',
+  status: 'QUEUED',
+  version: 2,
+  createdAt: '2026-09-22T01:00:00Z',
+}
+
+describe('TaskEventTimeline', () => {
+  it('loads and shows a task event timeline on request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              schemaVersion: '1.0',
+              eventId: 'evt-1',
+              eventType: 'task.created',
+              occurredAt: '2026-09-22T01:00:00Z',
+              tenantId: 'tenant-local',
+              taskId: 'task-1',
+              sequence: 1,
+              correlationId: 'task-1',
+              causationId: 'req-create-task-1',
+              payload: { status: 'CREATED', version: 1 },
+            },
+            {
+              schemaVersion: '1.0',
+              eventId: 'evt-2',
+              eventType: 'task.queued',
+              occurredAt: '2026-09-22T01:01:00Z',
+              tenantId: 'tenant-local',
+              taskId: 'task-1',
+              sequence: 2,
+              correlationId: 'task-1',
+              causationId: 'req-queue-task-1',
+              payload: { status: 'QUEUED', version: 2 },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<TaskEventTimeline task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的事件' }))
+
+    const timeline = await screen.findByRole('list', {
+      name: 'task-1 的事件时间线',
+    })
+    expect(timeline).toHaveTextContent('task.created')
+    expect(timeline).toHaveTextContent('CREATED · version 1')
+    expect(timeline).toHaveTextContent('task.queued')
+    expect(timeline).toHaveTextContent('QUEUED · version 2')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/tasks/task-1/events?tenantId=tenant-local',
+    )
+  })
+
+  it('shows an error and allows retrying when events cannot be loaded', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: 'not_found',
+            message: 'task not found',
+          }),
+          {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      ),
+    )
+
+    render(<TaskEventTimeline task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的事件' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '事件加载失败：task not found',
+    )
+    expect(
+      screen.getByRole('button', { name: '查看 task-1 的事件' }),
+    ).toBeEnabled()
+  })
+})

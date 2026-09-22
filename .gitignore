@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+**/.idea/
+
+# Go build and test artifacts
+backend/bin/
+backend/coverage.out
+
+# Frontend dependencies and build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/*.tsbuildinfo
