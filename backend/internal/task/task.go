@@ -43,13 +43,53 @@ type Task struct {
 type EventType string
 
 const (
-	EventTypeTaskCreated EventType = "task.created"
-	EventTypeTaskQueued  EventType = "task.queued"
+	// v2 将原来扁平的 Task status/version 移入 payload.task，并为其他事实留出独立分支。
+	EventSchemaVersion = "2.0"
+
+	EventTypeTaskCreated                EventType = "task.created"
+	EventTypeTaskQueued                 EventType = "task.queued"
+	EventTypeWorkspaceRegistered        EventType = "workspace.registered"
+	EventTypeWorkspacePreparing         EventType = "workspace.preparing"
+	EventTypeWorkspaceReady             EventType = "workspace.ready"
+	EventTypeWorkspacePreparationFailed EventType = "workspace.preparation_failed"
+	EventTypeArtifactCreated            EventType = "artifact.created"
 )
 
+// EventType 决定下面哪个分支有值；三种 version 分属不同对象，不能混用。
+// Java 可类比由 Task/Workspace/Artifact record 组成的 sealed payload 类型。
 type EventPayload struct {
+	Task      *TaskEventPayload      `json:"task,omitempty"`
+	Workspace *WorkspaceEventPayload `json:"workspace,omitempty"`
+	Artifact  *ArtifactEventPayload  `json:"artifact,omitempty"`
+}
+
+type TaskEventPayload struct {
 	Status  Status `json:"status"`
 	Version uint64 `json:"version"`
+}
+
+type WorkspaceEventPayload struct {
+	WorkspaceID string `json:"workspaceId"`
+	State       string `json:"state"`
+	Version     uint64 `json:"version"`
+}
+
+type ArtifactEventPayload struct {
+	ArtifactID  string `json:"artifactId"`
+	WorkspaceID string `json:"workspaceId"`
+	Type        string `json:"type"`
+	MediaType   string `json:"mediaType"`
+	SHA256      string `json:"sha256"`
+	SizeBytes   int64  `json:"sizeBytes"`
+}
+
+type AppendEventInput struct {
+	TenantID    string
+	TaskID      string
+	EventType   EventType
+	CausationID string
+	OccurredAt  time.Time
+	Payload     EventPayload
 }
 
 type Event struct {
@@ -149,7 +189,17 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	s.tasks[created.ID] = created
 	s.order = append(s.order, created.ID)
 	s.idempotency[scope] = created.ID
-	s.appendEventLocked(created, EventTypeTaskCreated, input.RequestID, now)
+	s.appendEventLocked(AppendEventInput{
+		TenantID:    created.TenantID,
+		TaskID:      created.ID,
+		EventType:   EventTypeTaskCreated,
+		CausationID: input.RequestID,
+		OccurredAt:  now,
+		Payload: EventPayload{Task: &TaskEventPayload{
+			Status:  created.Status,
+			Version: created.Version,
+		}},
+	})
 
 	return CreateResult{Task: created, Created: true}, nil
 }
@@ -198,7 +248,17 @@ func (s *Store) Transition(input TransitionInput) (Task, error) {
 		status:          input.Status,
 		result:          current,
 	}
-	s.appendEventLocked(current, EventTypeTaskQueued, input.RequestID, time.Now().UTC())
+	s.appendEventLocked(AppendEventInput{
+		TenantID:    current.TenantID,
+		TaskID:      current.ID,
+		EventType:   EventTypeTaskQueued,
+		CausationID: input.RequestID,
+		OccurredAt:  time.Now().UTC(),
+		Payload: EventPayload{Task: &TaskEventPayload{
+			Status:  current.Status,
+			Version: current.Version,
+		}},
+	})
 	return current, nil
 }
 
@@ -213,29 +273,54 @@ func (s *Store) ListEvents(taskID, tenantID string) ([]Event, bool) {
 
 	stored := s.events[taskID]
 	listed := make([]Event, len(stored))
-	copy(listed, stored)
+	for index, event := range stored {
+		listed[index] = event
+		listed[index].Payload = event.Payload.clone()
+	}
 	return listed, true
 }
 
-func (s *Store) appendEventLocked(current Task, eventType EventType, causationID string, occurredAt time.Time) {
+// AppendEvent 供同一进程中的 Workspace/Artifact 操作追加 Task 范围内的已发生事实。
+// 调用方只在首次状态变化后调用；幂等重放不得重复调用。
+func (s *Store) AppendEvent(input AppendEventInput) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appendEventLocked(input)
+}
+
+func (s *Store) appendEventLocked(input AppendEventInput) {
 	s.nextEventID++
-	sequence := uint64(len(s.events[current.ID]) + 1)
+	sequence := uint64(len(s.events[input.TaskID]) + 1)
 	event := Event{
-		SchemaVersion: "1.0",
+		SchemaVersion: EventSchemaVersion,
 		EventID:       fmt.Sprintf("evt-%d", s.nextEventID),
-		EventType:     eventType,
-		OccurredAt:    occurredAt,
-		TenantID:      current.TenantID,
-		TaskID:        current.ID,
+		EventType:     input.EventType,
+		OccurredAt:    input.OccurredAt,
+		TenantID:      input.TenantID,
+		TaskID:        input.TaskID,
 		Sequence:      sequence,
-		CorrelationID: current.ID,
-		CausationID:   causationID,
-		Payload: EventPayload{
-			Status:  current.Status,
-			Version: current.Version,
-		},
+		CorrelationID: input.TaskID,
+		CausationID:   input.CausationID,
+		Payload:       input.Payload.clone(),
 	}
-	s.events[current.ID] = append(s.events[current.ID], event)
+	s.events[input.TaskID] = append(s.events[input.TaskID], event)
+}
+
+func (p EventPayload) clone() EventPayload {
+	cloned := p
+	if p.Task != nil {
+		taskPayload := *p.Task
+		cloned.Task = &taskPayload
+	}
+	if p.Workspace != nil {
+		workspacePayload := *p.Workspace
+		cloned.Workspace = &workspacePayload
+	}
+	if p.Artifact != nil {
+		artifactPayload := *p.Artifact
+		cloned.Artifact = &artifactPayload
+	}
+	return cloned
 }
 
 // List 保持最新创建在前，同时只复制当前租户的 Task；空 slice 会编码为 JSON []。

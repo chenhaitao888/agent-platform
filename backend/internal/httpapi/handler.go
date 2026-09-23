@@ -123,7 +123,7 @@ func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, 
 	h := &handler{
 		tasks:      tasks,
 		workspaces: workspaces,
-		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts),
+		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts, tasks),
 		artifacts:  artifacts,
 	}
 	mux := http.NewServeMux()
@@ -198,6 +198,7 @@ func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Request-ID", request.RequestID)
 	result, err := h.reviews.Archive(r.Context(), review.ArchiveInput{
+		RequestID:                request.RequestID,
 		TaskID:                   r.PathValue("id"),
 		TenantID:                 request.TenantID,
 		IdempotencyKey:           request.IdempotencyKey,
@@ -298,6 +299,7 @@ func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Request-ID", request.RequestID)
 	result, err := h.workspaces.Prepare(r.Context(), workspace.PrepareInput{
+		RequestID:       request.RequestID,
 		TenantID:        request.TenantID,
 		TaskID:          r.PathValue("id"),
 		IdempotencyKey:  request.IdempotencyKey,
@@ -372,6 +374,7 @@ func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-Request-ID", request.RequestID)
 	result, err := h.workspaces.Register(r.Context(), workspace.RegisterInput{
+		RequestID:      request.RequestID,
 		TenantID:       request.TenantID,
 		TaskID:         r.PathValue("id"),
 		IdempotencyKey: request.IdempotencyKey,

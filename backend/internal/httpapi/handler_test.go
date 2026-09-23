@@ -1341,8 +1341,10 @@ func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
 			CorrelationID string `json:"correlationId"`
 			CausationID   string `json:"causationId"`
 			Payload       struct {
-				Status  string `json:"status"`
-				Version uint64 `json:"version"`
+				Task struct {
+					Status  string `json:"status"`
+					Version uint64 `json:"version"`
+				} `json:"task"`
 			} `json:"payload"`
 		} `json:"items"`
 	}
@@ -1354,7 +1356,7 @@ func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
 	}
 
 	created := body.Items[0]
-	if created.SchemaVersion != "1.0" || created.EventID != "evt-1" || created.EventType != "task.created" {
+	if created.SchemaVersion != "2.0" || created.EventID != "evt-1" || created.EventType != "task.created" {
 		t.Errorf("unexpected event identity: %#v", created)
 	}
 	if created.OccurredAt == "" {
@@ -1366,7 +1368,7 @@ func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
 	if created.CorrelationID != "task-1" || created.CausationID != "req-create-event" {
 		t.Errorf("unexpected event tracing fields: %#v", created)
 	}
-	if created.Payload.Status != "CREATED" || created.Payload.Version != 1 {
+	if created.Payload.Task.Status != "CREATED" || created.Payload.Task.Version != 1 {
 		t.Errorf("unexpected event payload: %#v", created.Payload)
 	}
 }
@@ -1418,8 +1420,10 @@ func TestListTaskEventsReturnsTheQueuedEventAfterCreation(t *testing.T) {
 			Sequence    uint64 `json:"sequence"`
 			CausationID string `json:"causationId"`
 			Payload     struct {
-				Status  string `json:"status"`
-				Version uint64 `json:"version"`
+				Task struct {
+					Status  string `json:"status"`
+					Version uint64 `json:"version"`
+				} `json:"task"`
 			} `json:"payload"`
 		} `json:"items"`
 	}
@@ -1440,7 +1444,7 @@ func TestListTaskEventsReturnsTheQueuedEventAfterCreation(t *testing.T) {
 	if queued.CausationID != "req-queue-event" {
 		t.Errorf("expected queue request as causation, got %q", queued.CausationID)
 	}
-	if queued.Payload.Status != "QUEUED" || queued.Payload.Version != 2 {
+	if queued.Payload.Task.Status != "QUEUED" || queued.Payload.Task.Version != 2 {
 		t.Errorf("unexpected queued payload: %#v", queued.Payload)
 	}
 }

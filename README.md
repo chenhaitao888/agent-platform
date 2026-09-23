@@ -215,7 +215,7 @@ curl -i \
 {
   "items": [
     {
-      "schemaVersion": "1.0",
+      "schemaVersion": "2.0",
       "eventId": "evt-1",
       "eventType": "task.created",
       "occurredAt": "2026-09-22T01:00:00Z",
@@ -224,13 +224,21 @@ curl -i \
       "sequence": 1,
       "correlationId": "task-1",
       "causationId": "req-01",
-      "payload": { "status": "CREATED", "version": 1 }
+      "payload": { "task": { "status": "CREATED", "version": 1 } }
     }
   ]
 }
 ```
 
-Task 准入后会追加 `task.queued`。创建或准入请求被幂等重放时，不会重复追加事件。
+Task 准入后会追加 `task.queued`；Workspace 登记、开始准备、准备成功或失败，分别追加
+`workspace.registered`、`workspace.preparing`、`workspace.ready` 或
+`workspace.preparation_failed`；归档固定 diff 后追加 `artifact.created`。事件的
+`schemaVersion` 已从 `1.0` 升为 `2.0`：Task payload 现在是 `{"task":{"status":"QUEUED","version":2}}`，
+Workspace payload 是 `{"workspace":{"workspaceId":"workspace-1","state":"READY","version":3}}`，
+Artifact payload 包含 `artifactId`、`workspaceId`、`type`、`mediaType`、`sha256`、`sizeBytes`，
+不包含 diff 正文。`workspace.preparation_failed` 记录恢复后的 `REGISTERED` 状态与新版本，
+不暴露内部 Git 错误。客户端若依赖旧的扁平 `payload.status/version`，须同步迁移。
+创建、准入、登记、准备成功和归档请求被幂等重放时，不会重复追加事件。
 `tenantId` 当前是显式查询参数；它只能提供最小租户范围校验，不能替代后续的身份认证与授权。
 
 ### 登记和查询 Workspace 元数据

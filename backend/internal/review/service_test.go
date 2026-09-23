@@ -14,9 +14,9 @@ import (
 )
 
 func TestServiceReadsDiffFromAReadyWorkspace(t *testing.T) {
-	manager, ready := readyWorkspaceFixture(t)
+	manager, ready, tasks := readyWorkspaceFixture(t)
 	source := &recordingDiffSource{patch: []byte("diff --git a/README.md b/README.md\n")}
-	result, err := NewService(manager, source).Get(context.Background(), GetInput{
+	result, err := NewService(manager, source, tasks).Get(context.Background(), GetInput{
 		TaskID:   ready.TaskID,
 		TenantID: ready.TenantID,
 	})
@@ -43,11 +43,11 @@ func TestServiceReadsDiffFromAReadyWorkspace(t *testing.T) {
 }
 
 func TestServiceArchivesTheDiffFromAReadyWorkspace(t *testing.T) {
-	manager, ready := readyWorkspaceFixture(t)
+	manager, ready, tasks := readyWorkspaceFixture(t)
 	patch := []byte("diff --git a/README.md b/README.md\n-base\n+head\n")
 	source := &recordingDiffSource{patch: patch}
 	artifacts := artifact.NewStore()
-	service := NewServiceWithArtifactStore(manager, source, artifacts)
+	service := NewServiceWithArtifactStore(manager, source, artifacts, tasks)
 
 	result, err := service.Archive(context.Background(), ArchiveInput{
 		TaskID:                   ready.TaskID,
@@ -78,9 +78,9 @@ func TestServiceArchivesTheDiffFromAReadyWorkspace(t *testing.T) {
 }
 
 func TestServiceRejectsAStaleWorkspaceVersionBeforeReadingDiff(t *testing.T) {
-	manager, ready := readyWorkspaceFixture(t)
+	manager, ready, tasks := readyWorkspaceFixture(t)
 	source := &recordingDiffSource{patch: []byte("must not be read")}
-	service := NewServiceWithArtifactStore(manager, source, artifact.NewStore())
+	service := NewServiceWithArtifactStore(manager, source, artifact.NewStore(), tasks)
 
 	_, err := service.Archive(context.Background(), ArchiveInput{
 		TaskID:                   ready.TaskID,
@@ -96,7 +96,7 @@ func TestServiceRejectsAStaleWorkspaceVersionBeforeReadingDiff(t *testing.T) {
 	}
 }
 
-func readyWorkspaceFixture(t *testing.T) (*workspace.Manager, workspace.Workspace) {
+func readyWorkspaceFixture(t *testing.T) (*workspace.Manager, workspace.Workspace, *task.Store) {
 	t.Helper()
 	tasks := task.NewStore()
 	created, err := tasks.Create(task.CreateInput{
@@ -152,7 +152,7 @@ func readyWorkspaceFixture(t *testing.T) (*workspace.Manager, workspace.Workspac
 	if err != nil {
 		t.Fatalf("prepare Workspace: %v", err)
 	}
-	return manager, ready.Workspace
+	return manager, ready.Workspace, tasks
 }
 
 type recordingDiffSource struct {

@@ -8,6 +8,7 @@ import (
 
 	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/repository"
+	"agent-platform/backend/internal/task"
 	"agent-platform/backend/internal/workspace"
 )
 
@@ -22,6 +23,7 @@ type GetInput struct {
 }
 
 type ArchiveInput struct {
+	RequestID                string
 	TaskID                   string
 	TenantID                 string
 	IdempotencyKey           string
@@ -43,14 +45,15 @@ type Service struct {
 	workspaces *workspace.Manager
 	source     repository.DiffReader
 	artifacts  *artifact.Store
+	tasks      *task.Store
 }
 
-func NewService(workspaces *workspace.Manager, source repository.DiffReader) *Service {
-	return NewServiceWithArtifactStore(workspaces, source, artifact.NewStore())
+func NewService(workspaces *workspace.Manager, source repository.DiffReader, tasks *task.Store) *Service {
+	return NewServiceWithArtifactStore(workspaces, source, artifact.NewStore(), tasks)
 }
 
-func NewServiceWithArtifactStore(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store) *Service {
-	return &Service{workspaces: workspaces, source: source, artifacts: artifacts}
+func NewServiceWithArtifactStore(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store, tasks *task.Store) *Service {
+	return &Service{workspaces: workspaces, source: source, artifacts: artifacts, tasks: tasks}
 }
 
 func (s *Service) Get(ctx context.Context, input GetInput) (Diff, error) {
@@ -118,6 +121,25 @@ func (s *Service) Archive(ctx context.Context, input ArchiveInput) (artifact.Cre
 	})
 	if err != nil {
 		return artifact.CreateResult{}, fmt.Errorf("create diff Artifact: %w", err)
+	}
+	if result.Created {
+		// 幂等重放拿到同一个 Artifact，但“创建”这一事实只能追加一次。
+		// 只记录元数据，不把最多 1 MiB 的 patch 或内部 Git 输出写入事件。
+		s.tasks.AppendEvent(task.AppendEventInput{
+			TenantID:    result.Artifact.TenantID,
+			TaskID:      result.Artifact.TaskID,
+			EventType:   task.EventTypeArtifactCreated,
+			CausationID: input.RequestID,
+			OccurredAt:  result.Artifact.CreatedAt,
+			Payload: task.EventPayload{Artifact: &task.ArtifactEventPayload{
+				ArtifactID:  result.Artifact.ID,
+				WorkspaceID: result.Artifact.WorkspaceID,
+				Type:        string(result.Artifact.Type),
+				MediaType:   result.Artifact.MediaType,
+				SHA256:      result.Artifact.SHA256,
+				SizeBytes:   result.Artifact.SizeBytes,
+			}},
+		})
 	}
 	return result, nil
 }

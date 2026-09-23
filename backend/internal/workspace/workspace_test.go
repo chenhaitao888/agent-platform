@@ -61,6 +61,14 @@ func TestPrepareMakesTheWorkspaceReadyAtAnOwnedPath(t *testing.T) {
 	if preparing.Path != "" {
 		t.Fatalf("expected no usable path before preparation finishes, got %q", preparing.Path)
 	}
+	// 类比 Java 中异步任务的状态通知：外部操作尚未完成时，开始事件就应可见。
+	events, ok := tasks.ListEvents("task-1", "tenant-a")
+	if !ok || len(events) != 4 {
+		t.Fatalf("expected four events while preparation is running, got %#v", events)
+	}
+	if events[3].EventType != task.EventTypeWorkspacePreparing || events[3].Payload.Workspace == nil || events[3].Payload.Workspace.State != string(StatePreparing) {
+		t.Fatalf("expected a visible PREPARING event before completion, got %#v", events[3])
+	}
 
 	close(preparer.release)
 	prepared := <-outcome
@@ -80,6 +88,10 @@ func TestPrepareMakesTheWorkspaceReadyAtAnOwnedPath(t *testing.T) {
 	}
 	if ready.Path != filepath.Join(resolvedRoot, "workspace-1", "worktree") {
 		t.Fatalf("expected manager-owned workspace path, got %q", ready.Path)
+	}
+	events, ok = tasks.ListEvents("task-1", "tenant-a")
+	if !ok || len(events) != 5 || events[4].EventType != task.EventTypeWorkspaceReady {
+		t.Fatalf("expected READY to be the next event, got %#v", events)
 	}
 }
 

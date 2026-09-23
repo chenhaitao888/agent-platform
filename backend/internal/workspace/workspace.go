@@ -63,6 +63,7 @@ type Workspace struct {
 }
 
 type RegisterInput struct {
+	RequestID      string
 	TenantID       string
 	TaskID         string
 	IdempotencyKey string
@@ -74,6 +75,7 @@ type RegisterResult struct {
 }
 
 type PrepareInput struct {
+	RequestID       string
 	TenantID        string
 	TaskID          string
 	IdempotencyKey  string
@@ -197,7 +199,25 @@ func (m *Manager) Register(ctx context.Context, input RegisterInput) (RegisterRe
 	m.idempotency[scope] = registrationRecord{
 		taskID: input.TaskID,
 	}
+	m.appendWorkspaceEvent(registered, task.EventTypeWorkspaceRegistered, input.RequestID, registered.CreatedAt)
 	return RegisterResult{Workspace: registered, Created: true}, nil
+}
+
+func (m *Manager) appendWorkspaceEvent(current Workspace, eventType task.EventType, requestID string, occurredAt time.Time) {
+	// 调用方已在 Manager 锁内完成状态变化；Task Store 再用自己的锁分配该 Task 的事件序号。
+	// 这保持单进程的追加顺序，但不是跨 Store 的数据库事务。
+	m.tasks.AppendEvent(task.AppendEventInput{
+		TenantID:    current.TenantID,
+		TaskID:      current.TaskID,
+		EventType:   eventType,
+		CausationID: requestID,
+		OccurredAt:  occurredAt,
+		Payload: task.EventPayload{Workspace: &task.WorkspaceEventPayload{
+			WorkspaceID: current.ID,
+			State:       string(current.State),
+			Version:     current.Version,
+		}},
+	})
 }
 
 func (m *Manager) registrationResultLocked(input RegisterInput) (RegisterResult, bool, error) {
@@ -257,6 +277,7 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 	current.State = StatePreparing
 	current.Version++
 	m.byTask[input.TaskID] = current
+	m.appendWorkspaceEvent(current, task.EventTypeWorkspacePreparing, input.RequestID, time.Now().UTC())
 	m.mu.Unlock()
 
 	destination := filepath.Join(m.root, current.ID, "worktree")
@@ -278,6 +299,8 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 		current.State = StateRegistered
 		current.Version++
 		m.byTask[input.TaskID] = current
+		// 事件只记录外部可见的最终状态，不把 Git 的内部诊断或凭据写入时间线。
+		m.appendWorkspaceEvent(current, task.EventTypeWorkspacePreparationFailed, input.RequestID, time.Now().UTC())
 		m.mu.Unlock()
 		if errors.Is(err, ErrPreparationUnavailable) {
 			return PrepareResult{}, err
@@ -300,5 +323,6 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 		expectedVersion: input.ExpectedVersion,
 		result:          current,
 	}
+	m.appendWorkspaceEvent(current, task.EventTypeWorkspaceReady, input.RequestID, time.Now().UTC())
 	return PrepareResult{Workspace: current, Prepared: true}, nil
 }

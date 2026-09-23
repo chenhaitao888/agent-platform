@@ -32,7 +32,7 @@ describe('TaskEventTimeline', () => {
         JSON.stringify({
           items: [
             {
-              schemaVersion: '1.0',
+              schemaVersion: '2.0',
               eventId: 'evt-1',
               eventType: 'task.created',
               occurredAt: '2026-09-22T01:00:00Z',
@@ -41,10 +41,10 @@ describe('TaskEventTimeline', () => {
               sequence: 1,
               correlationId: 'task-1',
               causationId: 'req-create-task-1',
-              payload: { status: 'CREATED', version: 1 },
+              payload: { task: { status: 'CREATED', version: 1 } },
             },
             {
-              schemaVersion: '1.0',
+              schemaVersion: '2.0',
               eventId: 'evt-2',
               eventType: 'task.queued',
               occurredAt: '2026-09-22T01:01:00Z',
@@ -53,7 +53,46 @@ describe('TaskEventTimeline', () => {
               sequence: 2,
               correlationId: 'task-1',
               causationId: 'req-queue-task-1',
-              payload: { status: 'QUEUED', version: 2 },
+              payload: { task: { status: 'QUEUED', version: 2 } },
+            },
+            {
+              schemaVersion: '2.0',
+              eventId: 'evt-3',
+              eventType: 'workspace.registered',
+              occurredAt: '2026-09-22T01:02:00Z',
+              tenantId: 'tenant-local',
+              taskId: 'task-1',
+              sequence: 3,
+              correlationId: 'task-1',
+              causationId: 'req-register-workspace-1',
+              payload: {
+                workspace: {
+                  workspaceId: 'workspace-1',
+                  state: 'REGISTERED',
+                  version: 1,
+                },
+              },
+            },
+            {
+              schemaVersion: '2.0',
+              eventId: 'evt-4',
+              eventType: 'artifact.created',
+              occurredAt: '2026-09-22T01:03:00Z',
+              tenantId: 'tenant-local',
+              taskId: 'task-1',
+              sequence: 4,
+              correlationId: 'task-1',
+              causationId: 'req-archive-diff-1',
+              payload: {
+                artifact: {
+                  artifactId: 'artifact-1',
+                  workspaceId: 'workspace-1',
+                  type: 'REPOSITORY_DIFF',
+                  mediaType: 'text/x-diff',
+                  sha256: 'abc123',
+                  sizeBytes: 42,
+                },
+              },
             },
           ],
         }),
@@ -75,6 +114,10 @@ describe('TaskEventTimeline', () => {
     expect(timeline).toHaveTextContent('CREATED · version 1')
     expect(timeline).toHaveTextContent('task.queued')
     expect(timeline).toHaveTextContent('QUEUED · version 2')
+    expect(timeline).toHaveTextContent('workspace.registered')
+    expect(timeline).toHaveTextContent('REGISTERED · version 1 · workspace-1')
+    expect(timeline).toHaveTextContent('artifact.created')
+    expect(timeline).toHaveTextContent('artifact-1 · REPOSITORY_DIFF · 42 B')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/tasks/task-1/events?tenantId=tenant-local',
     )

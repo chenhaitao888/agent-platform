@@ -20,6 +20,21 @@ type TimelineState =
   | { kind: 'ready'; items: TaskEvent[] }
   | { kind: 'failed'; message: string }
 
+function eventSummary(event: TaskEvent): string {
+  switch (event.eventType) {
+    case 'task.created':
+    case 'task.queued':
+      return `${event.payload.task.status} · version ${event.payload.task.version}`
+    case 'workspace.registered':
+    case 'workspace.preparing':
+    case 'workspace.ready':
+    case 'workspace.preparation_failed':
+      return `${event.payload.workspace.state} · version ${event.payload.workspace.version} · ${event.payload.workspace.workspaceId}`
+    case 'artifact.created':
+      return `${event.payload.artifact.artifactId} · ${event.payload.artifact.type} · ${event.payload.artifact.sizeBytes} B`
+  }
+}
+
 export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
   const [state, setState] = useState<TimelineState>({ kind: 'idle' })
 
@@ -70,9 +85,7 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
           {state.items.map((event) => (
             <li key={event.eventId}>
               <strong>{event.eventType}</strong>
-              <span>
-                {event.payload.status} · version {event.payload.version}
-              </span>
+              <span>{eventSummary(event)}</span>
               <time dateTime={event.occurredAt}>{event.occurredAt}</time>
             </li>
           ))}

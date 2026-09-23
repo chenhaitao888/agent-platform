@@ -246,7 +246,8 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 - 依据：架构文档 4 节定义 `PlatformEvent` 作为集成、流式展示和审计的事实载体，附录 A.3
   定义统一事件信封；Phase 0 要跑通执行事件。
 - 新增 `GET /api/v1/tasks/{id}/events?tenantId={tenantId}`，响应使用 `{"items":[...]}` 包装。
-- 当前产生两类事件：Task 首次创建时的 `task.created`，以及成功准入时的 `task.queued`。
+- 此里程碑当时只产生两类事件：Task 首次创建时的 `task.created`，以及成功准入时的
+  `task.queued`；M13.1 第 8 步已扩展 Workspace/Artifact 事件并升级契约。
 - 最小信封包含 schema、事件身份、时间、租户/Task 范围、sequence、关联/因果 ID 和状态载荷。
 - `correlationId` 使用 Task ID；`causationId` 使用触发该事实的写请求 `requestId`。
 - 事件与 Task 变更在同一把内存写锁内完成；幂等重放只返回原结果，不重复产生事件。
@@ -997,6 +998,68 @@ fetch，Workspace 仍会失败并恢复为 REGISTERED；如何按 GitLab 具体�
 它守住“不写回零值”的局部不变量，不代表已经设计好删除后的目录清理与幂等记录清理。
 路径校验和执行 Git 之间也不是原子操作，部署时仍须限制谁能修改 Workspace root。
 
+### M13.1（第 8 步）：补齐 Task 时间线中的 Workspace 与 Artifact 事实
+
+- 状态：完成（2026-09-23）；处理审查清单第 8 项，M14 仍暂停。
+- 问题：旧时间线只显示 Task 创建和准入。Workspace 已登记、正在准备、准备成功/失败，
+  以及 diff 已归档为 Artifact，调用方都看不到。
+- 范围：只扩展当前单进程内存事件流和 React 展示；不接入数据库、MQ、Outbox、持久化审计或自动轮询。
+
+#### 先确定事件契约
+
+事件的外壳仍保留 `eventId`、`eventType`、`tenantId`、`taskId`、`sequence`、
+`correlationId`、`causationId` 和 `occurredAt`。`sequence` 只在一个 Task 内递增，
+`causationId` 是触发这次事实的 requestId；同一次 Prepare 的“开始”和“完成/失败”使用同一个 requestId。
+payload 改成由 `eventType` 决定的分支：
+
+| 事件类型 | payload 分支 | 记录什么 |
+| --- | --- | --- |
+| `task.created`、`task.queued` | `task` | Task 的 `status`、`version` |
+| `workspace.registered`、`workspace.preparing`、`workspace.ready`、`workspace.preparation_failed` | `workspace` | `workspaceId`、变化后的 `state`、`version` |
+| `artifact.created` | `artifact` | `artifactId`、`workspaceId`、类型、媒体类型、SHA-256、字节数；不含正文 |
+
+原来的 `payload.status/version` 是扁平结构；现在 Task 版本放在 `payload.task.version`，
+Workspace 版本放在 `payload.workspace.version`，避免同名字段被误解。因为 JSON 结构发生不兼容变化，
+`schemaVersion` 从 `1.0` 升为 `2.0`，README 与 React 类型也同步迁移。这个 Phase 0 选择用一次
+显式破坏性升级换取清晰契约；旧 1.0 客户端不能直接读取 2.0 payload。
+
+#### 代码拆解与 Java 对照
+
+1. `task.EventPayload` 的 `Task`、`Workspace`、`Artifact` 三个指针是三种可选分支；当前事件
+   只设置其中一个。Java 可类比 `sealed interface EventPayload` 下的三个 record，但 Go 在这里用
+   `eventType` + 可选 JSON 字段表达。`task.Store.AppendEvent` 为同一 Task 分配下一条 sequence，
+   并生成统一的事件外壳；创建/准入原来的事件也改用 2.0 分支。
+2. 指针让 payload 能省略无关分支，但 Go 的 slice 拷贝不会自动复制指针指向的对象。因此
+   `appendEventLocked` 写入时复制 payload，`ListEvents` 读出时再复制，防止调用方修改一份返回值
+   就悄悄改掉已记录事实。Java 可类比返回不可变 record，或在 Repository 边界做 defensive copy。
+3. `workspace.Manager` 在登记成功、进入 `PREPARING`、进入 `READY`、准备失败后恢复为
+   `REGISTERED` 时，分别追加事件。失败事件记录恢复后的 version 3，而不是失败前的 version 2；
+   它只含稳定状态，不含 Git stderr、token 或内部异常文本。准备请求的两条事件共享 causationId。
+4. `review.Service.Archive` 只有在 `artifact.Store.Create` 返回 `Created: true` 时才追加
+   `artifact.created`，幂等重放不再造一条“新建”事实。它写 Artifact 的摘要和归属，不写最大
+   1 MiB 的 diff 正文。Java 可类比 Application Service 在归档成功后发布领域事实；
+   此处只是内存同步调用，并非真正的事务 Outbox。
+5. React 的 `TaskEvent` 是按 `eventType` 区分的 TypeScript 联合类型，时间线用 `switch`
+   显示每种 payload。Java 可类比对 sealed hierarchy 做 `switch` 模式匹配；编译器会帮助发现
+   新事件类型尚未处理的 UI 分支。
+
+#### 测试先行记录与验证
+
+1. 先把创建事件测试改为期待 `2.0` 与 `payload.task`，旧实现返回 1.0/扁平 payload（RED）；
+   调整 Task Event 后变绿。原有准入事件测试也同步迁移。
+2. 逐条增加 HTTP 行为测试：登记后事件数仍为 2、Prepare 成功后仍为 3、Prepare 失败后仍为 4、
+   Artifact 归档后仍为 5（每条先 RED）。实现后分别得到第 3、4/5、5、6 条正确事件。
+   测试还确认失败事件不包含 Git 内部诊断，归档事件不包含 patch 正文。
+3. 登记、准备成功、归档的幂等重放均保持原事件数；Store 测试确认修改写入用的 payload
+   指针或读出的事件副本，不会改掉已保存记录。
+4. 前端先用 2.0 事件样例得到空的状态/版本（RED），再按事件类别渲染后变绿。
+   `go test ./...`、`go test -race ./...`、`go vet ./...`、前端 27 个测试与构建均通过；
+   Go 总语句覆盖率 77.0%，高于审查时的 68.3%。
+
+当前 Workspace、Artifact 状态和 Task 事件保存在不同的内存 Store 中，虽然调用是同步的，
+却没有跨 Store 的原子事务。进程重启后状态与事件都会丢失；未来落数据库时，要让业务状态与
+Outbox 记录同事务提交，再异步发布到 Event Bus，才能成为可靠、可恢复的审计链。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -1019,7 +1082,8 @@ node --run build
 - 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
 - 幂等索引只存在于单个 Go 进程，重启或多实例部署后不能提供全局唯一保证。
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
-- Task 事件与 ID 只存在于单进程内存；它们还不是事务 Outbox，也没有发布到 Event Bus。
+- Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
+  它们还不是事务 Outbox，也没有发布到 Event Bus。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId、挂载或孤儿目录回收。
