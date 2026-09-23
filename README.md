@@ -5,6 +5,7 @@
 - Go HTTP 服务与 `GET /healthz`
 - 内存版 Task 幂等创建、不可变仓库引用、查询、最近列表、状态迁移与事件时间线
 - GitLab 仓库/commit 可信验证，以及 Workspace 登记、bare clone、detached worktree 和状态查询
+- READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
 - Go 接口测试与 React 组件测试
 
@@ -25,6 +26,7 @@ agent-platform/
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
 │       ├── repository/          # Repository Reference 验证接口与错误分类
+│       ├── review/              # 从 READY Workspace 读取不可变评审输入
 │       ├── task/                # Task 模型与内存仓库，类似精简的领域/Repository 层
 │       └── workspace/           # Workspace 登记、准备状态机与路径所有权
 ├── CONTEXT.md                   # 领域统一语言，不包含实现细节
@@ -288,6 +290,36 @@ GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必�
 `409 invalid_workspace_state`，Git/API 失败返回稳定的 `503 workspace_preparation_failed`，不会把
 内部 Git 输出返回给调用方。
 
+### 查看固定 base/head 差异
+
+Workspace 进入 READY 后，可以读取 Task 创建时已经固定的两个 commit 之间的补丁：
+
+```bash
+curl -i \
+  'http://localhost:8080/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local'
+```
+
+请求没有 `baseSha`、`headSha` 或本地路径参数。服务端从 READY Workspace 读取这些值，再执行受控的
+本地 Git 命令；调用方不能把评审目标临时换成其他 revision。响应包含补丁本身和可校验元数据：
+
+```json
+{
+  "taskId": "task-1",
+  "workspaceId": "workspace-1",
+  "baseSha": "1111111111111111111111111111111111111111",
+  "headSha": "2222222222222222222222222222222222222222",
+  "mediaType": "text/x-diff",
+  "sha256": "64位十六进制摘要",
+  "sizeBytes": 123,
+  "patch": "diff --git ..."
+}
+```
+
+Git 使用参数数组运行，不经过 shell，并关闭 external diff 与 textconv。子进程使用与 Workspace 准备
+相同的环境白名单，但凭据为空。补丁最多 1 MiB；超过限制返回稳定的 `413 diff_too_large`。当前为了
+教学和 Phase 0 tracer bullet 直接在 JSON 中返回补丁，下一阶段接入 Artifact 后，大内容将改为返回
+不可变引用。
+
 这里的 `QUEUED` 目前只是 Task 的状态投影，表示“已准入”；还没有真实消息队列或执行器。
 Task 只保存在 Go 进程内存中，重启服务后数据会丢失。本阶段也还没有数据库、完整状态机
 或工作流执行。
@@ -322,7 +354,8 @@ GitLab provider，并为每次提交生成 request ID 和 idempotency key。`CRE
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动
 发起额外请求。`QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
-会显示“准备 Workspace”；成功后页面展示 READY 和后端记录的真实工作目录。
+会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
+base/head 的差异。
 
 运行前端测试与构建：
 
@@ -356,5 +389,7 @@ universal Node 的 macOS 上，它能稳定保持 arm64 架构；脚本内容与
   Go 通过方法集合隐式实现接口，不需要写 `implements`。
 - `workspace.Preparer` 类似 Java 应用层定义的基础设施 port；GitLab adapter 负责取得可信 clone URL，
   `gitworkspace.Preparer` 则像封装好的 `ProcessBuilder`，集中控制参数、环境、目录和失败清理。
+- `review.Service` 类似 Java Application Service：它只接受 task/tenant，从 Workspace Manager 取得
+  可信 path/base/head，再调用 `repository.DiffReader` port；Controller 不允许调用方提交 revision。
 - `REGISTERED → PREPARING → READY` 类似带 `@Version` 的实体状态迁移。慢 Git I/O 发生时不会持有
   Manager 的互斥锁，因此 GET 仍能读取 PREPARING；失败回到 REGISTERED 时也递增 version。

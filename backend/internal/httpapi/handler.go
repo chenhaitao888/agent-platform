@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"agent-platform/backend/internal/repository"
+	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/task"
 	"agent-platform/backend/internal/workspace"
 )
@@ -19,6 +20,7 @@ type healthResponse struct {
 type handler struct {
 	tasks      *task.Store
 	workspaces *workspace.Manager
+	reviews    *review.Service
 }
 
 type createTaskRequest struct {
@@ -74,16 +76,33 @@ func NewHandlerWithRepositoryVerifier(verifier repository.ReferenceVerifier) htt
 }
 
 func NewHandlerWithWorkspacePreparer(verifier repository.ReferenceVerifier, preparer workspace.Preparer, root string) (http.Handler, error) {
+	return NewHandlerWithWorkspaceServices(verifier, preparer, repository.UnavailableDiffReader{}, root)
+}
+
+func NewHandlerWithWorkspaceServices(
+	verifier repository.ReferenceVerifier,
+	preparer workspace.Preparer,
+	diffReader repository.DiffReader,
+	root string,
+) (http.Handler, error) {
 	tasks := task.NewStore()
 	workspaces, err := workspace.NewManagerWithPreparer(tasks, verifier, preparer, root)
 	if err != nil {
 		return nil, err
 	}
-	return newHandler(tasks, workspaces), nil
+	return newHandlerWithDiffReader(tasks, workspaces, diffReader), nil
 }
 
 func newHandler(tasks *task.Store, workspaces *workspace.Manager) http.Handler {
-	h := &handler{tasks: tasks, workspaces: workspaces}
+	return newHandlerWithDiffReader(tasks, workspaces, repository.UnavailableDiffReader{})
+}
+
+func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader) http.Handler {
+	h := &handler{
+		tasks:      tasks,
+		workspaces: workspaces,
+		reviews:    review.NewService(workspaces, diffReader),
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("POST /api/v1/tasks", h.createTask)
@@ -93,9 +112,45 @@ func newHandler(tasks *task.Store, workspaces *workspace.Manager) http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace", h.createWorkspace)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace/prepare", h.prepareWorkspace)
 	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace", h.getWorkspace)
+	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace/diff", h.getWorkspaceDiff)
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)
 
 	return mux
+}
+
+func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+		return
+	}
+
+	diff, err := h.reviews.Get(r.Context(), review.GetInput{
+		TaskID:   r.PathValue("id"),
+		TenantID: tenantID,
+	})
+	if errors.Is(err, review.ErrWorkspaceNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "workspace not found")
+		return
+	}
+	if errors.Is(err, review.ErrWorkspaceNotReady) {
+		writeError(w, http.StatusConflict, "workspace_not_ready", "workspace must be READY before reading its diff")
+		return
+	}
+	if errors.Is(err, repository.ErrDiffTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "diff_too_large", "repository diff exceeds the supported size")
+		return
+	}
+	if errors.Is(err, repository.ErrDiffUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff is unavailable")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, diff)
 }
 
 func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {

@@ -25,6 +25,11 @@ _Avoid_: Ready Workspace、Prepared Workspace
 代码工作区就绪，不表示容器、Codex 或 Workflow 已经启动。
 _Avoid_: Running Workspace、Runtime-ready Workspace
 
+**Immutable Review Diff**:
+平台只使用 Ready Workspace 已记录的 base SHA 与 head SHA 生成的只读补丁；调用方不能临时替换 revision
+或本地路径。当前补丁用于 Phase 0 PR Review 的受控输入，不等同于可长期保存的 Artifact。
+_Avoid_: 最新差异、工作区当前改动
+
 **Repository Reference**:
 由代码托管平台、仓库标识、base SHA 和 head SHA 共同确定的可复现代码输入；Task 创建时先记录，
 Workspace 登记前必须向代码托管平台验证。

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import type { WorkspaceDiff } from './review'
 import type { Task } from './task'
 import type { Workspace } from './workspace'
 
@@ -20,11 +21,19 @@ type WorkspaceState =
   | { kind: 'loaded'; workspace: Workspace }
   | { kind: 'failed'; message: string }
 
+type DiffState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'loaded'; diff: WorkspaceDiff }
+  | { kind: 'failed'; message: string }
+
 export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
+  const [diffState, setDiffState] = useState<DiffState>({ kind: 'idle' })
 
   async function loadWorkspace() {
     setState({ kind: 'loading' })
+    setDiffState({ kind: 'idle' })
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
@@ -54,6 +63,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
 
   async function registerWorkspace() {
     setState({ kind: 'registering' })
+    setDiffState({ kind: 'idle' })
 
     try {
       const response = await fetch(`/api/v1/tasks/${task.id}/workspace`, {
@@ -84,6 +94,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
 
   async function prepareWorkspace(workspace: Workspace) {
     setState({ kind: 'preparing' })
+    setDiffState({ kind: 'idle' })
 
     try {
       const response = await fetch(
@@ -113,6 +124,31 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error'
       setState({ kind: 'failed', message })
+    }
+  }
+
+  async function loadDiff() {
+    setDiffState({ kind: 'loading' })
+
+    try {
+      const query = new URLSearchParams({ tenantId: task.tenantId })
+      const response = await fetch(
+        `/api/v1/tasks/${task.id}/workspace/diff?${query.toString()}`,
+      )
+      if (!response.ok) {
+        const error = (await response.json()) as ErrorResponse
+        setDiffState({
+          kind: 'failed',
+          message: error.message ?? `HTTP ${response.status}`,
+        })
+        return
+      }
+
+      const diff = (await response.json()) as WorkspaceDiff
+      setDiffState({ kind: 'loaded', diff })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error'
+      setDiffState({ kind: 'failed', message })
     }
   }
 
@@ -220,6 +256,44 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
             <p className="task-list-message">
               Workspace 正在准备中，请稍后刷新。
             </p>
+          )}
+          {state.workspace.state === 'READY' && (
+            <button
+              type="button"
+              disabled={diffState.kind === 'loading'}
+              onClick={() => void loadDiff()}
+            >
+              {diffState.kind === 'loading'
+                ? '加载固定版本差异中…'
+                : '查看固定版本差异'}
+            </button>
+          )}
+          {diffState.kind === 'failed' && (
+            <p className="error-message" role="alert">
+              差异加载失败：{diffState.message}
+            </p>
+          )}
+          {diffState.kind === 'loaded' && (
+            <section
+              className="workspace-diff"
+              aria-label={`${task.id} 的固定版本差异`}
+            >
+              <dl>
+                <div>
+                  <dt>媒体类型</dt>
+                  <dd>{diffState.diff.mediaType}</dd>
+                </div>
+                <div>
+                  <dt>大小</dt>
+                  <dd>{diffState.diff.sizeBytes} bytes</dd>
+                </div>
+                <div>
+                  <dt>SHA-256</dt>
+                  <dd>{diffState.diff.sha256}</dd>
+                </div>
+              </dl>
+              <pre>{diffState.diff.patch}</pre>
+            </section>
           )}
         </div>
       )}

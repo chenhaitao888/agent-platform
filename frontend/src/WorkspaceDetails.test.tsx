@@ -228,6 +228,74 @@ describe('WorkspaceDetails', () => {
     )
   })
 
+  it('loads the immutable diff for a ready workspace', async () => {
+    const ready = {
+      id: 'workspace-1',
+      tenantId: 'tenant-local',
+      taskId: 'task-1',
+      repository: {
+        provider: 'gitlab',
+        repositoryId: 'project-7',
+      },
+      baseSha: '1111111111111111111111111111111111111111',
+      headSha: '2222222222222222222222222222222222222222',
+      state: 'READY',
+      version: 3,
+      path: '/var/lib/agent-platform/workspace-1/worktree',
+      createdAt: '2026-09-22T02:00:00Z',
+    }
+    const patch = 'diff --git a/README.md b/README.md\n-base\n+head\n'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(ready), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            taskId: 'task-1',
+            workspaceId: 'workspace-1',
+            baseSha: ready.baseSha,
+            headSha: ready.headSha,
+            mediaType: 'text/x-diff',
+            sha256:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            sizeBytes: patch.length,
+            patch,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WorkspaceDetails task={queuedTask} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('READY')
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看固定版本差异' }),
+    )
+
+    const diff = await screen.findByRole('region', {
+      name: 'task-1 的固定版本差异',
+    })
+    expect(diff).toHaveTextContent('text/x-diff')
+    expect(diff).toHaveTextContent(`${patch.length} bytes`)
+    expect(diff).toHaveTextContent('-base')
+    expect(diff).toHaveTextContent('+head')
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local',
+    )
+  })
+
   it('shows a repository verification failure during registration', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi

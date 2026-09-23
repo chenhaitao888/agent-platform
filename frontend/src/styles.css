@@ -420,6 +420,24 @@ h1 {
   font-size: 0.78rem;
 }
 
+.workspace-diff {
+  margin-top: 14px;
+}
+
+.workspace-diff pre {
+  max-height: 420px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 14px;
+  border-radius: 12px;
+  color: #dce8e2;
+  background: #182027;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
 .task-event-timeline ol {
   display: grid;
   gap: 0;

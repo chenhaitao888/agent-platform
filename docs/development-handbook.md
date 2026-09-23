@@ -606,6 +606,64 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
   验证三项配置不会进入半配置状态。
 - 未提供企业 GitLab 地址与服务令牌，因此没有对企业 GitLab 执行真实 clone；该联调仍需在受控环境完成。
 
+### M12：读取固定 base/head 的真实 Git Diff
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档 5.3 的 PR Review 节点序列在 `prepareWorkspace` 后执行 `git.getDiff`，再把受控输入
+  交给只读 Agent。本步先完成确定性的 diff 读取，不创建尚不能运行的 AgentSession 空壳。
+- 新增 `GET /api/v1/tasks/{id}/workspace/diff?tenantId=...`。调用方只能给 Task 和 tenant，不能提交
+  path、base SHA 或 head SHA；这些坐标全部来自 READY Workspace。
+- 响应包含 `text/x-diff` patch、字节数和 SHA-256，便于下一步 Codex 输入与将来的 Artifact 校验。
+- 本步不做：Artifact 持久化、对象存储、AgentSession、Codex exec、Findings schema、成本与评论发布。
+
+#### M12 后端代码拆解
+
+1. `repository.DiffReader` 是应用层 port，可类比 Java interface；`DiffInput` 用具名字段承载 path、
+   base 与 head，避免连续三个 `String` 参数传错。`gitworkspace.DiffReader` 是 Git CLI adapter；Go
+   不写 `implements`，只要方法签名一致就自动满足接口。
+2. `review.Service.Get` 先按 task/tenant 查询 Workspace，并要求状态为 READY 且 path 非空；随后才把
+   Workspace 内保存的 path/base/head 交给 adapter。HTTP 请求因此没有机会替换 revision。
+3. Git 参数固定为 `-C worktree diff --no-ext-diff --no-textconv --binary base head --`。它直接通过
+   `exec.CommandContext` 传参数数组，不经过 shell；`--` 明确结束选项。Java 可类比
+   `new ProcessBuilder(List.of(...))`，而不是拼接一条交给 `/bin/sh -c` 的字符串。
+4. `--no-ext-diff` 和 `--no-textconv` 禁止仓库配置触发外部 diff/textconv 程序。diff 是纯本地操作，
+   使用白名单环境和空凭据，不再接触 GitLab token。
+5. `limitedBuffer` 最多保留 1 MiB patch。达到上限后仍继续消费 stdout，并向 Git 报告本次写入成功，
+   避免管道塞满使子进程卡死；进程结束后返回 `repository.ErrDiffTooLarge`。
+6. `review.Service` 对完整 patch 计算 SHA-256，并连同 task、workspace、base/head、media type 和大小返回。
+   当前它还是即时读取结果，不冒充已经持久化且有保留策略的 Artifact。
+7. Handler 只解析 tenant、调用 Service 并翻译错误：非 READY 返回 409，超限返回 413，Git 不可用
+   返回 503。内部 Git 文本不会进入稳定 HTTP 错误。
+8. `cmd/api` 同时创建 Git Workspace Preparer 和 Git Diff Reader。两者使用同一个受控 Git 可执行文件，
+   但职责不同：前者负责 clone/worktree，后者只读已经准备好的本地目录。
+
+#### M12 前端代码拆解
+
+1. `WorkspaceDiff` 是 TypeScript DTO，`mediaType` 使用字面量类型 `'text/x-diff'`。它类似 Java record，
+   但 TypeScript 类型在运行时会被擦除，当前仍信任平台自己的 JSON 响应。
+2. `WorkspaceDetails` 保留原 `WorkspaceState`，另加独立的 `DiffState` 联合类型。两个状态机分开后，
+   “正在准备 Workspace”和“正在加载 diff”不会被一个含义模糊的 boolean 混在一起。
+3. 只有 READY 才显示“查看固定版本差异”。页面展示媒体类型、字节数、SHA-256 和可滚动 patch；
+   REGISTERED/PREPARING 不会发起读取请求。
+
+#### M12 开发过程记录
+
+1. 真实 Git 测试先引用不存在的 `NewDiffReader` 和 `DiffInput`，编译 RED；最小实现后从两次真实 commit
+   中读到 `-base` 与 `+head`，完成第一轮 GREEN。
+2. 第二条测试让假 Git 输出超过 1 MiB，先因缺少超限错误而 RED；加入有上限但持续排空的 buffer 后
+   转为 GREEN。
+3. 应用服务测试使用真实 Task Store 和 Workspace Manager，把 Workspace 推到 READY，再确认 adapter
+   收到的是 Manager 保存的 path/base/head，并验证响应摘要。
+4. HTTP 测试先因 `NewHandlerWithWorkspaceServices` 不存在而 RED；接入 Service 和路由后返回真实 DTO。
+   另一条测试确认带内部文本的超限错误只映射为稳定 413。
+5. React 测试先找不到“查看固定版本差异”按钮；加入独立 DiffState、请求和 patch 展示后转为 GREEN。
+
+#### M12 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- Git adapter 测试使用真实 Git 2.52.0 验证固定 commit patch；假 Git 验证 1 MiB 上限。
+- 前端 5 个测试文件、22 条测试全部通过；Vite 生产构建通过。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -638,6 +696,8 @@ node --run build
   diff 规模；也没有缓存、重试、限流、熔断与持久化验证证据。
 - GitLab token 暂由控制平面环境变量提供，并只进入受控 clone/fetch 子进程；尚未接入 Credential
   Broker、短时凭据与自动轮换。
+- 固定版本 diff 当前随 HTTP JSON 即时返回并限制为 1 MiB；尚未保存为不可变 Artifact，也没有分片、
+  大文件引用、内容分类与保留策略。
 - Repository Connector 目前只支持 GitLab；真实企业 GitLab 凭据联调尚未执行。
 - Task 目前只支持 `CREATED → QUEUED`；`QUEUED` 只是状态投影，还没有真实队列、调度器或
   工作流执行。

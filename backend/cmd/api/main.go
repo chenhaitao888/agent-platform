@@ -32,11 +32,15 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure Git workspace preparer: %v", err)
 		}
+		diffReader, err := gitworkspace.NewDiffReader("git")
+		if err != nil {
+			log.Fatalf("configure Git diff reader: %v", err)
+		}
 		workspacePreparer, err := gitlab.NewWorkspacePreparer(verifier, gitPreparer)
 		if err != nil {
 			log.Fatalf("configure GitLab Workspace preparer: %v", err)
 		}
-		handler, err = httpapi.NewHandlerWithWorkspacePreparer(verifier, workspacePreparer, workspaceRoot)
+		handler, err = httpapi.NewHandlerWithWorkspaceServices(verifier, workspacePreparer, diffReader, workspaceRoot)
 		if err != nil {
 			log.Fatalf("configure Workspace Manager: %v", err)
 		}
