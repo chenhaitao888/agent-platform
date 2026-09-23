@@ -129,14 +129,18 @@ Phase 0 只接受 `gitlab` provider。`baseSha` 和 `headSha` 必须是 40 或 6
 按 ID 查询：
 
 ```bash
-curl -i http://localhost:8080/api/v1/tasks/task-1
+curl -i 'http://localhost:8080/api/v1/tasks/task-1?tenantId=tenant-local'
 ```
 
 查询最近 Task（最新创建的排在前面）：
 
 ```bash
-curl -i http://localhost:8080/api/v1/tasks
+curl -i 'http://localhost:8080/api/v1/tasks?tenantId=tenant-local'
 ```
+
+这两条 Task 读取接口都要求 `tenantId`。列表只返回该租户的 Task；按 ID 查询其他租户的
+Task 与查询不存在的 ID 一样返回 404。创建响应中的 `Location` 也包含 `tenantId`，可直接用于
+读取。当前 `tenantId` 仍由调用方提供，尚未接入认证和授权，不能把它当作真实身份凭证。
 
 响应使用 `items` 包装数组，为以后增加分页信息保留空间：
 
@@ -397,7 +401,7 @@ node --run dev
 `/api/healthz` 转发到后端 `/healthz`，并把 `/api/v1/*` 原样转发到 Go
 业务接口，所以需要同时启动 Go 后端。
 
-页面会先调用 `GET /api/v1/tasks` 加载最近 Task。“创建 Task”表单调用
+页面会先调用 `GET /api/v1/tasks?tenantId=tenant-local` 加载最近 Task。“创建 Task”表单调用
 `POST /api/v1/tasks`；表单同时采集仓库 ID 与不可变 base/head SHA，提交成功后会显示后端生成的
 Task ID、状态、仓库和目标，并立即更新最近列表。前端在 Phase 0 固定使用 `tenant-local` 与
 GitLab provider，并为每次提交生成 request ID 和 idempotency key。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的

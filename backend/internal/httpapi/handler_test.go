@@ -150,7 +150,7 @@ func TestCreateTask(t *testing.T) {
 		t.Errorf("expected X-Request-ID req-create-1, got %q", requestID)
 	}
 
-	expectedLocation := "/api/v1/tasks/" + body.ID
+	expectedLocation := "/api/v1/tasks/" + body.ID + "?tenantId=tenant-a"
 	if location := response.Header().Get("Location"); location != expectedLocation {
 		t.Errorf("expected Location %q, got %q", expectedLocation, location)
 	}
@@ -207,7 +207,7 @@ func TestCreateTaskReplaysTheSameIdempotentRequest(t *testing.T) {
 	if replayedTask.ID != firstTask.ID {
 		t.Fatalf("expected replayed task %q, got %q", firstTask.ID, replayedTask.ID)
 	}
-	if location := secondResponse.Header().Get("Location"); location != "/api/v1/tasks/"+firstTask.ID {
+	if location := secondResponse.Header().Get("Location"); location != "/api/v1/tasks/"+firstTask.ID+"?tenantId=tenant-a" {
 		t.Fatalf("expected replay Location for %q, got %q", firstTask.ID, location)
 	}
 }
@@ -393,7 +393,7 @@ func TestGetTask(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 
-	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+created.ID, nil)
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+created.ID+"?tenantId=tenant-a", nil)
 	getResponse := httptest.NewRecorder()
 	handler.ServeHTTP(getResponse, getRequest)
 
@@ -422,6 +422,31 @@ func TestGetTask(t *testing.T) {
 	}
 	if found.Status != "CREATED" {
 		t.Errorf("expected status CREATED, got %q", found.Status)
+	}
+}
+
+func TestGetTaskHidesOtherTenants(t *testing.T) {
+	handler := NewHandler()
+	createResponse := httptest.NewRecorder()
+	handler.ServeHTTP(createResponse, httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/tasks",
+		strings.NewReader(`{"requestId":"req-get-tenant-a","idempotencyKey":"get-tenant-a","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review A",`+testRepositoryJSON+`}`),
+	))
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create task: status %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	foreignResponse := httptest.NewRecorder()
+	handler.ServeHTTP(foreignResponse, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1?tenantId=tenant-b", nil))
+	if foreignResponse.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for another tenant, got %d: %s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+
+	ownerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(ownerResponse, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1?tenantId=tenant-a", nil))
+	if ownerResponse.Code != http.StatusOK {
+		t.Fatalf("expected owner to read task, got %d: %s", ownerResponse.Code, ownerResponse.Body.String())
 	}
 }
 
@@ -475,7 +500,7 @@ func TestUpdateTaskQueuesACreatedTask(t *testing.T) {
 		t.Fatalf("expected X-Request-ID req-queue-1, got %q", requestID)
 	}
 
-	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1", nil)
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1?tenantId=tenant-a", nil)
 	getResponse := httptest.NewRecorder()
 	handler.ServeHTTP(getResponse, getRequest)
 
@@ -766,7 +791,7 @@ func TestListTasksReturnsNewestFirst(t *testing.T) {
 		}
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?tenantId=tenant-a", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -796,7 +821,7 @@ func TestListTasksReturnsNewestFirst(t *testing.T) {
 }
 
 func TestListTasksReturnsAnEmptyArray(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?tenantId=tenant-a", nil)
 	response := httptest.NewRecorder()
 
 	NewHandler().ServeHTTP(response, request)
@@ -816,6 +841,54 @@ func TestListTasksReturnsAnEmptyArray(t *testing.T) {
 	}
 	if len(body.Items) != 0 {
 		t.Fatalf("expected no tasks, got %d", len(body.Items))
+	}
+}
+
+func TestListTasksHidesOtherTenants(t *testing.T) {
+	handler := NewHandler()
+	for _, body := range []string{
+		`{"requestId":"req-tenant-a","idempotencyKey":"create-a","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review A",` + testRepositoryJSON + `}`,
+		`{"requestId":"req-tenant-b","idempotencyKey":"create-b","tenantId":"tenant-b","type":"PR_REVIEW","goal":"Review B",` + testRepositoryJSON + `}`,
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create task: status %d: %s", response.Code, response.Body.String())
+		}
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tasks?tenantId=tenant-a", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list tasks: status %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Items []task.Task `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode task list: %v", err)
+	}
+	if len(body.Items) != 1 || body.Items[0].TenantID != "tenant-a" || body.Items[0].Goal != "Review A" {
+		t.Fatalf("expected only tenant-a task, got %#v", body.Items)
+	}
+}
+
+func TestTaskReadsRequireTenantID(t *testing.T) {
+	for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/task-1"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for missing tenantId, got %d: %s", response.Code, response.Body.String())
+			}
+			var body errorResponse
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatalf("decode error: %v", err)
+			}
+			if body.Error != "validation_error" || body.Message != "tenantId is required" {
+				t.Fatalf("unexpected error: %#v", body)
+			}
+		})
 	}
 }
 
@@ -1014,7 +1087,7 @@ func TestCreateTaskRejectsInvalidJSON(t *testing.T) {
 
 func TestGetTaskReturnsNotFound(t *testing.T) {
 	handler := NewHandler()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-missing", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-missing?tenantId=tenant-a", nil)
 	response := httptest.NewRecorder()
 
 	handler.ServeHTTP(response, request)

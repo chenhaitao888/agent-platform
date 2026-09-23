@@ -154,12 +154,16 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	return CreateResult{Task: created, Created: true}, nil
 }
 
-func (s *Store) Get(id string) (Task, bool) {
+// Get 在数据读取边界同时检查租户；调用方不能先按 ID 读出其他租户的 Task 再自行过滤。
+func (s *Store) Get(id, tenantID string) (Task, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	found, ok := s.tasks[id]
-	return found, ok
+	if !ok || found.TenantID != tenantID {
+		return Task{}, false
+	}
+	return found, true
 }
 
 func (s *Store) Transition(input TransitionInput) (Task, error) {
@@ -234,13 +238,17 @@ func (s *Store) appendEventLocked(current Task, eventType EventType, causationID
 	s.events[current.ID] = append(s.events[current.ID], event)
 }
 
-func (s *Store) List() []Task {
+// List 保持最新创建在前，同时只复制当前租户的 Task；空 slice 会编码为 JSON []。
+func (s *Store) List(tenantID string) []Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	listed := make([]Task, len(s.order))
-	for index, id := range s.order {
-		listed[len(s.order)-1-index] = s.tasks[id]
+	listed := make([]Task, 0, len(s.order))
+	for index := len(s.order) - 1; index >= 0; index-- {
+		current := s.tasks[s.order[index]]
+		if current.TenantID == tenantID {
+			listed = append(listed, current)
+		}
 	}
 	return listed
 }

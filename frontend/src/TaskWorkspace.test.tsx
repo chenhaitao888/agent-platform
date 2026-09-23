@@ -76,6 +76,10 @@ describe('TaskWorkspace', () => {
     expect(items).toHaveLength(2)
     expect(items[0]).toHaveTextContent('Fix checkout timeout')
     expect(items[1]).toHaveTextContent('Review pull request 42')
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/tasks?tenantId=tenant-local',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
     expect(
       within(items[0]).getByRole('button', { name: '查看 task-2 的事件' }),
     ).toBeInTheDocument()

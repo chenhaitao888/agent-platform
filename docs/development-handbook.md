@@ -729,6 +729,40 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 - HTTP 贯穿测试覆盖 READY diff 归档、Location 元数据、原始内容和幂等 200。
 - 前端 5 个测试文件、23 条测试全部通过；Vite 生产构建通过。
 
+### M13.1（第 1 步）：Task 读取按租户隔离
+
+- 状态：完成（2026-09-23）；先处理代码审查报告中的第 1 项，M14 继续暂停。
+- 问题：原来的 Task 列表和详情直接读取整个内存 Store；即使其他接口检查 tenant，调用方仍可通过
+  Task 的 `goal` 与仓库引用看到别的租户的数据。
+
+#### 代码拆解与 Java 对照
+
+1. `task.Store.Get(id, tenantID)` 在读锁内同时检查 ID 与归属；不存在和归属不符都返回 `false`。
+   Java 中可类比 `findByIdAndTenantId`，把租户条件放在 Repository 查询里，而不是查询后由
+   Controller 临时过滤。这样今后新增调用者也必须提供 tenant。
+2. `task.Store.List(tenantID)` 继续按创建时间倒序遍历，只把匹配的 Task 放入新 slice。
+   `make([]Task, 0, len(order))` 保证空结果编码为 `[]`，而不是 JSON `null`。
+3. HTTP 列表和详情统一要求查询参数 `tenantId`：缺失返回 400，跨租户详情返回与不存在相同的
+   404。创建 Task 的 `Location` 带上 URL 编码后的 tenantId，因此可以直接跟随读取。
+4. 前端列表调用复用已有的 `LOCAL_TENANT_ID`，用 `URLSearchParams` 组装查询参数。
+   此阶段 tenant 仍由调用方自报；它只是内存数据隔离规则，不等于 Spring Security 中已认证的身份。
+
+#### 测试先行记录
+
+1. 先写 A/B 两租户列表用例，观察到 A 的请求返回了 B 的 Task（RED）；给 Store.List 加 tenant
+   过滤后只剩 A（GREEN）。
+2. 再写 B 查询 A 的 Task 详情用例，观察到原接口返回 200 和完整目标（RED）；给 Store.Get
+   加归属条件后返回 404，A 查询仍为 200（GREEN）。
+3. 补缺少 tenantId 的 400 契约。前端测试先指出列表 URL 未带 tenant（RED），更新请求后转绿。
+   最后用创建接口测试推动 `Location` 包含 tenantId，并同步更新 README 示例。
+
+#### 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- 前端 5 个测试文件、23 条测试通过；TypeScript 检查与 Vite 生产构建通过。
+- 复核变更时确认 `task.Store.Get/List` 的所有调用方均传入 tenant；原有 `docs/code-review-2026-09-23.md`
+  作为用户提供的审查报告保留原样。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：

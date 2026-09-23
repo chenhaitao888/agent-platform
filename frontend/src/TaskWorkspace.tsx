@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import TaskCreator from './TaskCreator'
 import TaskEventTimeline from './TaskEventTimeline'
 import WorkspaceDetails from './WorkspaceDetails'
-import type { Task } from './task'
+import { LOCAL_TENANT_ID, type Task } from './task'
 
 type TaskListResponse = {
   items: Task[]
@@ -94,7 +94,8 @@ export default function TaskWorkspace() {
 
     async function loadTasks() {
       try {
-        const response = await fetch('/api/v1/tasks', {
+        const query = new URLSearchParams({ tenantId: LOCAL_TENANT_ID })
+        const response = await fetch(`/api/v1/tasks?${query.toString()}`, {
           signal: controller.signal,
         })
         if (!response.ok) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -462,12 +463,24 @@ func (h *handler) listTaskEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listTaskEventsResponse{Items: events})
 }
 
-func (h *handler) listTasks(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, listTasksResponse{Items: h.tasks.List()})
+func (h *handler) listTasks(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, listTasksResponse{Items: h.tasks.List(tenantID)})
 }
 
 func (h *handler) getTask(w http.ResponseWriter, r *http.Request) {
-	found, ok := h.tasks.Get(r.PathValue("id"))
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+		return
+	}
+
+	found, ok := h.tasks.Get(r.PathValue("id"), tenantID)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "task not found")
 		return
@@ -529,7 +542,7 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "task creation failed")
 		return
 	}
-	w.Header().Set("Location", "/api/v1/tasks/"+result.Task.ID)
+	w.Header().Set("Location", "/api/v1/tasks/"+result.Task.ID+"?tenantId="+url.QueryEscape(result.Task.TenantID))
 	status := http.StatusOK
 	if result.Created {
 		status = http.StatusCreated

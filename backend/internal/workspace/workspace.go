@@ -152,8 +152,8 @@ func NewManagerWithPreparer(tasks *task.Store, verifier repository.ReferenceVeri
 }
 
 func (m *Manager) Register(ctx context.Context, input RegisterInput) (RegisterResult, error) {
-	currentTask, ok := m.tasks.Get(input.TaskID)
-	if !ok || currentTask.TenantID != input.TenantID {
+	currentTask, ok := m.tasks.Get(input.TaskID, input.TenantID)
+	if !ok {
 		return RegisterResult{}, ErrTaskNotFound
 	}
 	if currentTask.Status != task.StatusQueued {
