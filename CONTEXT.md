@@ -30,6 +30,11 @@ _Avoid_: Running Workspace、Runtime-ready Workspace
 或本地路径。当前补丁用于 Phase 0 PR Review 的受控输入，不等同于可长期保存的 Artifact。
 _Avoid_: 最新差异、工作区当前改动
 
+**Artifact**:
+平台归档的不可变结果或证据，记录任务/工作区归属、类型、媒体类型、内容大小与校验和；读取内容不能
+改变已经保存的事实。当前内存实现用于先稳定领域契约，不代表已经具备对象存储的持久性与保留策略。
+_Avoid_: Workspace 临时文件、可修改附件
+
 **Repository Reference**:
 由代码托管平台、仓库标识、base SHA 和 head SHA 共同确定的可复现代码输入；Task 创建时先记录，
 Workspace 登记前必须向代码托管平台验证。

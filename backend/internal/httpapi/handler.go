@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/task"
@@ -21,6 +23,7 @@ type handler struct {
 	tasks      *task.Store
 	workspaces *workspace.Manager
 	reviews    *review.Service
+	artifacts  *artifact.Store
 }
 
 type createTaskRequest struct {
@@ -51,6 +54,13 @@ type prepareWorkspaceRequest struct {
 	IdempotencyKey  string `json:"idempotencyKey"`
 	TenantID        string `json:"tenantId"`
 	ExpectedVersion uint64 `json:"expectedVersion"`
+}
+
+type archiveDiffRequest struct {
+	RequestID                string `json:"requestId"`
+	IdempotencyKey           string `json:"idempotencyKey"`
+	TenantID                 string `json:"tenantId"`
+	ExpectedWorkspaceVersion uint64 `json:"expectedWorkspaceVersion"`
 }
 
 type listTasksResponse struct {
@@ -98,10 +108,12 @@ func newHandler(tasks *task.Store, workspaces *workspace.Manager) http.Handler {
 }
 
 func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader) http.Handler {
+	artifacts := artifact.NewStore()
 	h := &handler{
 		tasks:      tasks,
 		workspaces: workspaces,
-		reviews:    review.NewService(workspaces, diffReader),
+		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts),
+		artifacts:  artifacts,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
@@ -113,9 +125,105 @@ func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, 
 	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace/prepare", h.prepareWorkspace)
 	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace", h.getWorkspace)
 	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace/diff", h.getWorkspaceDiff)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/artifacts/diff", h.archiveWorkspaceDiff)
+	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.getArtifact)
+	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.getArtifactContent)
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)
 
 	return mux
+}
+
+func (h *handler) getArtifactContent(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+		return
+	}
+
+	metadata, content, ok := h.artifacts.GetContent(r.PathValue("id"), tenantID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "Artifact not found")
+		return
+	}
+	w.Header().Set("Content-Type", metadata.MediaType)
+	w.Header().Set("Content-Length", strconv.FormatInt(metadata.SizeBytes, 10))
+	w.Header().Set("ETag", `"`+metadata.SHA256+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+}
+
+func (h *handler) getArtifact(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+		return
+	}
+
+	metadata, ok := h.artifacts.Get(r.PathValue("id"), tenantID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "Artifact not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, metadata)
+}
+
+func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
+	var request archiveDiffRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		return
+	}
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	request.TenantID = strings.TrimSpace(request.TenantID)
+	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" || request.ExpectedWorkspaceVersion == 0 {
+		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey, tenantId and expectedWorkspaceVersion are required")
+		return
+	}
+
+	w.Header().Set("X-Request-ID", request.RequestID)
+	result, err := h.reviews.Archive(r.Context(), review.ArchiveInput{
+		TaskID:                   r.PathValue("id"),
+		TenantID:                 request.TenantID,
+		IdempotencyKey:           request.IdempotencyKey,
+		ExpectedWorkspaceVersion: request.ExpectedWorkspaceVersion,
+	})
+	if errors.Is(err, review.ErrWorkspaceNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "workspace not found")
+		return
+	}
+	if errors.Is(err, review.ErrWorkspaceNotReady) {
+		writeError(w, http.StatusConflict, "workspace_not_ready", "workspace must be READY before archiving its diff")
+		return
+	}
+	if errors.Is(err, workspace.ErrVersionConflict) {
+		writeError(w, http.StatusConflict, "version_conflict", "workspace version does not match expectedWorkspaceVersion")
+		return
+	}
+	if errors.Is(err, artifact.ErrIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "idempotency_conflict", "idempotency key already used with different Artifact content")
+		return
+	}
+	if errors.Is(err, repository.ErrDiffTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "diff_too_large", "repository diff exceeds the supported size")
+		return
+	}
+	if errors.Is(err, repository.ErrDiffUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff could not be archived")
+		return
+	}
+
+	w.Header().Set("Location", "/api/v1/artifacts/"+result.Artifact.ID)
+	status := http.StatusOK
+	if result.Created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, result.Artifact)
 }
 
 func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {

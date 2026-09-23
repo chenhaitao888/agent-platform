@@ -664,6 +664,71 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 - Git adapter 测试使用真实 Git 2.52.0 验证固定 commit patch；假 Git 验证 1 MiB 上限。
 - 前端 5 个测试文件、22 条测试全部通过；Vite 生产构建通过。
 
+### M13：把固定 Git Diff 归档为不可变 Artifact
+
+- 状态：完成（2026-09-22）。
+- 依据：架构文档 4 章把 Artifact 定义为带 checksum、task/session/turn/operation 引用、分类与保留
+  信息的不可变结果；17.0 要求 Phase 0 跑通 Artifact。本步先稳定最小领域/API 契约，不接对象存储。
+- 新增 `POST /api/v1/tasks/{id}/artifacts/diff`、`GET /api/v1/artifacts/{id}` 和
+  `GET /api/v1/artifacts/{id}/content`。
+- Artifact 元数据包含 task/workspace 归属、`REPOSITORY_DIFF`、`text/x-diff`、SHA-256、字节数与时间。
+- 本步不做：数据库、S3/MinIO、保留期、分类策略、加密、Artifact 列表、删除、Session/Turn 关联。
+
+#### M13 Artifact Store 代码拆解
+
+1. `artifact.Store` 继续采用与当前 Task Store 一致的单进程内存实现。它用 `sync.RWMutex` 保护 ID、
+   内容和幂等索引；Java 可类比一个用 `ReadWriteLock` 包住的内存 Repository。
+2. “不可变”不等于“struct 字段没有 setter”。Go `[]byte` 是共享底层数组的 slice，类似 Java
+   `byte[]`：调用方修改原数组会影响 Store。因此 Create 写入时复制一次，GetContent 读取时再复制一次。
+3. Store 对完整内容计算 SHA-256，客户端不能自报摘要。Artifact ID 是当前进程内的递增值；这和 Task
+   ID 一样只是教学阶段实现，不适合多实例。
+4. 幂等键按 tenant 分区。相同 key、归属、类型、媒体类型和内容重放返回原 Artifact；任何一项不同
+   返回 `ErrIdempotencyConflict`。比较内容使用 `bytes.Equal`，不只依赖摘要碰撞假设。
+5. 元数据查询使用独立 `Get`，不会为了展示卡片而复制最多 1 MiB 的正文；只有 GetContent 才复制内容。
+
+#### M13 Service 与 HTTP 代码拆解
+
+1. `review.Service.Archive` 要求 Workspace 为 READY 且 version 与
+   `expectedWorkspaceVersion` 一致。版本过期时在运行 Git 前返回冲突，类似 JPA `@Version` 门禁。
+2. 浏览器不上传 patch。Service 再次从 Workspace 读取平台保存的 path/base/head，通过 DiffReader
+   生成内容，再交给 Artifact Store；这防止用户把任意文本伪装成平台归档证据。
+3. Handler 的 Artifact Store 和 review.Service 共享同一个实例，可类比 Spring composition root
+   注入同一个 Repository bean。POST 首次创建返回 201，幂等重放返回 200，并设置 Location。
+4. 元数据与正文分开：元数据返回 JSON；正文返回 `text/x-diff`、Content-Length、SHA-256 ETag 和
+   `nosniff`。未来换对象存储时可以保留这层公共 API，而不把内存实现泄露给页面。
+5. Artifact 读取同时检查 ID 和 tenant。其他 tenant 与不存在都返回相同 404，避免用状态差异枚举资源。
+
+#### M13 前端代码拆解
+
+1. `Artifact` 是新的 TypeScript DTO，type/mediaType 使用字面量类型。它像 Java record，但运行时仍需
+   依赖服务端契约；当前没有引入额外 schema 库。
+2. `ArtifactState` 与 WorkspaceState、DiffState 分开，包含 idle/archiving/loaded/failed。归档失败
+   不会抹掉已经加载成功的 Workspace 和 diff。
+3. idempotencyKey 由 Artifact 合同版本、task ID、workspace ID 和 workspace version 确定性派生；
+   重试或刷新页面时 requestId 可以变化，但逻辑操作 key 保持不变。Java 中可类比用业务唯一键而不是
+   每次请求重新 `UUID.randomUUID()`。
+4. 归档成功后页面展示 Artifact ID、类型、摘要和租户范围的内容链接，不把正文再复制进 Artifact DTO。
+
+#### M13 开发过程记录
+
+1. 第一条 Store 测试先因 `NewStore/CreateInput` 不存在而编译 RED；实现两次 defensive copy 后，原
+   slice 和读取 slice 的修改都不能改变已归档内容。
+2. 幂等测试第一次得到 artifact-1 和 artifact-2；增加 tenant+key 索引后，重放返回 artifact-1/200，
+   同 key 换内容则冲突。
+3. Service 测试先找不到 `Archive`；实现后确认 Git adapter 只收到 READY Workspace 的可信坐标，
+   旧 version 在 Git 调用前被拒绝。
+4. HTTP 测试依次经历 POST 404、Location GET 404、content GET 404 三次 RED，再逐个接入路由；最终
+   验证 201/200、元数据、正文 headers、内容和稳定归属。
+5. React 测试先找不到“归档为 Artifact”按钮；实现后又用第二次点击发现 key 每次变化，最终改为
+   从业务身份确定性派生，确认 requestId 变化而 idempotencyKey 复用，并且页面刷新后仍可重放。
+
+#### M13 验证结果
+
+- `go test ./...`、`go test -race ./...`、`go vet ./...`：通过。
+- Artifact 测试覆盖写入/读取 defensive copy、tenant 隐藏、幂等重放与冲突。
+- HTTP 贯穿测试覆盖 READY diff 归档、Location 元数据、原始内容和幂等 200。
+- 前端 5 个测试文件、23 条测试全部通过；Vite 生产构建通过。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -696,8 +761,10 @@ node --run build
   diff 规模；也没有缓存、重试、限流、熔断与持久化验证证据。
 - GitLab token 暂由控制平面环境变量提供，并只进入受控 clone/fetch 子进程；尚未接入 Credential
   Broker、短时凭据与自动轮换。
-- 固定版本 diff 当前随 HTTP JSON 即时返回并限制为 1 MiB；尚未保存为不可变 Artifact，也没有分片、
+- 固定版本 diff 的预览仍随 HTTP JSON 即时返回，归档 Artifact 也受 1 MiB 上限约束；目前还没有分片、
   大文件引用、内容分类与保留策略。
+- Artifact 当前是单进程内存 Store，已经具备不可变副本、checksum、幂等和 tenant 范围读取，但进程
+  重启即丢失，也没有对象存储、数据库索引、加密、保留期、分页列表或垃圾回收。
 - Repository Connector 目前只支持 GitLab；真实企业 GitLab 凭据联调尚未执行。
 - Task 目前只支持 `CREATED → QUEUED`；`QUEUED` 只是状态投影，还没有真实队列、调度器或
   工作流执行。

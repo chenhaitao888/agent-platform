@@ -334,7 +334,8 @@ h1 {
 .task-event-timeline > button,
 .workspace-details > button,
 .workspace-registration > button,
-.workspace-details [role='group'] > button {
+.workspace-details [role='group'] > button,
+.workspace-diff > button {
   padding: 7px 12px;
   border: 1px solid #287a5b;
   border-radius: 999px;
@@ -349,7 +350,8 @@ h1 {
 .task-event-timeline > button:hover:not(:disabled),
 .workspace-details > button:hover:not(:disabled),
 .workspace-registration > button:hover:not(:disabled),
-.workspace-details [role='group'] > button:hover:not(:disabled) {
+.workspace-details [role='group'] > button:hover:not(:disabled),
+.workspace-diff > button:hover:not(:disabled) {
   color: #fff;
   background: #1f6f52;
 }
@@ -358,7 +360,8 @@ h1 {
 .task-event-timeline > button:focus-visible,
 .workspace-details > button:focus-visible,
 .workspace-registration > button:focus-visible,
-.workspace-details [role='group'] > button:focus-visible {
+.workspace-details [role='group'] > button:focus-visible,
+.workspace-diff > button:focus-visible {
   outline: 3px solid rgb(40 122 91 / 22%);
   outline-offset: 2px;
 }
@@ -367,7 +370,8 @@ h1 {
 .task-event-timeline > button:disabled,
 .workspace-details > button:disabled,
 .workspace-registration > button:disabled,
-.workspace-details [role='group'] > button:disabled {
+.workspace-details [role='group'] > button:disabled,
+.workspace-diff > button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
@@ -436,6 +440,26 @@ h1 {
   font-size: 0.76rem;
   line-height: 1.55;
   white-space: pre;
+}
+
+.workspace-diff > button {
+  margin-top: 12px;
+}
+
+.workspace-artifact {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgb(40 122 91 / 24%);
+  border-radius: 12px;
+  background: #eef7f2;
+}
+
+.workspace-artifact a {
+  display: inline-block;
+  margin-top: 10px;
+  color: #1f6f52;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .task-event-timeline ol {

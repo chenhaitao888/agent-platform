@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import type { Artifact } from './artifact'
 import type { WorkspaceDiff } from './review'
 import type { Task } from './task'
 import type { Workspace } from './workspace'
@@ -27,13 +28,23 @@ type DiffState =
   | { kind: 'loaded'; diff: WorkspaceDiff }
   | { kind: 'failed'; message: string }
 
+type ArtifactState =
+  | { kind: 'idle' }
+  | { kind: 'archiving' }
+  | { kind: 'loaded'; artifact: Artifact }
+  | { kind: 'failed'; message: string }
+
 export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
   const [diffState, setDiffState] = useState<DiffState>({ kind: 'idle' })
+  const [artifactState, setArtifactState] = useState<ArtifactState>({
+    kind: 'idle',
+  })
 
   async function loadWorkspace() {
     setState({ kind: 'loading' })
     setDiffState({ kind: 'idle' })
+    setArtifactState({ kind: 'idle' })
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
@@ -64,6 +75,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
   async function registerWorkspace() {
     setState({ kind: 'registering' })
     setDiffState({ kind: 'idle' })
+    setArtifactState({ kind: 'idle' })
 
     try {
       const response = await fetch(`/api/v1/tasks/${task.id}/workspace`, {
@@ -95,6 +107,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
   async function prepareWorkspace(workspace: Workspace) {
     setState({ kind: 'preparing' })
     setDiffState({ kind: 'idle' })
+    setArtifactState({ kind: 'idle' })
 
     try {
       const response = await fetch(
@@ -129,6 +142,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
 
   async function loadDiff() {
     setDiffState({ kind: 'loading' })
+    setArtifactState({ kind: 'idle' })
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
@@ -149,6 +163,40 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error'
       setDiffState({ kind: 'failed', message })
+    }
+  }
+
+  async function archiveDiff(workspace: Workspace) {
+    setArtifactState({ kind: 'archiving' })
+
+    const requestId = `req_${crypto.randomUUID()}`
+    const idempotencyKey = `artifact-diff:v1:${task.id}:${workspace.id}:v${workspace.version}`
+
+    try {
+      const response = await fetch(`/api/v1/tasks/${task.id}/artifacts/diff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          idempotencyKey,
+          tenantId: task.tenantId,
+          expectedWorkspaceVersion: workspace.version,
+        }),
+      })
+      if (!response.ok) {
+        const error = (await response.json()) as ErrorResponse
+        setArtifactState({
+          kind: 'failed',
+          message: error.message ?? `HTTP ${response.status}`,
+        })
+        return
+      }
+
+      const artifact = (await response.json()) as Artifact
+      setArtifactState({ kind: 'loaded', artifact })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error'
+      setArtifactState({ kind: 'failed', message })
     }
   }
 
@@ -293,6 +341,46 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
                 </div>
               </dl>
               <pre>{diffState.diff.patch}</pre>
+              <button
+                type="button"
+                disabled={artifactState.kind === 'archiving'}
+                onClick={() => void archiveDiff(state.workspace)}
+              >
+                {artifactState.kind === 'archiving'
+                  ? '正在归档…'
+                  : '归档为 Artifact'}
+              </button>
+              {artifactState.kind === 'failed' && (
+                <p className="error-message" role="alert">
+                  Artifact 归档失败：{artifactState.message}
+                </p>
+              )}
+              {artifactState.kind === 'loaded' && (
+                <section
+                  className="workspace-artifact"
+                  aria-label={`${task.id} 的 Diff Artifact`}
+                >
+                  <dl>
+                    <div>
+                      <dt>Artifact ID</dt>
+                      <dd>{artifactState.artifact.id}</dd>
+                    </div>
+                    <div>
+                      <dt>类型</dt>
+                      <dd>{artifactState.artifact.type}</dd>
+                    </div>
+                    <div>
+                      <dt>SHA-256</dt>
+                      <dd>{artifactState.artifact.sha256}</dd>
+                    </div>
+                  </dl>
+                  <a
+                    href={`/api/v1/artifacts/${artifactState.artifact.id}/content?${new URLSearchParams({ tenantId: task.tenantId }).toString()}`}
+                  >
+                    读取 Artifact 内容
+                  </a>
+                </section>
+              )}
             </section>
           )}
         </div>

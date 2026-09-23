@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import WorkspaceDetails from './WorkspaceDetails'
@@ -293,6 +293,134 @@ describe('WorkspaceDetails', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       '/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local',
+    )
+  })
+
+  it('archives a loaded diff and shows the Artifact link', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi
+        .fn()
+        .mockReturnValueOnce('00000000-0000-4000-8000-000000000007')
+        .mockReturnValueOnce('00000000-0000-4000-8000-000000000008'),
+    })
+    const ready = {
+      id: 'workspace-1',
+      tenantId: 'tenant-local',
+      taskId: 'task-1',
+      repository: {
+        provider: 'gitlab',
+        repositoryId: 'project-7',
+      },
+      baseSha: '1111111111111111111111111111111111111111',
+      headSha: '2222222222222222222222222222222222222222',
+      state: 'READY',
+      version: 3,
+      path: '/var/lib/agent-platform/workspace-1/worktree',
+      createdAt: '2026-09-22T02:00:00Z',
+    }
+    const patch = 'diff --git a/README.md b/README.md\n-base\n+head\n'
+    const diff = {
+      taskId: 'task-1',
+      workspaceId: 'workspace-1',
+      baseSha: ready.baseSha,
+      headSha: ready.headSha,
+      mediaType: 'text/x-diff',
+      sha256:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      sizeBytes: patch.length,
+      patch,
+    }
+    const artifact = {
+      id: 'artifact-1',
+      tenantId: 'tenant-local',
+      taskId: 'task-1',
+      workspaceId: 'workspace-1',
+      type: 'REPOSITORY_DIFF',
+      mediaType: 'text/x-diff',
+      sha256: diff.sha256,
+      sizeBytes: patch.length,
+      createdAt: '2026-09-22T03:00:00Z',
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(ready), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(diff), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(artifact), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(artifact), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WorkspaceDetails task={queuedTask} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('READY')
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看固定版本差异' }),
+    )
+    await screen.findByRole('region', { name: 'task-1 的固定版本差异' })
+    fireEvent.click(screen.getByRole('button', { name: '归档为 Artifact' }))
+
+    const archived = await screen.findByRole('region', {
+      name: 'task-1 的 Diff Artifact',
+    })
+    expect(archived).toHaveTextContent('artifact-1')
+    expect(archived).toHaveTextContent('REPOSITORY_DIFF')
+    expect(
+      screen.getByRole('link', { name: '读取 Artifact 内容' }),
+    ).toHaveAttribute(
+      'href',
+      '/api/v1/artifacts/artifact-1/content?tenantId=tenant-local',
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/v1/tasks/task-1/artifacts/diff',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: 'req_00000000-0000-4000-8000-000000000007',
+          idempotencyKey: 'artifact-diff:v1:task-1:workspace-1:v3',
+          tenantId: 'tenant-local',
+          expectedWorkspaceVersion: 3,
+        }),
+      },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '归档为 Artifact' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      '/api/v1/tasks/task-1/artifacts/diff',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: 'req_00000000-0000-4000-8000-000000000008',
+          idempotencyKey: 'artifact-diff:v1:task-1:workspace-1:v3',
+          tenantId: 'tenant-local',
+          expectedWorkspaceVersion: 3,
+        }),
+      },
     )
   })
 

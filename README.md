@@ -6,6 +6,7 @@
 - 内存版 Task 幂等创建、不可变仓库引用、查询、最近列表、状态迁移与事件时间线
 - GitLab 仓库/commit 可信验证，以及 Workspace 登记、bare clone、detached worktree 和状态查询
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
+- 固定 diff 的幂等 Artifact 归档、元数据查询和租户范围内容读取
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
 - Go 接口测试与 React 组件测试
 
@@ -23,6 +24,7 @@ agent-platform/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java 的 main 启动类
 │   └── internal/
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
+│       ├── artifact/            # 不可变结果元数据、内容与幂等创建
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
 │       ├── repository/          # Repository Reference 验证接口与错误分类
@@ -316,9 +318,59 @@ curl -i \
 ```
 
 Git 使用参数数组运行，不经过 shell，并关闭 external diff 与 textconv。子进程使用与 Workspace 准备
-相同的环境白名单，但凭据为空。补丁最多 1 MiB；超过限制返回稳定的 `413 diff_too_large`。当前为了
-教学和 Phase 0 tracer bullet 直接在 JSON 中返回补丁，下一阶段接入 Artifact 后，大内容将改为返回
-不可变引用。
+相同的环境白名单，但凭据为空。预览接口仍会在 JSON 中直接返回最多 1 MiB 的补丁；需要保存时，使用
+下方的 Artifact 接口归档成不可变引用。超过限制返回稳定的 `413 diff_too_large`；更大的内容以后再接
+对象存储、分片或流式读取。
+
+### 把固定差异归档为 Artifact
+
+查看 diff 后，可以使用 READY Workspace 当前版本创建不可变 Artifact：
+
+```bash
+curl -i \
+  -X POST http://localhost:8080/api/v1/tasks/task-1/artifacts/diff \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requestId":"req-05",
+    "idempotencyKey":"artifact-diff:v1:task-1:workspace-1:v3",
+    "tenantId":"tenant-local",
+    "expectedWorkspaceVersion":3
+  }'
+```
+
+浏览器不上传 patch。服务端重新从 READY Workspace 的固定 base/head 生成 diff，再创建 Artifact。首次
+创建返回 `201 Created`，同一幂等键和相同内容重放返回 `200 OK` 与原 Artifact；复用 key 改变归属或
+内容返回 `409 idempotency_conflict`。响应示例：
+
+```json
+{
+  "id": "artifact-1",
+  "tenantId": "tenant-local",
+  "taskId": "task-1",
+  "workspaceId": "workspace-1",
+  "type": "REPOSITORY_DIFF",
+  "mediaType": "text/x-diff",
+  "sha256": "64位十六进制摘要",
+  "sizeBytes": 123,
+  "createdAt": "2026-09-22T12:00:00Z"
+}
+```
+
+查询元数据和读取原始内容：
+
+```bash
+curl -i \
+  'http://localhost:8080/api/v1/artifacts/artifact-1?tenantId=tenant-local'
+
+curl -i \
+  'http://localhost:8080/api/v1/artifacts/artifact-1/content?tenantId=tenant-local'
+```
+
+内容响应使用 `text/x-diff`，并带 SHA-256 `ETag`、`Content-Length` 和
+`X-Content-Type-Options: nosniff`。其他 tenant 查询同一 ID 时返回 404。
+
+当前 Artifact Store 在内存中：内容不会因为调用方修改 Go `[]byte` 而改变，但服务进程重启后仍会
+丢失。这个里程碑先固定 API、不可变性、幂等和租户边界，尚未接入 S3、MinIO 或数据库。
 
 这里的 `QUEUED` 目前只是 Task 的状态投影，表示“已准入”；还没有真实消息队列或执行器。
 Task 只保存在 Go 进程内存中，重启服务后数据会丢失。本阶段也还没有数据库、完整状态机
@@ -355,7 +407,7 @@ GitLab provider，并为每次提交生成 request ID 和 idempotency key。`CRE
 发起额外请求。`QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
-base/head 的差异。
+base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和内容读取链接。
 
 运行前端测试与构建：
 
@@ -391,5 +443,7 @@ universal Node 的 macOS 上，它能稳定保持 arm64 架构；脚本内容与
   `gitworkspace.Preparer` 则像封装好的 `ProcessBuilder`，集中控制参数、环境、目录和失败清理。
 - `review.Service` 类似 Java Application Service：它只接受 task/tenant，从 Workspace Manager 取得
   可信 path/base/head，再调用 `repository.DiffReader` port；Controller 不允许调用方提交 revision。
+- `artifact.Store` 类似带唯一键约束的内存 Repository。Go `[]byte` 与 Java `byte[]` 一样是可变引用，
+  因此 Store 在写入和读取时都复制内容，不能只靠 struct/record 宣称“不可变”。
 - `REGISTERED → PREPARING → READY` 类似带 `@Version` 的实体状态迁移。慢 Git I/O 发生时不会持有
   Manager 的互斥锁，因此 GET 仍能读取 PREPARING；失败回到 REGISTERED 时也递增 version。

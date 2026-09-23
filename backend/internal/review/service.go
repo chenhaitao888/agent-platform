@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/workspace"
 )
@@ -18,6 +19,13 @@ var (
 type GetInput struct {
 	TaskID   string
 	TenantID string
+}
+
+type ArchiveInput struct {
+	TaskID                   string
+	TenantID                 string
+	IdempotencyKey           string
+	ExpectedWorkspaceVersion uint64
 }
 
 type Diff struct {
@@ -34,10 +42,15 @@ type Diff struct {
 type Service struct {
 	workspaces *workspace.Manager
 	source     repository.DiffReader
+	artifacts  *artifact.Store
 }
 
 func NewService(workspaces *workspace.Manager, source repository.DiffReader) *Service {
-	return &Service{workspaces: workspaces, source: source}
+	return NewServiceWithArtifactStore(workspaces, source, artifact.NewStore())
+}
+
+func NewServiceWithArtifactStore(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store) *Service {
+	return &Service{workspaces: workspaces, source: source, artifacts: artifacts}
 }
 
 func (s *Service) Get(ctx context.Context, input GetInput) (Diff, error) {
@@ -70,4 +83,41 @@ func (s *Service) Get(ctx context.Context, input GetInput) (Diff, error) {
 		SizeBytes:   int64(len(patch)),
 		Patch:       string(patch),
 	}, nil
+}
+
+func (s *Service) Archive(ctx context.Context, input ArchiveInput) (artifact.CreateResult, error) {
+	current, ok := s.workspaces.Get(input.TaskID, input.TenantID)
+	if !ok {
+		return artifact.CreateResult{}, ErrWorkspaceNotFound
+	}
+	if current.State != workspace.StateReady || current.Path == "" {
+		return artifact.CreateResult{}, ErrWorkspaceNotReady
+	}
+	if current.Version != input.ExpectedWorkspaceVersion {
+		return artifact.CreateResult{}, workspace.ErrVersionConflict
+	}
+
+	// 和预览一样，归档时重新从 READY Workspace 读取可信坐标；浏览器提交的只有
+	// task、tenant、幂等键和乐观锁版本，不能把任意内容伪装成平台 Artifact。
+	patch, err := s.source.Read(ctx, repository.DiffInput{
+		WorktreePath: current.Path,
+		BaseSHA:      current.BaseSHA,
+		HeadSHA:      current.HeadSHA,
+	})
+	if err != nil {
+		return artifact.CreateResult{}, fmt.Errorf("read immutable repository diff for Artifact: %w", err)
+	}
+	result, err := s.artifacts.Create(artifact.CreateInput{
+		TenantID:       current.TenantID,
+		TaskID:         current.TaskID,
+		WorkspaceID:    current.ID,
+		IdempotencyKey: input.IdempotencyKey,
+		Type:           artifact.TypeRepositoryDiff,
+		MediaType:      "text/x-diff",
+		Content:        patch,
+	})
+	if err != nil {
+		return artifact.CreateResult{}, fmt.Errorf("create diff Artifact: %w", err)
+	}
+	return result, nil
 }

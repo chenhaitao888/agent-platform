@@ -3,15 +3,101 @@ package review
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"testing"
 
+	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/task"
 	"agent-platform/backend/internal/workspace"
 )
 
 func TestServiceReadsDiffFromAReadyWorkspace(t *testing.T) {
+	manager, ready := readyWorkspaceFixture(t)
+	source := &recordingDiffSource{patch: []byte("diff --git a/README.md b/README.md\n")}
+	result, err := NewService(manager, source).Get(context.Background(), GetInput{
+		TaskID:   ready.TaskID,
+		TenantID: ready.TenantID,
+	})
+	if err != nil {
+		t.Fatalf("get review diff: %v", err)
+	}
+
+	if source.worktreePath != ready.Path || source.baseSHA != ready.BaseSHA || source.headSHA != ready.HeadSHA {
+		t.Fatalf("expected the READY Workspace coordinates, got %#v", source)
+	}
+	expectedSHA := fmt.Sprintf("%x", sha256.Sum256(source.patch))
+	if result.TaskID != ready.TaskID || result.WorkspaceID != ready.ID {
+		t.Fatalf("unexpected diff ownership: %#v", result)
+	}
+	if result.BaseSHA != ready.BaseSHA || result.HeadSHA != ready.HeadSHA {
+		t.Fatalf("unexpected immutable refs: %#v", result)
+	}
+	if result.MediaType != "text/x-diff" || result.SHA256 != expectedSHA || result.SizeBytes != int64(len(source.patch)) {
+		t.Fatalf("unexpected diff metadata: %#v", result)
+	}
+	if result.Patch != string(source.patch) {
+		t.Fatalf("unexpected patch: %q", result.Patch)
+	}
+}
+
+func TestServiceArchivesTheDiffFromAReadyWorkspace(t *testing.T) {
+	manager, ready := readyWorkspaceFixture(t)
+	patch := []byte("diff --git a/README.md b/README.md\n-base\n+head\n")
+	source := &recordingDiffSource{patch: patch}
+	artifacts := artifact.NewStore()
+	service := NewServiceWithArtifactStore(manager, source, artifacts)
+
+	result, err := service.Archive(context.Background(), ArchiveInput{
+		TaskID:                   ready.TaskID,
+		TenantID:                 ready.TenantID,
+		IdempotencyKey:           "archive-diff-1",
+		ExpectedWorkspaceVersion: ready.Version,
+	})
+	if err != nil {
+		t.Fatalf("archive review diff: %v", err)
+	}
+
+	if !result.Created {
+		t.Fatal("expected the first archive request to create an Artifact")
+	}
+	if result.Artifact.TaskID != ready.TaskID || result.Artifact.WorkspaceID != ready.ID {
+		t.Fatalf("unexpected Artifact ownership: %#v", result.Artifact)
+	}
+	if result.Artifact.Type != artifact.TypeRepositoryDiff || result.Artifact.MediaType != "text/x-diff" {
+		t.Fatalf("unexpected Artifact type: %#v", result.Artifact)
+	}
+	_, storedContent, ok := artifacts.GetContent(result.Artifact.ID, ready.TenantID)
+	if !ok || string(storedContent) != string(patch) {
+		t.Fatalf("expected archived diff content, got %q", storedContent)
+	}
+	if source.worktreePath != ready.Path || source.baseSHA != ready.BaseSHA || source.headSHA != ready.HeadSHA {
+		t.Fatalf("expected the READY Workspace coordinates, got %#v", source)
+	}
+}
+
+func TestServiceRejectsAStaleWorkspaceVersionBeforeReadingDiff(t *testing.T) {
+	manager, ready := readyWorkspaceFixture(t)
+	source := &recordingDiffSource{patch: []byte("must not be read")}
+	service := NewServiceWithArtifactStore(manager, source, artifact.NewStore())
+
+	_, err := service.Archive(context.Background(), ArchiveInput{
+		TaskID:                   ready.TaskID,
+		TenantID:                 ready.TenantID,
+		IdempotencyKey:           "archive-diff-stale",
+		ExpectedWorkspaceVersion: ready.Version - 1,
+	})
+	if !errors.Is(err, workspace.ErrVersionConflict) {
+		t.Fatalf("expected Workspace version conflict, got %v", err)
+	}
+	if source.worktreePath != "" {
+		t.Fatalf("expected Git not to run for a stale version, got path %q", source.worktreePath)
+	}
+}
+
+func readyWorkspaceFixture(t *testing.T) (*workspace.Manager, workspace.Workspace) {
+	t.Helper()
 	tasks := task.NewStore()
 	created, err := tasks.Create(task.CreateInput{
 		RequestID:      "req-create-task-1",
@@ -66,32 +152,7 @@ func TestServiceReadsDiffFromAReadyWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare Workspace: %v", err)
 	}
-
-	source := &recordingDiffSource{patch: []byte("diff --git a/README.md b/README.md\n")}
-	result, err := NewService(manager, source).Get(context.Background(), GetInput{
-		TaskID:   queued.ID,
-		TenantID: queued.TenantID,
-	})
-	if err != nil {
-		t.Fatalf("get review diff: %v", err)
-	}
-
-	if source.worktreePath != ready.Workspace.Path || source.baseSHA != ready.Workspace.BaseSHA || source.headSHA != ready.Workspace.HeadSHA {
-		t.Fatalf("expected the READY Workspace coordinates, got %#v", source)
-	}
-	expectedSHA := fmt.Sprintf("%x", sha256.Sum256(source.patch))
-	if result.TaskID != queued.ID || result.WorkspaceID != ready.Workspace.ID {
-		t.Fatalf("unexpected diff ownership: %#v", result)
-	}
-	if result.BaseSHA != ready.Workspace.BaseSHA || result.HeadSHA != ready.Workspace.HeadSHA {
-		t.Fatalf("unexpected immutable refs: %#v", result)
-	}
-	if result.MediaType != "text/x-diff" || result.SHA256 != expectedSHA || result.SizeBytes != int64(len(source.patch)) {
-		t.Fatalf("unexpected diff metadata: %#v", result)
-	}
-	if result.Patch != string(source.patch) {
-		t.Fatalf("unexpected patch: %q", result.Patch)
-	}
+	return manager, ready.Workspace
 }
 
 type recordingDiffSource struct {
