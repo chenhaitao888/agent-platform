@@ -75,6 +75,18 @@ curl -i http://localhost:8080/healthz
 {"status":"ok","service":"agent-platform-api"}
 ```
 
+所有写接口的 JSON body 上限是 64 KiB；`goal` 上限 4 KiB，`requestId`、`tenantId`、
+`idempotencyKey`、`type`、`repositoryId` 上限各 256 字节。超限返回
+`400 validation_error`。服务设置读请求 15 秒、写超时 5 分钟、空闲连接 60 秒；
+收到 SIGINT/SIGTERM 后停止接收新连接，最多等待 60 秒让在途请求完成。
+当前 Workspace Prepare 仍在单个 HTTP 请求中同步 clone，大仓库可能碰到写超时或超过停机宽限；
+改为异步 Activity 后需要重新收紧和校准这些时限。
+
+服务端把 503/500 的原因写为 stderr 中的 JSON 日志，包含 `requestId`、`tenantId`、`taskId`、
+错误码与内部原因；HTTP 响应仍只给稳定文案。写请求使用 body 中的 `requestId`；读取 Workspace diff
+时可传 `X-Request-ID` 请求头，便于定位该次读取。代码不主动记录请求 body 或幂等键，并会遮盖
+错误文本中当前 GitLab token 的直接回显；日志仍可能含仓库地址等内部信息，需要限制访问。
+
 ### 创建、查询和列出 Task
 
 创建 Task：

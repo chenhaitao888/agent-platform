@@ -837,6 +837,82 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 fetch，Workspace 仍会失败并恢复为 REGISTERED；如何按 GitLab 具体引用取回不可达 commit，
 需要结合企业 GitLab 的真实配置单独设计。
 
+### M13.1（第 4 步）：给 HTTP 服务加资源边界
+
+- 状态：完成（2026-09-23）；处理代码审查报告中的第 4 项。
+- 问题：原来写接口直接解码不限长的 body，部分字段可无限进入内存索引；服务器只限制读 header，
+  收到 SIGTERM 会直接退出，不给同步 Prepare 清理半成品目录的机会。
+
+#### 代码拆解与 Java 对照
+
+1. 五条 POST/PATCH 路由都改用 `decodeRequest`。它先用 `http.MaxBytesReader` 包住 `r.Body`，
+   最多实际读取 64 KiB，不能只相信客户端提供的 `Content-Length`。这类似 Java Servlet 的
+   request-size limit，但边界放在项目的 JSON 入口，方便一起返回统一错误格式。
+2. 第一次 `Decode` 读业务对象；第二次必须读到 `io.EOF`。这样既拒绝一份 body 中塞两份 JSON，
+   也会继续消耗尾随空白：否则客户端可在合法 JSON 后追加大量内容，绕过“只读取第一份对象”的限制。
+   `*http.MaxBytesError` 转成稳定的 `400 validation_error`，其他 JSON 错误保持原有 `invalid_json`。
+3. `goal` 最多 4 KiB，标识类字段最多 256 字节，按 Go 字符串的 UTF-8 字节长度 `len` 判断。
+   Java 可类比在 Controller 入参上做 `@Size` 校验，不过这里明确按字节而非字符计数。
+   五条写接口都限制 requestId、idempotencyKey、tenantId；创建 Task 还限制 type、repositoryId、goal。
+4. `newServer` 集中设置读 header 5 秒、整份请求读取 15 秒、响应写入 5 分钟、空闲连接 60 秒。
+   写超时故意比普通 API 长，因为当前 Prepare 仍同步 clone；它只是过渡值，并不能替代将来的
+   异步 Activity。Java 中可类比 Tomcat/Jetty 的连接和请求超时配置。
+5. 主进程用 `signal.NotifyContext` 接收 SIGINT/SIGTERM，`serveUntilShutdown` 调用
+   `Server.Shutdown`：先停接新连接，再最多等 60 秒让在途请求完成。必须等待 Shutdown 返回后
+   main 才退出；而且 Shutdown 使用新的 `context.Background()` 派生超时，不能直接传已经因信号
+   取消的 context。若宽限耗尽，执行 `Close` 并报错；同步 clone 的彻底恢复仍待后续异步化。
+
+#### 测试先行记录与验证
+
+1. 超过 64 KiB 的 Task 创建请求最初返回 201（RED）；加入 `MaxBytesReader` 后返回 400（GREEN）。
+   额外测试覆盖五条写路由的巨大尾随空白，确认第二次 Decode 确实触发上限。
+2. `goal` 超过 4 KiB 最初返回 201（RED）；字段校验后返回 400（GREEN），刚好 4 KiB 仍可创建。
+   表驱动测试覆盖创建 Task 的五类标识字段，以及其余写接口的超长幂等键。
+3. server 配置测试最初找不到 `newServer`（RED）；实现后四种超时均为有限值。
+   生命周期测试最初找不到 `serveUntilShutdown`（RED）；实现后模拟信号，证明进行中的请求完成前
+   服务不会提前返回。该测试需要本机回环端口，沙箱内无法绑定，允许本机监听后通过。
+4. `go test ./...`、`go test -race ./...`、`go vet ./...`、`gofmt -l` 和
+   `git diff --check` 全部通过；覆盖率总计 70.2%，高于审查时的 68.3%。
+
+审查报告建议的 `DisallowUnknownFields` 是可选项，本步暂不改变未知字段的兼容行为。
+60 秒宽限是有限等待，不保证异常慢的 clone 一定完成并清理；长期方案仍是持久化异步执行与恢复。
+
+### M13.1（第 5 步）：让 5xx 有根因日志，并遮盖 GitLab token
+
+- 状态：完成（2026-09-23）；处理代码审查报告中的第 5 项。
+- 问题：原来 Handler 把内部错误翻译成稳定 503/500 后就丢弃，浏览器和服务端日志都找不到
+  GitLab、Git 或 diff 失败的具体原因。
+
+#### 代码拆解与 Java 对照
+
+1. `cmd/api` 把默认 `slog` 配成 stderr JSON；`httpapi.logServerError` 在每个 503/500 分支写
+   `requestId`、`tenantId`、`taskId`、`errorCode` 和 `cause`。它类似 Java 的 SLF4J 结构化参数加
+   MDC：运维按 requestId 找到那一次请求，再读服务端原因，而不是从浏览器的稳定文案猜原因。
+2. 写接口从已校验的 body 取 `requestId`；GET diff 没有 body，可以从 `X-Request-ID` 请求头取，
+   没传时日志字段为空。日志坐标超过 256 字节时写 `[overlong]`，避免异常长 header/query 撑大日志。
+   创建 Task 失败时尚无 Task ID，故 `taskId` 为空。没有在本步新增全链路追踪或成功请求日志。
+3. 错误文本用 `%v` 保留已有包装中的上下文，HTTP 响应仍走原有 `writeError`，不回显内部原因。
+   代码不主动记录 body、幂等键或 clone URL；但 Git 错误文本本身可能包含无凭据的仓库地址。
+   GitLab token 仍只在 API header、受控 Git 环境
+   与 askpass 中，不进入 URL/argv。审查报告把 Git stderr 视为天然安全，但远端文本理论上仍可能
+   回显敏感值；所以日志入口额外用当前 `AGENT_PLATFORM_GITLAB_TOKEN` 对所有记录字段做直接替换。
+   这是兜底而非任意秘密扫描，日志仍应只对运维开放。
+4. 日志和响应是两条输出通道：日志提供诊断线索，响应保持稳定协议。Java 可类比 Controller
+   捕获 Service 异常后，一边 `logger.error` 记录 cause 和 MDC，一边返回固定的错误 DTO。
+
+#### 测试先行记录与验证
+
+1. 首先让 Prepare adapter 返回“clone 失败 → 远端拒绝 commit”。旧代码日志为空（RED）；
+   加入 `slog` 后日志含关联字段与根因，响应仍是原来的 `503 workspace_preparation_failed`（GREEN）。
+2. 再模拟外部错误文本意外回显 GitLab token；旧日志泄露了测试 token（RED），加入直接遮盖后，
+   日志保留 `remote echoed [REDACTED]`，HTTP 响应和日志都不含 token（GREEN）。
+3. 补充测试覆盖 GitLab 验证失败的 503/意外 500，以及 GET diff 的 503 与请求头 requestId。
+   `go test ./...`、`go test -race ./...`、`go vet ./...` 与格式检查均通过；总覆盖率 70.4%，
+   高于审查报告的 68.3% 基线。
+
+当前只记录 503/500，不是完整的请求审计或分布式追踪；若将来凭据改由 Broker 提供，日志遮盖也必须
+同步改为使用当次凭据，而不能继续只读进程环境变量。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -858,7 +934,7 @@ node --run build
 - Task 数据重启即丢失。
 - 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
 - 幂等索引只存在于单个 Go 进程，重启或多实例部署后不能提供全局唯一保证。
-- request ID 目前只用于响应关联，还没有进入结构化日志和审计存储。
+- request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task 事件与 ID 只存在于单进程内存；它们还不是事务 Outbox，也没有发布到 Event Bus。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、

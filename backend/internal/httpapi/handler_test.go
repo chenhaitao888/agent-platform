@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1085,6 +1087,144 @@ func TestCreateTaskRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestCreateTaskRejectsBodyLargerThan64KiB(t *testing.T) {
+	body := `{"requestId":"req-large-body","idempotencyKey":"large-body","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", 64<<10) + `",` + testRepositoryJSON + `}`
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized request body, got %d", response.Code)
+	}
+	var result errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if result.Error != "validation_error" {
+		t.Fatalf("expected validation_error, got %#v", result)
+	}
+}
+
+func TestCreateTaskRejectsGoalLargerThan4KiB(t *testing.T) {
+	body := `{"requestId":"req-large-goal","idempotencyKey":"large-goal","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", (4<<10)+1) + `",` + testRepositoryJSON + `}`
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized goal, got %d", response.Code)
+	}
+	var result errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if result.Error != "validation_error" {
+		t.Fatalf("expected validation_error, got %#v", result)
+	}
+}
+
+func TestCreateTaskAcceptsGoalAt4KiBBoundary(t *testing.T) {
+	body := `{"requestId":"req-goal-boundary","idempotencyKey":"goal-boundary","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", 4<<10) + `",` + testRepositoryJSON + `}`
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for a 4 KiB goal, got %d", response.Code)
+	}
+}
+
+func TestWriteRoutesRejectOversizedTrailingWhitespace(t *testing.T) {
+	for _, route := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"create task", http.MethodPost, "/api/v1/tasks"},
+		{"update task", http.MethodPatch, "/api/v1/tasks/task-1"},
+		{"register workspace", http.MethodPost, "/api/v1/tasks/task-1/workspace"},
+		{"prepare workspace", http.MethodPost, "/api/v1/tasks/task-1/workspace/prepare"},
+		{"archive diff", http.MethodPost, "/api/v1/tasks/task-1/artifacts/diff"},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			body := `{}` + strings.Repeat(" ", maxRequestBodyBytes)
+			NewHandler().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(body)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for oversized body, got %d", response.Code)
+			}
+			var result errorResponse
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if result.Error != "validation_error" || result.Message != "request body must not exceed 64 KiB" {
+				t.Fatalf("expected body size error, got %#v", result)
+			}
+		})
+	}
+}
+
+func TestCreateTaskRejectsOversizedIdentifiers(t *testing.T) {
+	validBody := `{"requestId":"req-1","idempotencyKey":"key-1","tenantId":"tenant-a","type":"PR_REVIEW","goal":"review",` + testRepositoryJSON + `}`
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"requestId", `"requestId":"req-1"`},
+		{"idempotencyKey", `"idempotencyKey":"key-1"`},
+		{"tenantId", `"tenantId":"tenant-a"`},
+		{"type", `"type":"PR_REVIEW"`},
+		{"repositoryId", `"repositoryId":"project-7"`},
+	} {
+		t.Run(field.name, func(t *testing.T) {
+			longField := `"` + field.name + `":"` + strings.Repeat("x", maxIdentifierBytes+1) + `"`
+			body := strings.Replace(validBody, field.value, longField, 1)
+			response := httptest.NewRecorder()
+			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for oversized %s, got %d", field.name, response.Code)
+			}
+			var result errorResponse
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if result.Error != "validation_error" || result.Message != "request fields exceed supported length" {
+				t.Fatalf("expected field length error, got %#v", result)
+			}
+		})
+	}
+}
+
+func TestOtherWriteRoutesRejectOversizedIdempotencyKey(t *testing.T) {
+	longKey := strings.Repeat("x", maxIdentifierBytes+1)
+	for _, route := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"update task", http.MethodPatch, "/api/v1/tasks/task-1", `{"requestId":"req-1","idempotencyKey":"` + longKey + `","tenantId":"tenant-a","expectedVersion":1,"status":"QUEUED"}`},
+		{"register workspace", http.MethodPost, "/api/v1/tasks/task-1/workspace", `{"requestId":"req-1","idempotencyKey":"` + longKey + `","tenantId":"tenant-a"}`},
+		{"prepare workspace", http.MethodPost, "/api/v1/tasks/task-1/workspace/prepare", `{"requestId":"req-1","idempotencyKey":"` + longKey + `","tenantId":"tenant-a","expectedVersion":1}`},
+		{"archive diff", http.MethodPost, "/api/v1/tasks/task-1/artifacts/diff", `{"requestId":"req-1","idempotencyKey":"` + longKey + `","tenantId":"tenant-a","expectedWorkspaceVersion":1}`},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			NewHandler().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(route.body)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for oversized idempotencyKey, got %d", response.Code)
+			}
+			var result errorResponse
+			if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if result.Error != "validation_error" || result.Message != "request fields exceed supported length" {
+				t.Fatalf("expected field length error, got %#v", result)
+			}
+		})
+	}
+}
+
 func TestGetTaskReturnsNotFound(t *testing.T) {
 	handler := NewHandler()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-missing?tenantId=tenant-a", nil)
@@ -1857,6 +1997,168 @@ func TestPrepareWorkspaceFailureReturnsAStableErrorAndRestoresRegistration(t *te
 	}
 }
 
+func TestPrepareWorkspaceFailureLogsCauseAndCorrelation(t *testing.T) {
+	logOutput := captureJSONLogs(t)
+	handler, err := NewHandlerWithWorkspacePreparer(
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
+			return fmt.Errorf("clone failed: %w", errors.New("remote rejected commit"))
+		}),
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create handler: %v", err)
+	}
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-1/workspace/prepare", strings.NewReader(`{
+		"requestId":"req-prepare-log",
+		"idempotencyKey":"prepare-log",
+		"tenantId":"tenant-a",
+		"expectedVersion":1
+	}`))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "remote rejected commit") {
+		t.Fatalf("expected stable 503 without internal cause, got %d: %s", response.Code, response.Body.String())
+	}
+	var record struct {
+		Level     string `json:"level"`
+		RequestID string `json:"requestId"`
+		TenantID  string `json:"tenantId"`
+		TaskID    string `json:"taskId"`
+		Cause     string `json:"cause"`
+	}
+	if err := json.NewDecoder(logOutput).Decode(&record); err != nil {
+		t.Fatalf("decode failure log: %v", err)
+	}
+	if record.Level != "ERROR" || record.RequestID != "req-prepare-log" || record.TenantID != "tenant-a" || record.TaskID != "task-1" || !strings.Contains(record.Cause, "remote rejected commit") {
+		t.Fatalf("expected correlated root cause in log, got %#v", record)
+	}
+}
+
+func TestPrepareWorkspaceFailureRedactsGitLabTokenFromLog(t *testing.T) {
+	const token = "service-secret-token"
+	t.Setenv("AGENT_PLATFORM_GITLAB_TOKEN", token)
+	logOutput := captureJSONLogs(t)
+	handler, err := NewHandlerWithWorkspacePreparer(
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
+			return errors.New("remote echoed " + token)
+		}),
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create handler: %v", err)
+	}
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-1/workspace/prepare", strings.NewReader(`{
+		"requestId":"req-prepare-redaction",
+		"idempotencyKey":"prepare-redaction",
+		"tenantId":"tenant-a",
+		"expectedVersion":1
+	}`))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected stable 503, got %d", response.Code)
+	}
+	if strings.Contains(response.Body.String(), token) || strings.Contains(logOutput.String(), token) {
+		t.Fatal("GitLab token must not appear in the response or server log")
+	}
+	if !strings.Contains(logOutput.String(), "remote echoed [REDACTED]") {
+		t.Fatalf("expected redacted root cause in log, got %s", logOutput.String())
+	}
+}
+
+func TestWorkspaceRegistrationLogsServiceAndUnexpectedFailures(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		failure   error
+		status    int
+		errorCode string
+		rootCause string
+	}{
+		{"GitLab unavailable", fmt.Errorf("%w: GitLab returned 502", repository.ErrVerificationUnavailable), http.StatusServiceUnavailable, "repository_verification_unavailable", "GitLab returned 502"},
+		{"unexpected failure", errors.New("unexpected verifier failure"), http.StatusInternalServerError, "internal_error", "unexpected verifier failure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logOutput := captureJSONLogs(t)
+			handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+				func(context.Context, task.RepositoryReference) error { return test.failure },
+			))
+			createQueuedTaskForWorkspaceTest(t, handler)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-1/workspace", strings.NewReader(`{
+				"requestId":"req-register-log",
+				"idempotencyKey":"register-log",
+				"tenantId":"tenant-a"
+			}`))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status || strings.Contains(response.Body.String(), test.rootCause) {
+				t.Fatalf("expected stable %d without internal cause, got %d: %s", test.status, response.Code, response.Body.String())
+			}
+			var record struct {
+				RequestID string `json:"requestId"`
+				TenantID  string `json:"tenantId"`
+				TaskID    string `json:"taskId"`
+				ErrorCode string `json:"errorCode"`
+				Cause     string `json:"cause"`
+			}
+			if err := json.NewDecoder(logOutput).Decode(&record); err != nil {
+				t.Fatalf("decode failure log: %v", err)
+			}
+			if record.RequestID != "req-register-log" || record.TenantID != "tenant-a" || record.TaskID != "task-1" || record.ErrorCode != test.errorCode || !strings.Contains(record.Cause, test.rootCause) {
+				t.Fatalf("unexpected correlated failure log: %#v", record)
+			}
+		})
+	}
+}
+
+func TestGetWorkspaceDiffFailureLogsHeaderRequestID(t *testing.T) {
+	logOutput := captureJSONLogs(t)
+	handler, err := NewHandlerWithWorkspaceServices(
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
+		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) {
+			return nil, fmt.Errorf("%w: git diff exited 128", repository.ErrDiffUnavailable)
+		}),
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create handler: %v", err)
+	}
+	createQueuedTaskForWorkspaceTest(t, handler)
+	registerWorkspaceForTest(t, handler)
+	prepareWorkspaceForTest(t, handler, "prepare-for-diff-log")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-a", nil)
+	request.Header.Set("X-Request-ID", "req-read-diff-log")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "git diff exited 128") {
+		t.Fatalf("expected stable 503 without Git output, got %d: %s", response.Code, response.Body.String())
+	}
+	var record struct {
+		RequestID string `json:"requestId"`
+		TenantID  string `json:"tenantId"`
+		TaskID    string `json:"taskId"`
+		Cause     string `json:"cause"`
+	}
+	if err := json.NewDecoder(logOutput).Decode(&record); err != nil {
+		t.Fatalf("decode failure log: %v", err)
+	}
+	if record.RequestID != "req-read-diff-log" || record.TenantID != "tenant-a" || record.TaskID != "task-1" || !strings.Contains(record.Cause, "git diff exited 128") {
+		t.Fatalf("unexpected GET diff failure log: %#v", record)
+	}
+}
+
 func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
 	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
@@ -2366,4 +2668,13 @@ func newHandlerWithVerifiedRepositories() http.Handler {
 			return nil
 		},
 	))
+}
+
+func captureJSONLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	return &output
 }

@@ -3,8 +3,12 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -76,6 +80,12 @@ type errorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+const (
+	maxRequestBodyBytes = 64 << 10
+	maxIdentifierBytes  = 256
+	maxGoalBytes        = 4 << 10
+)
 
 func NewHandler() http.Handler {
 	return NewHandlerWithRepositoryVerifier(repository.UnavailableVerifier{})
@@ -171,13 +181,16 @@ func (h *handler) getArtifact(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 	var request archiveDiffRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+	if !decodeRequest(w, r, &request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	request.TenantID = strings.TrimSpace(request.TenantID)
+	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
+		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
+		return
+	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" || request.ExpectedWorkspaceVersion == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey, tenantId and expectedWorkspaceVersion are required")
 		return
@@ -211,10 +224,12 @@ func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrDiffUnavailable) {
+		logServerError(r, request.RequestID, request.TenantID, "diff_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
 		return
 	}
 	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff could not be archived")
 		return
 	}
@@ -251,10 +266,12 @@ func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrDiffUnavailable) {
+		logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "diff_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
 		return
 	}
 	if err != nil {
+		logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff is unavailable")
 		return
 	}
@@ -264,13 +281,16 @@ func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 	var request prepareWorkspaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+	if !decodeRequest(w, r, &request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	request.TenantID = strings.TrimSpace(request.TenantID)
+	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
+		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
+		return
+	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" || request.ExpectedVersion == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey, tenantId and expectedVersion are required")
 		return
@@ -300,14 +320,17 @@ func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, workspace.ErrPreparationUnavailable) {
+		logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "workspace_preparation_unavailable", "workspace preparation is unavailable")
 		return
 	}
 	if errors.Is(err, workspace.ErrPreparationFailed) {
+		logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_failed", err)
 		writeError(w, http.StatusServiceUnavailable, "workspace_preparation_failed", "workspace preparation failed")
 		return
 	}
 	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "workspace preparation failed")
 		return
 	}
@@ -332,13 +355,16 @@ func (h *handler) getWorkspace(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var request createWorkspaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+	if !decodeRequest(w, r, &request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	request.TenantID = strings.TrimSpace(request.TenantID)
+	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
+		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
+		return
+	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey and tenantId are required")
 		return
@@ -379,10 +405,12 @@ func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrVerificationUnavailable) {
+		logServerError(r, request.RequestID, request.TenantID, "repository_verification_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "repository_verification_unavailable", "repository verification is unavailable")
 		return
 	}
 	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "workspace registration failed")
 		return
 	}
@@ -397,14 +425,17 @@ func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) updateTask(w http.ResponseWriter, r *http.Request) {
 	var request updateTaskRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+	if !decodeRequest(w, r, &request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	request.TenantID = strings.TrimSpace(request.TenantID)
 	request.Status = task.Status(strings.TrimSpace(string(request.Status)))
+	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
+		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
+		return
+	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey and tenantId are required")
 		return
@@ -440,6 +471,7 @@ func (h *handler) updateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "task update failed")
 		return
 	}
@@ -491,8 +523,7 @@ func (h *handler) getTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 	var request createTaskRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+	if !decodeRequest(w, r, &request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
@@ -504,6 +535,12 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 	request.Repository.RepositoryID = strings.TrimSpace(request.Repository.RepositoryID)
 	request.Repository.BaseSHA = strings.TrimSpace(request.Repository.BaseSHA)
 	request.Repository.HeadSHA = strings.TrimSpace(request.Repository.HeadSHA)
+	// len 按 UTF-8 字节计数；限制这些会进入内存索引或响应的字段，避免小请求体
+	// 通过少数巨大字段反复占用内存。SHA 在下方还有更严格的固定长度校验。
+	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID, request.Type, request.Repository.RepositoryID) || len(request.Goal) > maxGoalBytes {
+		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
+		return
+	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey and tenantId are required")
 		return
@@ -539,6 +576,7 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "task creation failed")
 		return
 	}
@@ -563,6 +601,70 @@ func isGitObjectID(value string) bool {
 		}
 	}
 	return true
+}
+
+func exceedsIdentifierLimit(values ...string) bool {
+	for _, value := range values {
+		if len(value) > maxIdentifierBytes {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeRequest(w http.ResponseWriter, r *http.Request, destination any) bool {
+	// MaxBytesReader 限制实际读取量，不依赖客户端可能伪造或省略的 Content-Length。
+	// 所有写接口共用此入口，避免某条路由漏掉限制。
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(destination); err != nil {
+		writeDecodeError(w, err)
+		return false
+	}
+	// 第二次 Decode 必须读到 EOF：既拒绝第二份 JSON，也使尾随空白计入 64 KiB。
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeDecodeError(w, err)
+		return false
+	}
+	return true
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var sizeError *http.MaxBytesError
+	if errors.As(err, &sizeError) {
+		writeError(w, http.StatusBadRequest, "validation_error", "request body must not exceed 64 KiB")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+}
+
+func logServerError(r *http.Request, requestID, tenantID, code string, err error) {
+	// 仅记录定位故障需要的坐标和错误链，不记录 request body、幂等键或凭据。
+	// token 不应进入 Git URL/argv；但 Git stderr 属于外部文本，仍对当前服务 token
+	// 做兜底遮盖，避免远端异常回显时把凭据带进日志。
+	secret := strings.TrimSpace(os.Getenv("AGENT_PLATFORM_GITLAB_TOKEN"))
+	redact := func(value string) string {
+		if secret == "" {
+			return value
+		}
+		return strings.ReplaceAll(value, secret, "[REDACTED]")
+	}
+	boundedField := func(value string) string {
+		value = redact(value)
+		if len(value) > maxIdentifierBytes {
+			return "[overlong]"
+		}
+		return value
+	}
+	slog.ErrorContext(r.Context(), "API request failed",
+		"requestId", boundedField(requestID),
+		"tenantId", boundedField(tenantID),
+		"taskId", boundedField(r.PathValue("id")),
+		"errorCode", code,
+		"cause", redact(fmt.Sprintf("%v", err)),
+	)
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
