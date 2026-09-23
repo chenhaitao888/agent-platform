@@ -273,16 +273,21 @@ describe('TaskWorkspace', () => {
     expect(screen.queryByText('列表加载失败：network down')).not.toBeInTheDocument()
   })
 
-  it('queues a created task and replaces it with the updated version', async () => {
+  it('retries queueing with the same key after a lost response', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi
         .fn()
         .mockReturnValueOnce('00000000-0000-4000-8000-000000000010')
         .mockReturnValueOnce('00000000-0000-4000-8000-000000000011'),
     })
+    let patchCalls = 0
     const fetchMock = vi.fn(
       (input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'PATCH') {
+          patchCalls++
+          if (patchCalls === 1) {
+            return Promise.reject(new Error('response lost'))
+          }
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -333,6 +338,8 @@ describe('TaskWorkspace', () => {
     fireEvent.click(
       await screen.findByRole('button', { name: '将 task-1 加入队列' }),
     )
+    expect(await screen.findByRole('alert')).toHaveTextContent('response lost')
+    fireEvent.click(screen.getByRole('button', { name: '将 task-1 加入队列' }))
 
     expect(await screen.findByText('QUEUED')).toBeInTheDocument()
     expect(
@@ -341,18 +348,22 @@ describe('TaskWorkspace', () => {
     expect(
       screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
     ).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/tasks/task-1', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: 'req_00000000-0000-4000-8000-000000000010',
-        idempotencyKey:
-          'task-transition:00000000-0000-4000-8000-000000000011',
-        tenantId: 'tenant-local',
-        expectedVersion: 1,
-        status: 'QUEUED',
-      }),
-    })
+    const requests = fetchMock.mock.calls
+      .filter(([, init]) => init?.method === 'PATCH')
+      .map(([, init]) =>
+        JSON.parse(String(init?.body)) as {
+          requestId: string
+          idempotencyKey: string
+          expectedVersion: number
+          status: string
+        },
+      )
+    expect(requests).toHaveLength(2)
+    expect(requests[0].requestId).not.toBe(requests[1].requestId)
+    expect(requests[0].idempotencyKey).toBe('task-queue:v1:task-1:v1')
+    expect(requests[1].idempotencyKey).toBe(requests[0].idempotencyKey)
+    expect(requests[1].expectedVersion).toBe(1)
+    expect(requests[1].status).toBe('QUEUED')
   })
 
   it('keeps the created task when queueing has a version conflict', async () => {

@@ -72,7 +72,7 @@ describe('WorkspaceDetails', () => {
     )
   })
 
-  it('registers a workspace when the task does not have one', async () => {
+  it('reuses the registration key after a lost response and loading the workspace again', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi
         .fn()
@@ -107,6 +107,13 @@ describe('WorkspaceDetails', () => {
           },
         ),
       )
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: 'not_found', message: 'workspace not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
       .mockResolvedValueOnce(
         new Response(JSON.stringify(registered), {
           status: 201,
@@ -132,29 +139,32 @@ describe('WorkspaceDetails', () => {
     )
     expect(screen.queryByLabelText('仓库 ID')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '登记 Workspace' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('response lost')
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByRole('group', { name: 'task-1 的仓库引用' })
+    fireEvent.click(screen.getByRole('button', { name: '登记 Workspace' }))
 
     const details = await screen.findByRole('group', {
       name: 'task-1 的 Workspace',
     })
     expect(details).toHaveTextContent('REGISTERED')
     expect(details).toHaveTextContent('gitlab / project-7')
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/v1/tasks/task-1/workspace',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: 'req_00000000-0000-4000-8000-000000000001',
-          idempotencyKey:
-            'workspace-register:00000000-0000-4000-8000-000000000002',
-          tenantId: 'tenant-local',
-        }),
+    const requests = [1, 3].map((index) =>
+      JSON.parse(String(fetchMock.mock.calls[index][1]?.body)) as {
+        requestId: string
+        idempotencyKey: string
+        tenantId: string
       },
     )
+    expect(requests[0].requestId).not.toBe(requests[1].requestId)
+    expect(requests[0].idempotencyKey).toBe('workspace-register:v1:task-1')
+    expect(requests[1].idempotencyKey).toBe(requests[0].idempotencyKey)
+    expect(requests[1].tenantId).toBe('tenant-local')
   })
 
-  it('prepares a registered workspace and shows its real path', async () => {
+  it('reuses the preparation key after a lost response and loading the workspace again', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi
         .fn()
@@ -189,6 +199,13 @@ describe('WorkspaceDetails', () => {
           headers: { 'Content-Type': 'application/json' },
         }),
       )
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(registered), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
       .mockResolvedValueOnce(
         new Response(JSON.stringify(ready), {
           status: 200,
@@ -203,6 +220,12 @@ describe('WorkspaceDetails', () => {
     )
     await screen.findByText('REGISTERED')
     fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('response lost')
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('REGISTERED')
+    fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
 
     const details = await screen.findByRole('group', {
       name: 'task-1 的 Workspace',
@@ -211,21 +234,96 @@ describe('WorkspaceDetails', () => {
     expect(details).toHaveTextContent(
       '/var/lib/agent-platform/workspace-1/worktree',
     )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/v1/tasks/task-1/workspace/prepare',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: 'req_00000000-0000-4000-8000-000000000005',
-          idempotencyKey:
-            'workspace-prepare:00000000-0000-4000-8000-000000000006',
-          tenantId: 'tenant-local',
-          expectedVersion: 1,
-        }),
+    const requests = [1, 3].map((index) =>
+      JSON.parse(String(fetchMock.mock.calls[index][1]?.body)) as {
+        requestId: string
+        idempotencyKey: string
+        expectedVersion: number
       },
     )
+    expect(requests[0].requestId).not.toBe(requests[1].requestId)
+    expect(requests[0].idempotencyKey).toBe('workspace-prepare:v1:task-1:v1')
+    expect(requests[1].idempotencyKey).toBe(requests[0].idempotencyKey)
+    expect(requests[1].expectedVersion).toBe(1)
+  })
+
+  it('uses a new preparation key after the workspace version advances on failure', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi
+        .fn()
+        .mockReturnValueOnce('request-1')
+        .mockReturnValueOnce('request-2'),
+    })
+    const registered = {
+      id: 'workspace-1',
+      tenantId: 'tenant-local',
+      taskId: 'task-1',
+      repository: { provider: 'gitlab', repositoryId: 'project-7' },
+      baseSha: queuedTask.repository.baseSha,
+      headSha: queuedTask.repository.headSha,
+      state: 'REGISTERED',
+      version: 1,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(registered), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: 'workspace_preparation_failed',
+            message: 'workspace preparation failed',
+          }),
+          { status: 503 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...registered, version: 3 }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ...registered,
+            state: 'READY',
+            version: 5,
+            path: '/tmp/worktree',
+          }),
+          { status: 200 },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<WorkspaceDetails task={queuedTask} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('REGISTERED')
+    fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
+    await screen.findByRole('alert')
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('REGISTERED')
+    fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
+    await screen.findByText('READY')
+
+    const requests = [1, 3].map((index) =>
+      JSON.parse(String(fetchMock.mock.calls[index][1]?.body)) as {
+        idempotencyKey: string
+        expectedVersion: number
+      },
+    )
+    expect(requests[0]).toMatchObject({
+      idempotencyKey: 'workspace-prepare:v1:task-1:v1',
+      expectedVersion: 1,
+    })
+    expect(requests[1]).toMatchObject({
+      idempotencyKey: 'workspace-prepare:v1:task-1:v3',
+      expectedVersion: 3,
+    })
   })
 
   it('loads the immutable diff for a ready workspace', async () => {

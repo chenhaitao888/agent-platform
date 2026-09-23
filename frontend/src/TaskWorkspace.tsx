@@ -57,7 +57,8 @@ export default function TaskWorkspace() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: `req_${crypto.randomUUID()}`,
-          idempotencyKey: `task-transition:${crypto.randomUUID()}`,
+          // 同一 Task 版本的准入是同一次操作；响应丢失后重试仍使用这个 key。
+          idempotencyKey: `task-queue:v1:${task.id}:v${task.version}`,
           tenantId: task.tenantId,
           expectedVersion: task.version,
           status: 'QUEUED',

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import { LOCAL_TENANT_ID, type Task } from './task'
 
@@ -19,6 +19,7 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
   const [createdTask, setCreatedTask] = useState<Task | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const pendingSubmission = useRef<{ content: string; key: string } | null>(null)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -27,22 +28,31 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
 
     try {
       const requestId = `req_${crypto.randomUUID()}`
-      const idempotencyKey = `task-create:${crypto.randomUUID()}`
+      const content = {
+        tenantId: LOCAL_TENANT_ID,
+        type: taskType.trim(),
+        goal: goal.trim(),
+        repository: {
+          provider: 'gitlab',
+          repositoryId: repositoryID.trim(),
+          baseSha: baseSHA.trim(),
+          headSha: headSHA.trim(),
+        },
+      }
+      const signature = JSON.stringify(content)
+      // 同一份表单在响应丢失后重试，沿用业务操作的 key；内容变了才开启新操作。
+      const idempotencyKey =
+        pendingSubmission.current?.content === signature
+          ? pendingSubmission.current.key
+          : `task-create:${crypto.randomUUID()}`
+      pendingSubmission.current = { content: signature, key: idempotencyKey }
       const response = await fetch('/api/v1/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId,
           idempotencyKey,
-          tenantId: LOCAL_TENANT_ID,
-          type: taskType,
-          goal,
-          repository: {
-            provider: 'gitlab',
-            repositoryId: repositoryID.trim(),
-            baseSha: baseSHA.trim(),
-            headSha: headSHA.trim(),
-          },
+          ...content,
         }),
       })
       if (!response.ok) {
@@ -54,6 +64,7 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
       const task = (await response.json()) as Task
       setCreatedTask(task)
       onCreated?.(task)
+      pendingSubmission.current = null
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error'
       setErrorMessage(message)

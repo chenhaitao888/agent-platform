@@ -404,7 +404,9 @@ node --run dev
 页面会先调用 `GET /api/v1/tasks?tenantId=tenant-local` 加载最近 Task。“创建 Task”表单调用
 `POST /api/v1/tasks`；表单同时采集仓库 ID 与不可变 base/head SHA，提交成功后会显示后端生成的
 Task ID、状态、仓库和目标，并立即更新最近列表。前端在 Phase 0 固定使用 `tenant-local` 与
-GitLab provider，并为每次提交生成 request ID 和 idempotency key。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的
+GitLab provider。每次提交都有新的 request ID；同一份未修改的 Task 表单在当前页面内重试会沿用
+原幂等键，修改表单或成功后再次提交才生成新键。准入、Workspace 登记和准备则由 Task ID、Workspace
+版本等稳定坐标生成幂等键。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的
 `QUEUED / version 2` 替换旧对象。请求期间按钮会禁用，后端校验错误或网络错误会直接
 显示在对应区域。列表请求晚到时，前端按 Task ID 和 version 合并，不让旧快照覆盖新状态。
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动

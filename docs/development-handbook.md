@@ -763,6 +763,41 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 - 复核变更时确认 `task.Store.Get/List` 的所有调用方均传入 tenant；原有 `docs/code-review-2026-09-23.md`
   作为用户提供的审查报告保留原样。
 
+### M13.1（第 2 步）：前端重试复用幂等键
+
+- 状态：完成（2026-09-23）；处理代码审查报告中的第 2 项。
+- 问题：原来四个写按钮每次点击都调用 `crypto.randomUUID()` 生成新幂等键。请求若已在服务端成功、
+  但响应在网络中丢失，用户再点一次会被当作新的业务操作；创建 Task 尤其可能产生第二份记录。
+
+#### 代码拆解与 Java 对照
+
+1. `requestId` 每次请求重新生成，用于追踪这一次 HTTP 往返；`idempotencyKey` 标识业务操作，
+   重试时必须稳定。Java 中可以把前者类比日志 trace/request ID，后者类比数据库唯一业务键。
+2. 创建 Task 尚无 Task ID。`TaskCreator` 用 `useRef` 暂存规范化后表单内容的 JSON 字符串和随机 key：
+   相同内容在失败后重试沿用 key；内容变化则换 key；成功后清空。`useRef` 类似 Java 对象的一个
+   实例字段，React 重渲染不会清掉，但浏览器刷新或组件卸载会清掉。
+3. 准入键是 `task-queue:v1:{taskId}:v{taskVersion}`，登记键是
+   `workspace-register:v1:{taskId}`。同一 Task 的同一版本和唯一 Workspace 登记天然有稳定身份。
+4. 准备键是 `workspace-prepare:v1:{taskId}:v{workspaceVersion}`。同一次操作携带原版本重放，
+   即使服务端已成功也能命中幂等记录；真正准备失败时后端会把 Workspace 恢复为 REGISTERED
+   并递增版本，新版本允许发起新的准备。
+   这相当于 Java 乐观锁 `@Version` 与业务唯一键共同约束一次操作。
+5. 幂等键没有在字符串中重复写 tenant，因为后端的幂等索引已经按 tenant 分区。所有写请求仍提交
+   `tenantId`；这不代替身份认证。
+
+#### 测试先行记录与验证
+
+1. Task 创建测试先模拟“第一次请求响应丢失”；旧代码生成两个 key（RED），改为保存同内容的
+   待确认操作后，两次 requestId 不同、key 相同（GREEN）。后续测试确认改目标或成功后再次提交
+   都会换 key。
+2. Task 准入、Workspace 登记与准备都模拟失败后再次点击；原随机 key 测试失败，改为业务坐标后
+   转绿。准备测试还确认版本从 1 变为 3 后，新请求使用新的 key。
+3. 前端 5 个测试文件共 27 条测试通过；TypeScript 检查与 Vite 构建通过。Go 服务端的原有幂等
+   测试与全量测试继续通过。
+
+当前创建 Task 的待确认 key 只保存在组件内存里；刷新页面后无法恢复这次未确认的提交。将来有持久化
+草稿或客户端操作记录时，再扩展跨刷新的重试能力；本步先保证页面内重试正确。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：

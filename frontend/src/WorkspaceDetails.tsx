@@ -83,7 +83,8 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: `req_${crypto.randomUUID()}`,
-          idempotencyKey: `workspace-register:${crypto.randomUUID()}`,
+          // 一个 Task 只登记一份 Workspace；重新加载页面后仍可重放同一登记操作。
+          idempotencyKey: `workspace-register:v1:${task.id}`,
           tenantId: task.tenantId,
         }),
       })
@@ -117,7 +118,8 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestId: `req_${crypto.randomUUID()}`,
-            idempotencyKey: `workspace-prepare:${crypto.randomUUID()}`,
+            // 相同版本的重试沿用 key；真正失败后版本递增，才允许发起新一轮准备。
+            idempotencyKey: `workspace-prepare:v1:${task.id}:v${workspace.version}`,
             tenantId: task.tenantId,
             expectedVersion: workspace.version,
           }),
