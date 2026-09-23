@@ -12,7 +12,7 @@ function fillValidTaskForm() {
     target: { value: 'Review pull request 42' },
   })
   fireEvent.change(screen.getByLabelText('仓库 ID'), {
-    target: { value: 'project-7' },
+    target: { value: 'platform/project-7' },
   })
   fireEvent.change(screen.getByLabelText('Base SHA'), {
     target: { value: '1111111111111111111111111111111111111111' },
@@ -41,7 +41,7 @@ describe('TaskCreator', () => {
           goal: 'Review pull request 42',
           repository: {
             provider: 'gitlab',
-            repositoryId: 'project-7',
+            repositoryId: 'platform/project-7',
             baseSha: '1111111111111111111111111111111111111111',
             headSha: '2222222222222222222222222222222222222222',
           },
@@ -75,7 +75,7 @@ describe('TaskCreator', () => {
         goal: 'Review pull request 42',
         repository: {
           provider: 'gitlab',
-          repositoryId: 'project-7',
+          repositoryId: 'platform/project-7',
           baseSha: '1111111111111111111111111111111111111111',
           headSha: '2222222222222222222222222222222222222222',
         },
@@ -153,7 +153,7 @@ describe('TaskCreator', () => {
             tenantId: 'tenant-local',
             type: 'PR_REVIEW',
             goal: 'Review pull request 42',
-            repository: { provider: 'gitlab', repositoryId: 'project-7' },
+            repository: { provider: 'gitlab', repositoryId: 'platform/project-7' },
             status: 'CREATED',
             version: 1,
           }),
@@ -230,7 +230,7 @@ describe('TaskCreator', () => {
             JSON.stringify({
               id: `task-${nextTask++}`,
               goal: 'Review pull request 42',
-              repository: { provider: 'gitlab', repositoryId: 'project-7' },
+              repository: { provider: 'gitlab', repositoryId: 'platform/project-7' },
               status: 'CREATED',
             }),
             { status: 201 },

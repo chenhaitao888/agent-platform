@@ -14,11 +14,12 @@ import (
 
 func TestDiffReaderReadsTheRegisteredBaseAndHead(t *testing.T) {
 	source, baseSHA, headSHA := createRepositoryFixture(t)
-	preparer, err := NewPreparer("git")
+	root := t.TempDir()
+	preparer, err := NewPreparer("git", root)
 	if err != nil {
 		t.Fatalf("create Git preparer: %v", err)
 	}
-	worktreePath := filepath.Join(t.TempDir(), "workspace-1", "worktree")
+	worktreePath := filepath.Join(root, "workspace-1", "worktree")
 	if err := preparer.Prepare(context.Background(), Input{
 		CloneURL:    (&url.URL{Scheme: "file", Path: source}).String(),
 		BaseSHA:     baseSHA,
@@ -28,7 +29,7 @@ func TestDiffReaderReadsTheRegisteredBaseAndHead(t *testing.T) {
 		t.Fatalf("prepare workspace: %v", err)
 	}
 
-	reader, err := NewDiffReader("git")
+	reader, err := NewDiffReader("git", root)
 	if err != nil {
 		t.Fatalf("create Git diff reader: %v", err)
 	}
@@ -46,6 +47,64 @@ func TestDiffReaderReadsTheRegisteredBaseAndHead(t *testing.T) {
 	}
 }
 
+func TestDiffReaderRejectsWorktreeOutsideConfiguredRootBeforeRunningGit(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "workspace-1", "worktree")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatalf("create outside worktree: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "git-was-run")
+	fakeGit := filepath.Join(t.TempDir(), "fake-git")
+	writeExecutable(t, fakeGit, "#!/bin/sh\nprintf 'called' > "+shellQuote(marker)+"\nexit 0\n")
+	reader, err := NewDiffReader(fakeGit, root)
+	if err != nil {
+		t.Fatalf("create Git diff reader: %v", err)
+	}
+
+	_, err = reader.Read(context.Background(), repository.DiffInput{
+		WorktreePath: outside,
+		BaseSHA:      "1111111111111111111111111111111111111111",
+		HeadSHA:      "2222222222222222222222222222222222222222",
+	})
+	if !errors.Is(err, repository.ErrDiffUnavailable) {
+		t.Fatalf("expected unavailable diff for outside worktree, got %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Git must not run for a worktree outside root, got %v", err)
+	}
+}
+
+func TestDiffReaderRejectsSymlinkEscapingConfiguredRootBeforeRunningGit(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatalf("create outside worktree: %v", err)
+	}
+	workspaceLink := filepath.Join(root, "workspace-1")
+	if err := os.Symlink(filepath.Dir(outside), workspaceLink); err != nil {
+		t.Fatalf("create workspace symlink: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "git-was-run")
+	fakeGit := filepath.Join(t.TempDir(), "fake-git")
+	writeExecutable(t, fakeGit, "#!/bin/sh\nprintf 'called' > "+shellQuote(marker)+"\nexit 0\n")
+	reader, err := NewDiffReader(fakeGit, root)
+	if err != nil {
+		t.Fatalf("create Git diff reader: %v", err)
+	}
+
+	_, err = reader.Read(context.Background(), repository.DiffInput{
+		WorktreePath: filepath.Join(workspaceLink, "worktree"),
+		BaseSHA:      "1111111111111111111111111111111111111111",
+		HeadSHA:      "2222222222222222222222222222222222222222",
+	})
+	if !errors.Is(err, repository.ErrDiffUnavailable) {
+		t.Fatalf("expected unavailable diff for escaping symlink, got %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Git must not run for a symlink escaping root, got %v", err)
+	}
+}
+
 func TestDiffReaderRejectsOutputLargerThanTheLimit(t *testing.T) {
 	testRoot := t.TempDir()
 	fakeGit := filepath.Join(testRoot, "fake-git")
@@ -56,7 +115,7 @@ dd if=/dev/zero bs=1024 count=1025 2>/dev/null | tr '\0' x
 	if err := os.MkdirAll(worktreePath, 0o700); err != nil {
 		t.Fatalf("create worktree fixture: %v", err)
 	}
-	reader, err := NewDiffReader(fakeGit)
+	reader, err := NewDiffReader(fakeGit, testRoot)
 	if err != nil {
 		t.Fatalf("create Git diff reader: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"agent-platform/backend/internal/repository"
@@ -19,21 +20,36 @@ const maxDiffBytes = 1 << 20
 
 type DiffReader struct {
 	gitBinary string
+	root      string
 }
 
-func NewDiffReader(gitBinary string) (*DiffReader, error) {
+func NewDiffReader(gitBinary, root string) (*DiffReader, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) == string(filepath.Separator) {
+		return nil, errors.New("workspace root must be an absolute non-root path")
+	}
 	resolved, err := exec.LookPath(strings.TrimSpace(gitBinary))
 	if err != nil {
 		return nil, fmt.Errorf("find Git executable: %w", err)
 	}
-	return &DiffReader{gitBinary: resolved}, nil
+	return &DiffReader{gitBinary: resolved, root: filepath.Clean(root)}, nil
 }
 
 func (r *DiffReader) Read(ctx context.Context, input repository.DiffInput) ([]byte, error) {
 	// Diff 只能读取平台生成的 worktree，并且 revision 必须是完整对象 ID。
 	// 这样即使未来出现新的非 HTTP 调用方，也不能把任意 Git 参数塞进命令。
-	if _, err := validateDestination(input.WorktreePath); err != nil {
+	if _, err := validateDestination(r.root, input.WorktreePath); err != nil {
 		return nil, fmt.Errorf("%w: %w: %v", repository.ErrDiffUnavailable, ErrGitDiffOperation, err)
+	}
+	// Prepare 创建的 worktree 是普通目录。读取前再解析一次完整路径，避免后来被换成
+	// 指向 root 外的符号链接；Java 可类比 Path.toRealPath() 后再检查实际位置。
+	resolvedRoot, err := filepath.EvalSymlinks(r.root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w: resolve configured workspace root: %v", repository.ErrDiffUnavailable, ErrGitDiffOperation, err)
+	}
+	resolvedWorktree, err := filepath.EvalSymlinks(input.WorktreePath)
+	expectedWorktree := filepath.Join(resolvedRoot, filepath.Base(filepath.Dir(filepath.Clean(input.WorktreePath))), "worktree")
+	if err != nil || resolvedWorktree != expectedWorktree {
+		return nil, fmt.Errorf("%w: %w: worktree resolves outside configured workspace root", repository.ErrDiffUnavailable, ErrGitDiffOperation)
 	}
 	if !isGitObjectID(input.BaseSHA) || !isGitObjectID(input.HeadSHA) {
 		return nil, fmt.Errorf("%w: %w: base and head must be immutable Git object IDs", repository.ErrDiffUnavailable, ErrGitDiffOperation)
@@ -58,7 +74,7 @@ func (r *DiffReader) Read(ctx context.Context, input repository.DiffInput) ([]by
 	var diagnostics cappedBuffer
 	command.Stdout = &output
 	command.Stderr = &diagnostics
-	err := command.Run()
+	err = command.Run()
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

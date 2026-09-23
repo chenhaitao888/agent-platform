@@ -268,7 +268,13 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 	}
 	if err := m.preparer.Prepare(ctx, reference, destination); err != nil {
 		m.mu.Lock()
-		current = m.byTask[input.TaskID]
+		// Go map 缺键会返回零值；必须同时检查 ok，不能把空 Workspace 写回去。
+		// 类比 Java：Map.get 得到 null 后，不能继续修改并 put 回同一个 key。
+		current, ok = m.byTask[input.TaskID]
+		if !ok {
+			m.mu.Unlock()
+			return PrepareResult{}, ErrWorkspaceNotFound
+		}
 		current.State = StateRegistered
 		current.Version++
 		m.byTask[input.TaskID] = current
@@ -281,7 +287,10 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current = m.byTask[input.TaskID]
+	current, ok = m.byTask[input.TaskID]
+	if !ok {
+		return PrepareResult{}, ErrWorkspaceNotFound
+	}
 	current.State = StateReady
 	current.Path = destination
 	current.Version++

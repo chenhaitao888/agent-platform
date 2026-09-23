@@ -28,20 +28,24 @@ type Input struct {
 
 type Preparer struct {
 	gitBinary string
+	root      string
 }
 
-func NewPreparer(gitBinary string) (*Preparer, error) {
+func NewPreparer(gitBinary, root string) (*Preparer, error) {
+	if !filepath.IsAbs(root) || filepath.Clean(root) == string(filepath.Separator) {
+		return nil, errors.New("workspace root must be an absolute non-root path")
+	}
 	resolved, err := exec.LookPath(strings.TrimSpace(gitBinary))
 	if err != nil {
 		return nil, fmt.Errorf("find Git executable: %w", err)
 	}
-	return &Preparer{gitBinary: resolved}, nil
+	return &Preparer{gitBinary: resolved, root: filepath.Clean(root)}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, input Input) error {
 	// 先验证由平台生成的目录边界和不可变 SHA。即使未来出现非 HTTP 调用方，
 	// 也不能把任意路径或任意文本直接变成 Git 参数。
-	workspaceDir, err := validateDestination(input.Destination)
+	workspaceDir, err := validateDestination(p.root, input.Destination)
 	if err != nil {
 		return err
 	}
@@ -137,13 +141,29 @@ func (p *Preparer) hasObject(ctx context.Context, environment []string, reposito
 	return false, err
 }
 
-func validateDestination(destination string) (string, error) {
+func validateDestination(root, destination string) (string, error) {
 	if !filepath.IsAbs(destination) || filepath.Base(destination) != "worktree" {
 		return "", fmt.Errorf("%w: destination must be an absolute worktree path", ErrGitOperation)
 	}
 	workspaceDir := filepath.Dir(filepath.Clean(destination))
 	if !strings.HasPrefix(filepath.Base(workspaceDir), "workspace-") || filepath.Dir(workspaceDir) == string(filepath.Separator) {
 		return "", fmt.Errorf("%w: destination must belong to a generated workspace directory", ErrGitOperation)
+	}
+	// 比较解析符号链接后的目录本身，而非字符串前缀：root-extra 不是 root 的子目录。
+	// Workspace Manager 只生成 root/workspace-N/worktree，所以 workspace-N 必须直接在 root 下。
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve configured workspace root: %v", ErrGitOperation, err)
+	}
+	if resolvedRoot == string(filepath.Separator) {
+		return "", fmt.Errorf("%w: workspace root must not resolve to the filesystem root", ErrGitOperation)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(workspaceDir))
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve destination parent: %v", ErrGitOperation, err)
+	}
+	if resolvedParent != resolvedRoot {
+		return "", fmt.Errorf("%w: destination is outside configured workspace root", ErrGitOperation)
 	}
 	return workspaceDir, nil
 }

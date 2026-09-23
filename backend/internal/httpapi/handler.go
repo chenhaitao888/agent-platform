@@ -557,6 +557,10 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "repository provider must be gitlab")
 		return
 	}
+	if !isValidGitLabRepositoryID(request.Repository.RepositoryID) {
+		writeError(w, http.StatusBadRequest, "validation_error", "repositoryId must be a numeric project ID or a namespace/path")
+		return
+	}
 	if !isGitObjectID(request.Repository.BaseSHA) || !isGitObjectID(request.Repository.HeadSHA) {
 		writeError(w, http.StatusBadRequest, "validation_error", "baseSha and headSha must be 40 or 64 hexadecimal characters")
 		return
@@ -586,6 +590,44 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, result.Task)
+}
+
+// GitLab 项目 API 接受数字 ID 或 namespace/project 路径。像 Java Controller 的参数校验一样，
+// 先在 HTTP 边界拒绝畸形路径，再由 GitLab 验证仓库是否真的存在；两种校验职责不同。
+func isValidGitLabRepositoryID(id string) bool {
+	if id == "" || len(id) > maxIdentifierBytes || strings.Contains(id, "..") {
+		return false
+	}
+
+	allDigits := true
+	for i := 0; i < len(id); i++ {
+		if id[i] < '0' || id[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		return true
+	}
+
+	// 非数字 ID 必须至少有 namespace/project 两段；空段和 "." 段会让路径含义不明确。
+	if !strings.Contains(id, "/") {
+		return false
+	}
+	for _, segment := range strings.Split(id, "/") {
+		if segment == "" || segment == "." {
+			return false
+		}
+		for i := 0; i < len(segment); i++ {
+			ch := segment[i]
+			if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+				(ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func isGitObjectID(value string) bool {

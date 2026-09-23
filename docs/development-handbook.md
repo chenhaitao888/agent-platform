@@ -913,6 +913,90 @@ fetch，Workspace 仍会失败并恢复为 REGISTERED；如何按 GitLab 具体�
 当前只记录 503/500，不是完整的请求审计或分布式追踪；若将来凭据改由 Broker 提供，日志遮盖也必须
 同步改为使用当次凭据，而不能继续只读进程环境变量。
 
+### M13.1（第 6 步）：校验 GitLab `repositoryId` 的格式
+
+- 状态：完成（2026-09-23）；处理代码审查报告中的第 6 项，M14 仍暂停。
+- 问题：过去只要求 `repositoryId` 非空；单段 `project-7`、`..` 或带 `?` 的字符串都能创建 Task，
+  到登记 Workspace 时才可能作为畸形 GitLab API 路径失败。
+- 依据：[GitLab Projects API](https://docs.gitlab.com/api/projects/) 接受数字 project ID，或经过 URL
+  编码的项目完整路径。平台调用方填写原始的 `namespace/project`，后续 connector 负责编码。
+
+#### 代码拆解与 Java 对照
+
+1. `createTask` 先去除输入首尾空白，再沿用已有的 256 字节上限、必填和 provider 校验，随后调用
+   `isValidGitLabRepositoryID`。返回 `false` 就立刻返回统一的 `400 validation_error`，不会把畸形值存进
+   Task。Java 中相当于在 Controller 入参上先做格式校验，再调用 Service；不要等远端 GitLab 的
+   404 来充当本地输入校验。
+2. 辅助函数先拒绝空值、超长值和包含 `..` 的值；接着逐字节判断是否全为 ASCII 数字。若全是数字，
+   直接作为 project ID 接受；不是数字，则必须包含 `/`，并逐段检查 `namespace/project`。
+   `strings.Split` 会保留开头、结尾和相邻 `/` 造成的空段，所以这些情况都能明确拒绝。Java 的
+   `String.split("/", -1)` 才有相同的“保留末尾空段”效果；默认 `split("/")` 会丢掉末尾空段。
+3. 每段只放行 ASCII 字母、数字、`.`、`_`、`-`，并拒绝单独的 `.` 段。按字节比较让中文、`%2F`、
+   `?` 等自动落入拒绝分支；`len(id)` 也是 UTF-8 字节数，不是 Java `String.length()` 的字符单位。
+   这是刻意收紧的输入规则，不表示所有匹配白名单的项目一定存在。
+4. 校验与编码、验证分工不同：HTTP 入口检查“形状”；`connector/gitlab` 继续用 `url.PathEscape`
+   编码路径，避免原始 `/` 改变 API 路由；GitLab 项目及 commit API 再检查仓库和 SHA 是否真实可读。
+   Java 可类比 `@Pattern` 校验、URI builder 编码、Repository/远端服务查询三个独立步骤。
+
+#### 测试先行记录与验证
+
+1. 先写 HTTP 表驱动测试，旧实现把单段名称、`..`、空路径段、预编码 `%2F` 等当成合法输入并返回
+   201（RED）；加白名单后它们返回稳定的 400，数字 ID、普通/多级 namespace 路径和恰好
+   256 字节的路径仍返回 201（GREEN）。原有超长字段测试继续覆盖 257 字节的拒绝边界。
+2. 原来的共享测试仓库 `project-7` 不再符合规则，已改为 `platform/project-7`；前端创建请求的测试
+   样例和 README 创建示例也同步调整。幂等键里保留的 `project-7` 只是普通业务字符串，不参与
+   `repositoryId` 校验。
+3. `go test ./...`、`go test -race ./...`、`go vet ./...`、前端 27 个测试、前端生产构建和格式检查
+   均通过；Go 总语句覆盖率 71.0%，高于审查时的 68.3%。全量 Go 测试需要允许本机回环端口，
+   沙箱内的监听限制并非测试失败。
+
+这是创建接口的输入约束变更：之前传单段 `project-7` 的客户端须改传数字 ID 或完整
+`namespace/project`。平台目前仍由调用方自报租户，格式校验不提供认证、授权或项目访问控制。
+
+### M13.1（第 7 步）：让 Git 路径真正受 root 约束，防止空 Workspace 回写
+
+- 状态：完成（2026-09-23）；处理审查清单第 7 项中的 7.1、7.2，M14 仍暂停。
+- 边界：本步不处理审查报告中其他“低”项，也不新增 Workspace 删除 API。
+
+#### 代码拆解与 Java 对照
+
+1. `cmd/api` 将同一个 `AGENT_PLATFORM_WORKSPACE_ROOT` 传给 Workspace Manager、Git Preparer 和
+   DiffReader。两个 Git 适配器的构造函数现在都要求绝对且非文件系统根目录的 root，并保存它。
+   原先只有 Manager 知道 root，底层适配器只能猜“目录名字像不像 Workspace”；Java 可类比
+   Spring 配置把同一 `workspaceRoot` 注入写服务和读服务，而不是每个服务自己猜目录范围。
+2. `validateDestination(root, destination)` 先检查绝对路径、末段 `worktree` 和上一段
+   `workspace-...`，再对配置 root 与 workspace 目录的父目录调用 `filepath.EvalSymlinks`。
+   两者必须是同一个真实目录，才允许继续执行 Git。这里比普通字符串 `HasPrefix` 更严格：
+   `/data/workspaces-extra` 虽然以 `/data/workspaces` 开头，却不是它的子目录；而 Manager
+   实际只生成 root 的直接子目录。Java 可类比先 `Path.toRealPath()`，再比较 `parent.equals(root)`。
+   Prepare 在 `os.Mkdir` 和 clone 之前检查，因此坏路径不会启动 Git。
+3. DiffReader 还会解析完整 worktree 路径，要求解析结果仍是该 root 下预期的
+   `workspace-.../worktree`。只看父目录不够：准备成功后，如果目录被符号链接替换，
+   `git -C` 会跟随链接读到 root 外。Java 的 `Path.toRealPath()` 同样用于辨别“看起来在里面”
+   与“实际指向哪里”。这属于路径边界检查，不替代操作系统权限隔离。
+4. `Manager.Prepare` 在外部准备器返回后，会重新加锁并从 `byTask` 读取当前 Workspace。
+   Go 的 `value, ok := map[key]` 里的 `ok` 表示键是否存在；只写 `value := map[key]` 时，
+   缺键会得到结构体零值。失败和成功两条分支现在都先检查 `ok`，缺键就返回
+   `ErrWorkspaceNotFound`，不会把空 Workspace 当成真实记录写回。Java 可类比
+   `Map.get(key)` 返回 `null` 后，必须先判断存在，不能继续修改并 `put` 回去。
+
+#### 测试先行记录与验证
+
+1. 先写 Preparer 的越界目录测试（RED：构造函数还不接收 root）；注入 root 并在运行 Git 前
+   比对真实父目录后转绿。测试特意使用名字相似的兄弟目录 `workspaces-extra`，证明不能靠
+   字符串前缀判断。
+2. 再写 DiffReader 的越界读取测试（RED：读适配器还不接收 root），随后加相同边界校验转绿。
+   接着用符号链接把 `root/workspace-1` 指向外部，旧读取器真的启动了 Git（RED）；增加完整
+   worktree 的真实路径核对后，不再启动 Git（GREEN）。
+3. 最后用准备器回调模拟 Workspace 在外部操作期间被移除。旧失败分支把零值写回，旧成功分支
+   甚至返回成功（两次 RED）；两处 map 读取加 `ok` 后，均返回 `ErrWorkspaceNotFound` 且不重建记录。
+4. `go test ./...`、`go test -race ./...`、`go vet ./...`、前端 27 个测试、前端构建与格式检查
+   均通过；Go 总语句覆盖率 71.4%，高于审查时的 68.3%。
+
+目前没有 Workspace 删除 API，上述 map 缺键测试是在同包测试中模拟未来删除时的交错执行；
+它守住“不写回零值”的局部不变量，不代表已经设计好删除后的目录清理与幂等记录清理。
+路径校验和执行 Git 之间也不是原子操作，部署时仍须限制谁能修改 Workspace root。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：

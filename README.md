@@ -76,8 +76,11 @@ curl -i http://localhost:8080/healthz
 ```
 
 所有写接口的 JSON body 上限是 64 KiB；`goal` 上限 4 KiB，`requestId`、`tenantId`、
-`idempotencyKey`、`type`、`repositoryId` 上限各 256 字节。超限返回
-`400 validation_error`。服务设置读请求 15 秒、写超时 5 分钟、空闲连接 60 秒；
+`idempotencyKey`、`type`、`repositoryId` 上限各 256 字节。`repositoryId` 还必须是纯数字的
+GitLab project ID（如 `42`），或 `namespace/project` 路径（如 `platform/project-7`）；
+路径只接受 ASCII 字母、数字、`.`、`_`、`-` 和分隔用的 `/`，不接受空路径段、`.` 段或连续的
+`..`。填写原始路径，不要预先 URL 编码。格式或长度不合规返回 `400 validation_error`。
+服务设置读请求 15 秒、写超时 5 分钟、空闲连接 60 秒；
 收到 SIGINT/SIGTERM 后停止接收新连接，最多等待 60 秒让在途请求完成。
 当前 Workspace Prepare 仍在单个 HTTP 请求中同步 clone，大仓库可能碰到写超时或超过停机宽限；
 改为异步 Activity 后需要重新收紧和校准这些时限。
@@ -103,7 +106,7 @@ curl -i \
     "goal":"Review pull request 42",
     "repository":{
       "provider":"gitlab",
-      "repositoryId":"project-7",
+      "repositoryId":"platform/project-7",
       "baseSha":"1111111111111111111111111111111111111111",
       "headSha":"2222222222222222222222222222222222222222"
     }
@@ -121,7 +124,7 @@ curl -i \
   "goal": "Review pull request 42",
   "repository": {
     "provider": "gitlab",
-    "repositoryId": "project-7",
+    "repositoryId": "platform/project-7",
     "baseSha": "1111111111111111111111111111111111111111",
     "headSha": "2222222222222222222222222222222222222222"
   },
@@ -167,7 +170,7 @@ Task 与查询不存在的 ID 一样返回 404。创建响应中的 `Location` �
       "goal": "Review pull request 42",
       "repository": {
         "provider": "gitlab",
-        "repositoryId": "project-7",
+        "repositoryId": "platform/project-7",
         "baseSha": "1111111111111111111111111111111111111111",
         "headSha": "2222222222222222222222222222222222222222"
       },
@@ -295,6 +298,9 @@ curl -i \
   "path": "/var/lib/agent-platform/workspaces/workspace-1/worktree"
 }
 ```
+
+Git 准备器和差异读取器也使用同一个 Workspace root：只接受该 root 直属的
+`workspace-{id}/worktree`，差异读取前还会检查实际路径，拒绝跳到 root 外的符号链接。
 
 GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必须与已配置的 GitLab Base URL
 同源。Git token 通过临时 `GIT_ASKPASS` 和白名单环境传给 clone；clone 后先用空凭据环境

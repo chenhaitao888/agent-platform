@@ -36,11 +36,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure GitLab repository verifier: %v", err)
 		}
-		gitPreparer, err := gitworkspace.NewPreparer("git")
+		// Manager 和两个 Git 适配器必须拿到同一配置根目录；仅由 Manager 生成路径还不够。
+		gitPreparer, err := gitworkspace.NewPreparer("git", workspaceRoot)
 		if err != nil {
 			log.Fatalf("configure Git workspace preparer: %v", err)
 		}
-		diffReader, err := gitworkspace.NewDiffReader("git")
+		diffReader, err := gitworkspace.NewDiffReader("git", workspaceRoot)
 		if err != nil {
 			log.Fatalf("configure Git diff reader: %v", err)
 		}

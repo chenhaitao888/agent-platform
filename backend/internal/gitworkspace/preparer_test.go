@@ -13,11 +13,12 @@ import (
 
 func TestPreparerClonesRepositoryAndChecksOutImmutableHead(t *testing.T) {
 	source, baseSHA, headSHA := createRepositoryFixture(t)
-	preparer, err := NewPreparer("git")
+	root := t.TempDir()
+	preparer, err := NewPreparer("git", root)
 	if err != nil {
 		t.Fatalf("create Git preparer: %v", err)
 	}
-	destination := filepath.Join(t.TempDir(), "workspace-1", "worktree")
+	destination := filepath.Join(root, "workspace-1", "worktree")
 	sourceURL := (&url.URL{Scheme: "file", Path: source}).String()
 
 	err = preparer.Prepare(context.Background(), Input{
@@ -42,6 +43,39 @@ func TestPreparerClonesRepositoryAndChecksOutImmutableHead(t *testing.T) {
 	}
 }
 
+func TestPreparerRejectsDestinationOutsideConfiguredRootBeforeRunningGit(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "workspaces")
+	sibling := filepath.Join(base, "workspaces-extra")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("create configured root: %v", err)
+	}
+	if err := os.Mkdir(sibling, 0o700); err != nil {
+		t.Fatalf("create sibling directory: %v", err)
+	}
+	outside := filepath.Join(sibling, "workspace-1", "worktree")
+	marker := filepath.Join(t.TempDir(), "git-was-run")
+	fakeGit := filepath.Join(t.TempDir(), "fake-git")
+	writeExecutable(t, fakeGit, "#!/bin/sh\nprintf 'called' > "+shellQuote(marker)+"\nexit 1\n")
+	preparer, err := NewPreparer(fakeGit, root)
+	if err != nil {
+		t.Fatalf("create Git preparer: %v", err)
+	}
+
+	err = preparer.Prepare(context.Background(), Input{
+		CloneURL:    "https://gitlab.example.com/platform/project.git",
+		BaseSHA:     "1111111111111111111111111111111111111111",
+		HeadSHA:     "2222222222222222222222222222222222222222",
+		Destination: outside,
+	})
+	if !errors.Is(err, ErrGitOperation) {
+		t.Fatalf("expected invalid destination error, got %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Git must not run for a destination outside root, got %v", err)
+	}
+}
+
 func TestPreparerSkipsFetchWhenBothCommitsAlreadyCloned(t *testing.T) {
 	source, baseSHA, headSHA := createRepositoryFixture(t)
 	realGit, err := exec.LookPath("git")
@@ -59,11 +93,12 @@ for argument in "$@"; do
 done
 exec `+shellQuote(realGit)+` "$@"
 `)
-	preparer, err := NewPreparer(gitWrapper)
+	workspaceRoot := t.TempDir()
+	preparer, err := NewPreparer(gitWrapper, workspaceRoot)
 	if err != nil {
 		t.Fatalf("create Git preparer: %v", err)
 	}
-	destination := filepath.Join(t.TempDir(), "workspace-1", "worktree")
+	destination := filepath.Join(workspaceRoot, "workspace-1", "worktree")
 	sourceURL := (&url.URL{Scheme: "file", Path: source}).String()
 
 	if err := preparer.Prepare(context.Background(), Input{
@@ -106,7 +141,7 @@ for argument in "$@"; do
 done
 exec `+shellQuote(realGit)+` "$@"
 `)
-	preparer, err := NewPreparer(gitWrapper)
+	preparer, err := NewPreparer(gitWrapper, testRoot)
 	if err != nil {
 		t.Fatalf("create Git preparer: %v", err)
 	}
@@ -149,7 +184,7 @@ printf '%s\n' "$AGENT_PLATFORM_GIT_PASSWORD" > "$directory/password.txt"
 printf '%s\n' "$AGENT_PLATFORM_GITLAB_TOKEN" > "$directory/inherited-token.txt"
 exit 1
 `)
-	preparer, err := NewPreparer(fakeGit)
+	preparer, err := NewPreparer(fakeGit, testRoot)
 	if err != nil {
 		t.Fatalf("create Git preparer: %v", err)
 	}

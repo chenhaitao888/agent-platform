@@ -211,6 +211,91 @@ func TestPrepareFailureRestoresARegisteredWorkspaceForRetry(t *testing.T) {
 	}
 }
 
+func TestPrepareFailureDoesNotRecreateARemovedWorkspace(t *testing.T) {
+	tasks := queuedTaskStore(t)
+	var manager *Manager
+	// 目前没有删除 API；用准备器回调模拟将来删除发生在外部操作期间。
+	preparer := workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
+		manager.mu.Lock()
+		delete(manager.byTask, "task-1")
+		manager.mu.Unlock()
+		return errors.New("clone failed")
+	})
+	var err error
+	manager, err = NewManagerWithPreparer(
+		tasks,
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		preparer,
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create workspace manager: %v", err)
+	}
+	registered, err := manager.Register(context.Background(), RegisterInput{
+		TenantID:       "tenant-a",
+		TaskID:         "task-1",
+		IdempotencyKey: "register-workspace-1",
+	})
+	if err != nil {
+		t.Fatalf("register workspace: %v", err)
+	}
+
+	_, err = manager.Prepare(context.Background(), PrepareInput{
+		TenantID:        "tenant-a",
+		TaskID:          "task-1",
+		IdempotencyKey:  "prepare-workspace-1",
+		ExpectedVersion: registered.Workspace.Version,
+	})
+	if !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("expected missing Workspace error, got %v", err)
+	}
+	if _, exists := manager.Get("task-1", "tenant-a"); exists {
+		t.Fatal("preparation failure must not recreate a removed Workspace")
+	}
+}
+
+func TestPrepareSuccessDoesNotRecreateARemovedWorkspace(t *testing.T) {
+	tasks := queuedTaskStore(t)
+	var manager *Manager
+	preparer := workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
+		manager.mu.Lock()
+		delete(manager.byTask, "task-1")
+		manager.mu.Unlock()
+		return nil
+	})
+	var err error
+	manager, err = NewManagerWithPreparer(
+		tasks,
+		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
+		preparer,
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatalf("create workspace manager: %v", err)
+	}
+	registered, err := manager.Register(context.Background(), RegisterInput{
+		TenantID:       "tenant-a",
+		TaskID:         "task-1",
+		IdempotencyKey: "register-workspace-1",
+	})
+	if err != nil {
+		t.Fatalf("register workspace: %v", err)
+	}
+
+	_, err = manager.Prepare(context.Background(), PrepareInput{
+		TenantID:        "tenant-a",
+		TaskID:          "task-1",
+		IdempotencyKey:  "prepare-workspace-1",
+		ExpectedVersion: registered.Workspace.Version,
+	})
+	if !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("expected missing Workspace error, got %v", err)
+	}
+	if _, exists := manager.Get("task-1", "tenant-a"); exists {
+		t.Fatal("preparation success must not recreate a removed Workspace")
+	}
+}
+
 func TestNewManagerWithPreparerRejectsARootSymlinkToTheFilesystemRoot(t *testing.T) {
 	rootLink := filepath.Join(t.TempDir(), "workspace-root")
 	if err := os.Symlink(string(filepath.Separator), rootLink); err != nil {

@@ -23,7 +23,7 @@ const (
 
 	testRepositoryJSON = `"repository":{
 	"provider":"gitlab",
-	"repositoryId":"project-7",
+	"repositoryId":"platform/project-7",
 	"baseSha":"1111111111111111111111111111111111111111",
 	"headSha":"2222222222222222222222222222222222222222"
 }`
@@ -83,7 +83,7 @@ func TestCreateTask(t *testing.T) {
 			"goal":"Review pull request 42",
 			"repository":{
 				"provider":"gitlab",
-				"repositoryId":"project-7",
+				"repositoryId":"platform/project-7",
 				"baseSha":"1111111111111111111111111111111111111111",
 				"headSha":"2222222222222222222222222222222222222222"
 			}
@@ -142,8 +142,8 @@ func TestCreateTask(t *testing.T) {
 	if body.Version != 1 {
 		t.Errorf("expected version 1, got %d", body.Version)
 	}
-	if body.Repository.Provider != "gitlab" || body.Repository.RepositoryID != "project-7" {
-		t.Errorf("expected gitlab/project-7 repository, got %#v", body.Repository)
+	if body.Repository.Provider != "gitlab" || body.Repository.RepositoryID != "platform/project-7" {
+		t.Errorf("expected gitlab/platform/project-7 repository, got %#v", body.Repository)
 	}
 	if body.Repository.BaseSHA != "1111111111111111111111111111111111111111" || body.Repository.HeadSHA != "2222222222222222222222222222222222222222" {
 		t.Errorf("expected immutable base/head SHA, got %#v", body.Repository)
@@ -299,7 +299,7 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentRepositoryReference(t *te
 			"goal":"Review pull request 42",
 			"repository":{
 				"provider":"gitlab",
-				"repositoryId":"project-7",
+				"repositoryId":"platform/project-7",
 				"baseSha":"1111111111111111111111111111111111111111",
 				"headSha":"3333333333333333333333333333333333333333"
 			}
@@ -969,7 +969,7 @@ func TestCreateTaskRejectsAnUnsupportedRepositoryProvider(t *testing.T) {
 			"goal":"Review pull request 42",
 			"repository":{
 				"provider":"github",
-				"repositoryId":"project-7",
+				"repositoryId":"platform/project-7",
 				"baseSha":"1111111111111111111111111111111111111111",
 				"headSha":"2222222222222222222222222222222222222222"
 			}
@@ -992,6 +992,48 @@ func TestCreateTaskRejectsAnUnsupportedRepositoryProvider(t *testing.T) {
 	}
 }
 
+func TestCreateTaskValidatesGitLabRepositoryID(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		repositoryID string
+		wantStatus   int
+	}{
+		{"numeric project ID", "42", http.StatusCreated},
+		{"namespaced path", "platform/project-7", http.StatusCreated},
+		{"nested namespace and allowed punctuation", "team/sub_team/repo-1.2", http.StatusCreated},
+		{"maximum length", "team/" + strings.Repeat("a", maxIdentifierBytes-len("team/")), http.StatusCreated},
+		{"single slug", "project-7", http.StatusBadRequest},
+		{"parent path", "..", http.StatusBadRequest},
+		{"embedded parent path", "team/../project", http.StatusBadRequest},
+		{"double dots within a segment", "team/pro..ject", http.StatusBadRequest},
+		{"empty path segment", "team//project", http.StatusBadRequest},
+		{"leading slash", "/team/project", http.StatusBadRequest},
+		{"trailing slash", "team/project/", http.StatusBadRequest},
+		{"current path segment", "team/./project", http.StatusBadRequest},
+		{"query characters", "team/project?x=1", http.StatusBadRequest},
+		{"pre-encoded slash", "team%2Fproject", http.StatusBadRequest},
+		{"non-ASCII characters", "团队/project", http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"requestId":"req-repository-id","idempotencyKey":"repository-id","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request", "repository":{"provider":"gitlab","repositoryId":%q,"baseSha":%q,"headSha":%q}}`, test.repositoryID, testBaseSHA, testHeadSHA)
+			response := httptest.NewRecorder()
+			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+			if response.Code != test.wantStatus {
+				t.Fatalf("repositoryId %q: expected status %d, got %d: %s", test.repositoryID, test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantStatus == http.StatusBadRequest {
+				var result errorResponse
+				if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+					t.Fatalf("decode error response: %v", err)
+				}
+				if result.Error != "validation_error" || result.Message != "repositoryId must be a numeric project ID or a namespace/path" {
+					t.Fatalf("unexpected error response: %#v", result)
+				}
+			}
+		})
+	}
+}
+
 func TestCreateTaskRejectsBranchNamesAsRepositorySHA(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -1004,7 +1046,7 @@ func TestCreateTaskRejectsBranchNamesAsRepositorySHA(t *testing.T) {
 			"goal":"Review pull request 42",
 			"repository":{
 				"provider":"gitlab",
-				"repositoryId":"project-7",
+				"repositoryId":"platform/project-7",
 				"baseSha":"main",
 				"headSha":"2222222222222222222222222222222222222222"
 			}
@@ -1174,7 +1216,7 @@ func TestCreateTaskRejectsOversizedIdentifiers(t *testing.T) {
 		{"idempotencyKey", `"idempotencyKey":"key-1"`},
 		{"tenantId", `"tenantId":"tenant-a"`},
 		{"type", `"type":"PR_REVIEW"`},
-		{"repositoryId", `"repositoryId":"project-7"`},
+		{"repositoryId", `"repositoryId":"platform/project-7"`},
 	} {
 		t.Run(field.name, func(t *testing.T) {
 			longField := `"` + field.name + `":"` + strings.Repeat("x", maxIdentifierBytes+1) + `"`
@@ -1588,7 +1630,7 @@ func TestCreateWorkspaceForQueuedTask(t *testing.T) {
 	if created.ID != "workspace-1" || created.TenantID != "tenant-a" || created.TaskID != "task-1" {
 		t.Errorf("unexpected workspace identity: %#v", created)
 	}
-	if created.Repository.Provider != "gitlab" || created.Repository.RepositoryID != "project-7" {
+	if created.Repository.Provider != "gitlab" || created.Repository.RepositoryID != "platform/project-7" {
 		t.Errorf("unexpected repository: %#v", created.Repository)
 	}
 	if created.BaseSHA != "1111111111111111111111111111111111111111" || created.HeadSHA != "2222222222222222222222222222222222222222" {
