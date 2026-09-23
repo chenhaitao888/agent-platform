@@ -67,24 +67,46 @@ func (p *Preparer) Prepare(ctx context.Context, input Input) error {
 	if err := os.WriteFile(askPassPath, []byte(askPassScript), 0o700); err != nil {
 		return fmt.Errorf("%w: create credential helper: %v", ErrGitOperation, err)
 	}
-	environment := gitEnvironment(askPassPath, input.Credentials)
+	credentialEnvironment := gitEnvironment(askPassPath, input.Credentials)
 	repositoryDir := filepath.Join(workspaceDir, "repository.git")
 
 	// clone URL 和目录是 argv，但 token 不是；Git 需要认证时会执行 GIT_ASKPASS 指向的脚本，
 	// 脚本再从当前 Git 子进程的环境变量读取用户名和密码。
-	if err := p.run(ctx, environment, "clone", "--bare", "--no-local", "--", input.CloneURL, repositoryDir); err != nil {
+	if err := p.run(ctx, credentialEnvironment, "clone", "--bare", "--no-local", "--", input.CloneURL, repositoryDir); err != nil {
 		return err
 	}
-	// 显式 fetch 两个不可变 SHA，避免只依赖默认分支碰巧包含目标 commit。
-	if err := p.run(ctx, environment, "--git-dir", repositoryDir, "fetch", "--no-tags", "origin", input.BaseSHA, input.HeadSHA); err != nil {
+	// clone 通常已经带回目标 commit。先像 Java ProcessBuilder 分别设置 env 那样，
+	// 用空凭据环境运行本地 cat-file；此时虽然 helper 文件还在，子进程也读不到 token。
+	localEnvironment := gitEnvironment("", Credentials{})
+	basePresent, err := p.hasObject(ctx, localEnvironment, repositoryDir, input.BaseSHA)
+	if err != nil {
 		return err
 	}
-	// 从这里开始都是本地 Git 操作，不再需要远端凭据。立即删除 helper，并构造空凭据环境，
-	// 缩短 token 能被子进程读取的时间范围。
+	headPresent, err := p.hasObject(ctx, localEnvironment, repositoryDir, input.HeadSHA)
+	if err != nil {
+		return err
+	}
+	// 仅向远端索取 clone 没带回的 SHA，避免在正常路径上依赖 GitLab 支持按裸 SHA fetch。
+	missingSHAs := make([]string, 0, 2)
+	if !basePresent {
+		missingSHAs = append(missingSHAs, input.BaseSHA)
+	}
+	if !headPresent && input.HeadSHA != input.BaseSHA {
+		missingSHAs = append(missingSHAs, input.HeadSHA)
+	}
+	if len(missingSHAs) > 0 {
+		fetchArgs := append([]string{"--git-dir", repositoryDir, "fetch", "--no-tags", "origin"}, missingSHAs...)
+		if err := p.run(ctx, credentialEnvironment, fetchArgs...); err != nil {
+			return err
+		}
+	}
+	// 最后一次可能联网的命令结束后立即删除 helper。后续验证和 worktree 命令
+	// 继续使用空凭据环境；失败时 defer 会清理本次创建的整个 workspace。
 	if err := os.Remove(askPassPath); err != nil {
 		return fmt.Errorf("%w: remove credential helper: %v", ErrGitOperation, err)
 	}
-	localEnvironment := gitEnvironment("", Credentials{})
+	// 前面的原始 SHA 探测只判断对象是否存在；fetch 成功也不等于对象类型正确。
+	// 这里用 ^{commit} 严格验证两个输入最终都是 commit。
 	if err := p.run(ctx, localEnvironment, "--git-dir", repositoryDir, "cat-file", "-e", input.BaseSHA+"^{commit}"); err != nil {
 		return err
 	}
@@ -97,6 +119,22 @@ func (p *Preparer) Prepare(ctx context.Context, input Input) error {
 
 	completed = true
 	return nil
+}
+
+func (p *Preparer) hasObject(ctx context.Context, environment []string, repositoryDir, sha string) (bool, error) {
+	// 对不存在的原始 SHA，cat-file -e 返回 1；给 SHA 加 ^{commit} 后，Git
+	// 可能改为返回 128。探测阶段不用后缀，避免把其他 128 错误当成对象缺失。
+	err := p.run(ctx, environment, "--git-dir", repositoryDir, "cat-file", "-e", sha)
+	if err == nil {
+		return true, nil
+	}
+	// cat-file -e 的退出码 1 表示对象不存在；其他错误（例如 Git 无法启动）
+	// 仍然是准备失败，不能误认为“缺失”后继续访问远端。
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 func validateDestination(destination string) (string, error) {
@@ -122,7 +160,7 @@ func (p *Preparer) run(ctx context.Context, environment []string, args ...string
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return fmt.Errorf("%w: git %s: %v: %s", ErrGitOperation, args[0], err, strings.TrimSpace(output.String()))
+		return fmt.Errorf("%w: git %s: %w: %s", ErrGitOperation, args[0], err, strings.TrimSpace(output.String()))
 	}
 	return nil
 }

@@ -42,6 +42,99 @@ func TestPreparerClonesRepositoryAndChecksOutImmutableHead(t *testing.T) {
 	}
 }
 
+func TestPreparerSkipsFetchWhenBothCommitsAlreadyCloned(t *testing.T) {
+	source, baseSHA, headSHA := createRepositoryFixture(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find Git executable: %v", err)
+	}
+	// 真实 Git 负责 clone 和检出；包装脚本只在发生 fetch 时拒绝命令。
+	// 因此测试的是完整的 Prepare 行为，而不是某个内部函数的调用次数。
+	gitWrapper := filepath.Join(t.TempDir(), "git-without-fetch")
+	writeExecutable(t, gitWrapper, `#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = fetch ]; then
+    exit 91
+  fi
+done
+exec `+shellQuote(realGit)+` "$@"
+`)
+	preparer, err := NewPreparer(gitWrapper)
+	if err != nil {
+		t.Fatalf("create Git preparer: %v", err)
+	}
+	destination := filepath.Join(t.TempDir(), "workspace-1", "worktree")
+	sourceURL := (&url.URL{Scheme: "file", Path: source}).String()
+
+	if err := preparer.Prepare(context.Background(), Input{
+		CloneURL:    sourceURL,
+		BaseSHA:     baseSHA,
+		HeadSHA:     headSHA,
+		Destination: destination,
+	}); err != nil {
+		t.Fatalf("clone already contains both commits; fetch must not run: %v", err)
+	}
+	if actual := gitOutput(t, "-C", destination, "rev-parse", "HEAD"); actual != headSHA {
+		t.Fatalf("expected worktree HEAD %q, got %q", headSHA, actual)
+	}
+}
+
+func TestPreparerFetchesOnlyMissingCommitWithCredentials(t *testing.T) {
+	source, baseSHA, _ := createRepositoryFixture(t)
+	missingHeadSHA := strings.Repeat("f", 40)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find Git executable: %v", err)
+	}
+	testRoot := t.TempDir()
+	fetchLog := filepath.Join(testRoot, "fetch-arguments.txt")
+	gitWrapper := filepath.Join(testRoot, "git-wrapper")
+	writeExecutable(t, gitWrapper, `#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = cat-file ]; then
+    if [ -n "$AGENT_PLATFORM_GIT_PASSWORD" ] || [ -n "$GIT_ASKPASS" ]; then
+      exit 92
+    fi
+  fi
+  if [ "$argument" = fetch ]; then
+    if [ -z "$AGENT_PLATFORM_GIT_PASSWORD" ] || [ ! -x "$GIT_ASKPASS" ]; then
+      exit 93
+    fi
+    printf '%s\n' "$@" > `+shellQuote(fetchLog)+`
+    exit 94
+  fi
+done
+exec `+shellQuote(realGit)+` "$@"
+`)
+	preparer, err := NewPreparer(gitWrapper)
+	if err != nil {
+		t.Fatalf("create Git preparer: %v", err)
+	}
+	destination := filepath.Join(testRoot, "workspace-1", "worktree")
+	sourceURL := (&url.URL{Scheme: "file", Path: source}).String()
+
+	prepareErr := preparer.Prepare(context.Background(), Input{
+		CloneURL:    sourceURL,
+		BaseSHA:     baseSHA,
+		HeadSHA:     missingHeadSHA,
+		Destination: destination,
+		Credentials: Credentials{Username: "oauth2", Password: "test-token"},
+	})
+	if !errors.Is(prepareErr, ErrGitOperation) {
+		t.Fatalf("expected fetch failure, got %v", prepareErr)
+	}
+	fetchArguments, err := os.ReadFile(fetchLog)
+	if err != nil {
+		t.Fatalf("fetch was not attempted with credentials: %v (prepare error: %v)", err, prepareErr)
+	}
+	if !strings.Contains(string(fetchArguments), missingHeadSHA) || strings.Contains(string(fetchArguments), baseSHA) {
+		t.Fatalf("fetch must request only the missing head commit, got %s", fetchArguments)
+	}
+	if _, err := os.Stat(filepath.Dir(destination)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected failed workspace directory to be removed, got %v", err)
+	}
+}
+
 func TestPreparerPassesPasswordThroughEnvironmentInsteadOfArguments(t *testing.T) {
 	testRoot := t.TempDir()
 	argumentLog := filepath.Join(testRoot, "arguments.txt")
@@ -132,6 +225,10 @@ func writeExecutable(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 		t.Fatalf("write executable %s: %v", path, err)
 	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func gitRun(t *testing.T, args ...string) {

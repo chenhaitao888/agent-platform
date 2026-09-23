@@ -537,14 +537,16 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 2. 目标必须形如绝对路径 `.../workspace-{id}/worktree`。模块只用 `os.Mkdir` 创建一个原本不存在的
    `workspace-{id}`，因此失败时的 `RemoveAll` 只会删除本次亲手创建、且名称已验证的目录，不会递归
    删除调用方已有目录。
-3. Git 顺序为：`clone --bare --no-local`、`fetch origin base head`、两个 `cat-file -e SHA^{commit}`、
+3. 当前 Git 顺序为：`clone --bare --no-local`、用空凭据环境执行 `cat-file -e SHA` 探测两个对象、
+   仅在缺失时 `fetch origin <缺失 SHA>`、删除 askpass、用 `cat-file -e SHA^{commit}` 严格验证、
    `worktree add --detach path head`。bare repository 保存对象，worktree 给后续 Runtime 使用；detached
    HEAD 避免把“当前分支”误当成不可变输入。Java 中可把它理解成一个受控的 `ProcessBuilder` 流水线。
 4. SHA 在 HTTP 层和 Git 深模块各校验一次 40/64 位十六进制。前者给调用方清楚的 400，后者保护
    非 HTTP 调用路径，避免不可信文本变成 Git 参数。
 5. token 不进入 URL 或 argv。clone/fetch 通过一个不含 secret 的临时 `git-askpass.sh` 读取子进程
    环境中的用户名/密码。这个文件不是源码资源：`Prepare` 在运行时根据文件末尾的 `askPassScript`
-   常量，把它写到 `workspace-{id}/git-askpass.sh`；fetch 完成立即删除，后续本地命令使用空凭据环境。
+   常量，把它写到 `workspace-{id}/git-askpass.sh`；最后一次可能联网的命令完成后立即删除。
+   clone 后的对象探测和后续本地命令都使用空凭据环境。
 6. 子进程不再继承控制平面的整个环境，而使用 PATH、TMPDIR、locale、proxy、CA 等明确白名单，再
    添加本次 Git 所需变量。这阻止 `AGENT_PLATFORM_GITLAB_TOKEN` 以及其他无关服务 secret 被顺带
    交给 Git。命令输出最多保留 64 KiB，HTTP 只返回稳定错误，不回显这些内部文本。
@@ -798,6 +800,43 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 当前创建 Task 的待确认 key 只保存在组件内存里；刷新页面后无法恢复这次未确认的提交。将来有持久化
 草稿或客户端操作记录时，再扩展跨刷新的重试能力；本步先保证页面内重试正确。
 
+### M13.1（第 3 步）：clone 后先探测，缺失才 fetch
+
+- 状态：完成（2026-09-23）；处理代码审查报告中的第 3 项。
+- 问题：原实现无论 bare clone 是否已经带回 base/head，都会向远端按裸 SHA fetch。
+  有些 Git 服务器不接受这种请求，于是本来已经具备所需 commit 的 Workspace 也可能准备失败。
+
+#### 代码拆解与 Java 对照
+
+1. `Prepare` 仍先 clone。接着创建 `localEnvironment`，用它运行两次 `hasObject`。这个环境里的
+   用户名、密码和 `GIT_ASKPASS` 都是空的；虽然临时脚本此时尚未删除，本地探测子进程拿不到 token。
+   这类似 Java 为不同 `ProcessBuilder` 分别调用 `environment().put(...)`，而不是让所有子进程继承
+   同一份含 secret 的环境。
+2. `hasObject` 调用 `git cat-file -e SHA`。退出码 0 表示对象存在，1 表示不存在；其他错误仍然是
+   准备失败。Go 的 `errors.As` 从包装后的错误链中找到 `*exec.ExitError`，类似 Java 沿着
+   `Throwable.getCause()` 找具体失败原因。`run` 因而用两个 `%w` 同时保留领域错误和进程退出错误。
+3. 用原始 SHA 探测，而不是 `SHA^{commit}`：本地 Git 2.52.0 对不存在的原始 SHA 返回 1，
+   对不存在的 `SHA^{commit}` 返回 128。把所有 128 都当“缺失”可能掩盖其他 Git 错误。对象存在
+   只说明仓库有这串 ID；删除 helper 后仍用 `SHA^{commit}` 验证 base/head 的类型。
+4. `missingSHAs` 只装 clone 没带回的 ID；两者相同且缺失时只装一次。列表为空便完全跳过 fetch。
+   列表非空时才使用 `credentialEnvironment` 执行 fetch。成功或无需 fetch 后立即删除 helper，
+   再严格验证两个 commit 并创建 detached worktree。失败仍由原有 defer 清理本次新建目录。
+
+#### 测试先行记录与验证
+
+1. 先加真实 Git 测试，让包装脚本拒绝任何 fetch。旧代码虽然 clone 已含两个 commit，仍触发
+   fetch 并得到退出码 91（RED）；改为先探测后，能完成 detached checkout（GREEN）。
+2. 另一个测试让 head SHA 缺失，包装脚本检查本地 `cat-file` 看不到凭据、fetch 能看到凭据和
+   临时 helper，并记录 fetch 参数；断言只请求缺失的 head，故意让 fetch 失败后确认目录清理。
+   它也发现 `SHA^{commit}` 缺失时的 128 退出码，促使探测改用原始 SHA。
+3. `go test ./internal/gitworkspace`、`go test ./...`、`go test -race ./...` 与 `go vet ./...`
+   全部通过。全量测试首次在受限沙箱中因 `httptest` 无法绑定本机回环端口而失败；在允许本机监听的
+   环境中重跑后通过，这不是代码断言失败。`git diff --check` 也通过。
+
+本步没有把“远端允许按裸 SHA fetch”当作前提。若目标对象不在 clone 结果中且服务器拒绝按 SHA
+fetch，Workspace 仍会失败并恢复为 REGISTERED；如何按 GitLab 具体引用取回不可达 commit，
+需要结合企业 GitLab 的真实配置单独设计。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -817,7 +856,7 @@ node --run build
 
 - Task ID 是单进程递增值，不适合多实例部署。
 - Task 数据重启即丢失。
-- 当前 tenant 只是请求与数据字段，还没有身份认证、租户授权或按租户过滤查询。
+- 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
 - 幂等索引只存在于单个 Go 进程，重启或多实例部署后不能提供全局唯一保证。
 - request ID 目前只用于响应关联，还没有进入结构化日志和审计存储。
 - Task 事件与 ID 只存在于单进程内存；它们还不是事务 Outbox，也没有发布到 Event Bus。

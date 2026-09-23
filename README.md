@@ -285,7 +285,8 @@ curl -i \
 ```
 
 GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必须与已配置的 GitLab Base URL
-同源。Git token 通过临时 `GIT_ASKPASS` 和白名单环境传给 clone/fetch，随后立即删除 helper；
+同源。Git token 通过临时 `GIT_ASKPASS` 和白名单环境传给 clone；clone 后先用空凭据环境
+检查 base/head 对象，只在缺失时才向远端 fetch 缺失的 SHA，然后立即删除 helper；
 这个 helper 由 Go 临时写到 `workspace-{id}/git-askpass.sh`，脚本模板位于
 `backend/internal/gitworkspace/preparer.go`，并不是需要手工准备的部署文件。`cat-file` 和
 `worktree add` 不再携带 token。失败时平台删除本次新建的半成品目录，并把 Workspace 恢复为
