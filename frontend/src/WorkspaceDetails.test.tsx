@@ -17,6 +17,8 @@ const queuedTask: Task = {
   repository: {
     provider: 'gitlab',
     repositoryId: 'project-7',
+    targetBranch: 'master',
+    targetSha: '3333333333333333333333333333333333333333',
     baseSha: '1111111111111111111111111111111111111111',
     headSha: '2222222222222222222222222222222222222222',
   },
@@ -37,6 +39,8 @@ describe('WorkspaceDetails', () => {
             provider: 'gitlab',
             repositoryId: 'project-7',
           },
+          targetBranch: 'master',
+          targetSha: '3333333333333333333333333333333333333333',
           baseSha: '1111111111111111111111111111111111111111',
           headSha: '2222222222222222222222222222222222222222',
           state: 'REGISTERED',
@@ -61,6 +65,10 @@ describe('WorkspaceDetails', () => {
     })
     expect(details).toHaveTextContent('REGISTERED')
     expect(details).toHaveTextContent('gitlab / project-7')
+    expect(details).toHaveTextContent('master')
+    expect(details).toHaveTextContent(
+      '3333333333333333333333333333333333333333',
+    )
     expect(details).toHaveTextContent(
       '1111111111111111111111111111111111111111',
     )
@@ -87,6 +95,8 @@ describe('WorkspaceDetails', () => {
         provider: 'gitlab',
         repositoryId: 'project-7',
       },
+      targetBranch: queuedTask.repository.targetBranch,
+      targetSha: queuedTask.repository.targetSha,
       baseSha: '1111111111111111111111111111111111111111',
       headSha: '2222222222222222222222222222222222222222',
       state: 'REGISTERED',
@@ -131,6 +141,10 @@ describe('WorkspaceDetails', () => {
       name: 'task-1 的仓库引用',
     })
     expect(repositoryReference).toHaveTextContent('gitlab / project-7')
+    expect(repositoryReference).toHaveTextContent('master')
+    expect(repositoryReference).toHaveTextContent(
+      '3333333333333333333333333333333333333333',
+    )
     expect(repositoryReference).toHaveTextContent(
       '1111111111111111111111111111111111111111',
     )
@@ -179,6 +193,8 @@ describe('WorkspaceDetails', () => {
         provider: 'gitlab',
         repositoryId: 'project-7',
       },
+      targetBranch: queuedTask.repository.targetBranch,
+      targetSha: queuedTask.repository.targetSha,
       baseSha: '1111111111111111111111111111111111111111',
       headSha: '2222222222222222222222222222222222222222',
       state: 'REGISTERED',
@@ -259,6 +275,8 @@ describe('WorkspaceDetails', () => {
       tenantId: 'tenant-local',
       taskId: 'task-1',
       repository: { provider: 'gitlab', repositoryId: 'project-7' },
+      targetBranch: queuedTask.repository.targetBranch,
+      targetSha: queuedTask.repository.targetSha,
       baseSha: queuedTask.repository.baseSha,
       headSha: queuedTask.repository.headSha,
       state: 'REGISTERED',
@@ -335,6 +353,8 @@ describe('WorkspaceDetails', () => {
         provider: 'gitlab',
         repositoryId: 'project-7',
       },
+      targetBranch: queuedTask.repository.targetBranch,
+      targetSha: queuedTask.repository.targetSha,
       baseSha: '1111111111111111111111111111111111111111',
       headSha: '2222222222222222222222222222222222222222',
       state: 'READY',
@@ -409,6 +429,8 @@ describe('WorkspaceDetails', () => {
         provider: 'gitlab',
         repositoryId: 'project-7',
       },
+      targetBranch: queuedTask.repository.targetBranch,
+      targetSha: queuedTask.repository.targetSha,
       baseSha: '1111111111111111111111111111111111111111',
       headSha: '2222222222222222222222222222222222222222',
       state: 'READY',

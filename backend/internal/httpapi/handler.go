@@ -26,6 +26,7 @@ type healthResponse struct {
 
 type handler struct {
 	tasks      *task.Store
+	resolver   repository.ReferenceResolver
 	workspaces *workspace.Manager
 	reviews    *review.Service
 	artifacts  *artifact.Store
@@ -88,20 +89,20 @@ const (
 )
 
 func NewHandler() http.Handler {
-	return NewHandlerWithRepositoryVerifier(repository.UnavailableVerifier{})
+	return NewHandlerWithRepositoryServices(repository.UnavailableVerifier{})
 }
 
-func NewHandlerWithRepositoryVerifier(verifier repository.ReferenceVerifier) http.Handler {
+func NewHandlerWithRepositoryServices(references repository.ReferenceServices) http.Handler {
 	tasks := task.NewStore()
-	return newHandler(tasks, workspace.NewManager(tasks, verifier))
+	return newHandler(tasks, workspace.NewManager(tasks, references), references)
 }
 
-func NewHandlerWithWorkspacePreparer(verifier repository.ReferenceVerifier, preparer workspace.Preparer, root string) (http.Handler, error) {
+func NewHandlerWithWorkspacePreparer(verifier repository.ReferenceServices, preparer workspace.Preparer, root string) (http.Handler, error) {
 	return NewHandlerWithWorkspaceServices(verifier, preparer, repository.UnavailableDiffReader{}, root)
 }
 
 func NewHandlerWithWorkspaceServices(
-	verifier repository.ReferenceVerifier,
+	verifier repository.ReferenceServices,
 	preparer workspace.Preparer,
 	diffReader repository.DiffReader,
 	root string,
@@ -111,17 +112,18 @@ func NewHandlerWithWorkspaceServices(
 	if err != nil {
 		return nil, err
 	}
-	return newHandlerWithDiffReader(tasks, workspaces, diffReader), nil
+	return newHandlerWithDiffReader(tasks, workspaces, diffReader, verifier), nil
 }
 
-func newHandler(tasks *task.Store, workspaces *workspace.Manager) http.Handler {
-	return newHandlerWithDiffReader(tasks, workspaces, repository.UnavailableDiffReader{})
+func newHandler(tasks *task.Store, workspaces *workspace.Manager, resolver repository.ReferenceResolver) http.Handler {
+	return newHandlerWithDiffReader(tasks, workspaces, repository.UnavailableDiffReader{}, resolver)
 }
 
-func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader) http.Handler {
+func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver) http.Handler {
 	artifacts := artifact.NewStore()
 	h := &handler{
 		tasks:      tasks,
+		resolver:   resolver,
 		workspaces: workspaces,
 		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts, tasks),
 		artifacts:  artifacts,
@@ -538,6 +540,8 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 	request.Repository.RepositoryID = strings.TrimSpace(request.Repository.RepositoryID)
 	request.Repository.BaseSHA = strings.TrimSpace(request.Repository.BaseSHA)
 	request.Repository.HeadSHA = strings.TrimSpace(request.Repository.HeadSHA)
+	request.Repository.TargetBranch = strings.TrimSpace(request.Repository.TargetBranch)
+	request.Repository.TargetSHA = strings.TrimSpace(request.Repository.TargetSHA)
 	// len 按 UTF-8 字节计数；限制这些会进入内存索引或响应的字段，避免小请求体
 	// 通过少数巨大字段反复占用内存。SHA 在下方还有更严格的固定长度校验。
 	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID, request.Type, request.Repository.RepositoryID) || len(request.Goal) > maxGoalBytes {
@@ -552,8 +556,8 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "type and goal are required")
 		return
 	}
-	if request.Repository.Provider == "" || request.Repository.RepositoryID == "" || request.Repository.BaseSHA == "" || request.Repository.HeadSHA == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "repository provider, repositoryId, baseSha and headSha are required")
+	if request.Repository.Provider == "" || request.Repository.RepositoryID == "" || request.Repository.HeadSHA == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "repository provider, repositoryId and headSha are required")
 		return
 	}
 	if request.Repository.Provider != "gitlab" {
@@ -564,20 +568,61 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "repositoryId must be a numeric project ID or a namespace/path")
 		return
 	}
-	if !isGitObjectID(request.Repository.BaseSHA) || !isGitObjectID(request.Repository.HeadSHA) {
-		writeError(w, http.StatusBadRequest, "validation_error", "baseSha and headSha must be 40 or 64 hexadecimal characters")
+	if !isGitObjectID(request.Repository.HeadSHA) || (request.Repository.BaseSHA != "" && !isGitObjectID(request.Repository.BaseSHA)) {
+		writeError(w, http.StatusBadRequest, "validation_error", "headSha and any legacy baseSha must be 40 or 64 hexadecimal characters")
+		return
+	}
+	if request.Repository.TargetBranch != "" || request.Repository.TargetSHA != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "targetBranch and targetSha are assigned by the server")
 		return
 	}
 
 	w.Header().Set("X-Request-ID", request.RequestID)
-	result, err := h.tasks.Create(task.CreateInput{
+	// 旧客户端传来的 baseSha 只为过渡兼容而接受；评审基线始终由服务端重新计算。
+	selection := task.RepositoryReference{
+		Provider:     request.Repository.Provider,
+		RepositoryID: request.Repository.RepositoryID,
+		HeadSHA:      request.Repository.HeadSHA,
+	}
+	createInput := task.CreateInput{
 		RequestID:      request.RequestID,
 		TenantID:       request.TenantID,
 		IdempotencyKey: request.IdempotencyKey,
 		Type:           request.Type,
 		Goal:           request.Goal,
-		Repository:     request.Repository,
-	})
+		Repository:     selection,
+	}
+	// 先看幂等记录，避免重试时 master 已前进却重新计算出另一份 Task 输入。
+	if replay, found, replayErr := h.tasks.ReplayCreate(createInput); found {
+		if errors.Is(replayErr, task.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "idempotency_conflict", "idempotency key already used with different task content")
+			return
+		}
+		w.Header().Set("Location", "/api/v1/tasks/"+replay.Task.ID+"?tenantId="+url.QueryEscape(replay.Task.TenantID))
+		writeJSON(w, http.StatusOK, replay.Task)
+		return
+	}
+	resolved, err := h.resolver.Resolve(r.Context(), selection)
+	if errors.Is(err, repository.ErrRepositoryNotFound) || errors.Is(err, repository.ErrHeadCommitNotFound) || errors.Is(err, repository.ErrTargetBranchNotFound) {
+		writeError(w, http.StatusNotFound, "repository_reference_not_found", "repository, head commit or master branch was not found")
+		return
+	}
+	if errors.Is(err, repository.ErrReviewBaseNotFound) {
+		writeError(w, http.StatusUnprocessableEntity, "review_base_not_found", "master and head commit have no available common ancestor")
+		return
+	}
+	if err != nil {
+		logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", err)
+		writeError(w, http.StatusServiceUnavailable, "repository_resolution_unavailable", "repository reference could not be resolved")
+		return
+	}
+	if resolved.Provider != selection.Provider || resolved.RepositoryID != selection.RepositoryID || resolved.HeadSHA != selection.HeadSHA || resolved.TargetBranch != task.ReviewTargetBranch || !isGitObjectID(resolved.TargetSHA) || !isGitObjectID(resolved.BaseSHA) {
+		logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", errors.New("resolver returned an invalid review reference"))
+		writeError(w, http.StatusServiceUnavailable, "repository_resolution_unavailable", "repository reference could not be resolved")
+		return
+	}
+	createInput.Repository = resolved
+	result, err := h.tasks.Create(createInput)
 	if errors.Is(err, task.ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "idempotency_conflict", "idempotency key already used with different task content")
 		return

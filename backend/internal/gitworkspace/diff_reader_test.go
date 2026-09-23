@@ -47,6 +47,65 @@ func TestDiffReaderReadsTheRegisteredBaseAndHead(t *testing.T) {
 	}
 }
 
+func TestDiffReaderWithMergeBaseExcludesTargetOnlyChanges(t *testing.T) {
+	working := filepath.Join(t.TempDir(), "working")
+	gitRun(t, "init", working)
+	gitRun(t, "-C", working, "config", "user.name", "Agent Platform Test")
+	gitRun(t, "-C", working, "config", "user.email", "agent-platform@example.invalid")
+	writeFixtureFile(t, filepath.Join(working, "README.md"), "shared\n")
+	gitRun(t, "-C", working, "add", "README.md")
+	gitRun(t, "-C", working, "-c", "commit.gpgsign=false", "commit", "-m", "shared")
+	baseSHA := gitOutput(t, "-C", working, "rev-parse", "HEAD")
+
+	// 两个分支从同一提交分叉：target 的独有改动不属于要评审的 feature 补丁。
+	gitRun(t, "-C", working, "checkout", "-b", "target")
+	writeFixtureFile(t, filepath.Join(working, "target.txt"), "target-only\n")
+	gitRun(t, "-C", working, "add", "target.txt")
+	gitRun(t, "-C", working, "-c", "commit.gpgsign=false", "commit", "-m", "target change")
+	targetSHA := gitOutput(t, "-C", working, "rev-parse", "HEAD")
+
+	gitRun(t, "-C", working, "checkout", "-b", "feature", baseSHA)
+	writeFixtureFile(t, filepath.Join(working, "feature.txt"), "feature-only\n")
+	gitRun(t, "-C", working, "add", "feature.txt")
+	gitRun(t, "-C", working, "-c", "commit.gpgsign=false", "commit", "-m", "feature change")
+	headSHA := gitOutput(t, "-C", working, "rev-parse", "HEAD")
+	if got := gitOutput(t, "-C", working, "merge-base", targetSHA, headSHA); got != baseSHA {
+		t.Fatalf("expected fixture merge-base %q, got %q", baseSHA, got)
+	}
+
+	source := filepath.Join(t.TempDir(), "source.git")
+	gitRun(t, "clone", "--bare", working, source)
+	root := t.TempDir()
+	preparer, err := NewPreparer("git", root)
+	if err != nil {
+		t.Fatalf("create Git preparer: %v", err)
+	}
+	worktreePath := filepath.Join(root, "workspace-1", "worktree")
+	if err := preparer.Prepare(context.Background(), Input{
+		CloneURL:    (&url.URL{Scheme: "file", Path: source}).String(),
+		BaseSHA:     baseSHA,
+		HeadSHA:     headSHA,
+		Destination: worktreePath,
+	}); err != nil {
+		t.Fatalf("prepare workspace: %v", err)
+	}
+	reader, err := NewDiffReader("git", root)
+	if err != nil {
+		t.Fatalf("create Git diff reader: %v", err)
+	}
+	patch, err := reader.Read(context.Background(), repository.DiffInput{
+		WorktreePath: worktreePath,
+		BaseSHA:      baseSHA,
+		HeadSHA:      headSHA,
+	})
+	if err != nil {
+		t.Fatalf("read Git diff: %v", err)
+	}
+	if !strings.Contains(string(patch), "feature-only") || strings.Contains(string(patch), "target-only") || strings.Contains(string(patch), "target.txt") {
+		t.Fatalf("expected only feature changes relative to merge-base, got:\n%s", patch)
+	}
+}
+
 func TestDiffReaderRejectsWorktreeOutsideConfiguredRootBeforeRunningGit(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "workspace-1", "worktree")

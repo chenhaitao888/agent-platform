@@ -33,7 +33,7 @@ func TestHealthz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
@@ -60,7 +60,7 @@ func TestHealthzRejectsNonGetRequests(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected status %d, got %d", http.StatusMethodNotAllowed, response.Code)
@@ -71,7 +71,7 @@ func TestHealthzRejectsNonGetRequests(t *testing.T) {
 }
 
 func TestCreateTask(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -159,7 +159,7 @@ func TestCreateTask(t *testing.T) {
 }
 
 func TestCreateTaskReplaysTheSameIdempotentRequest(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	body := `{
 		"requestId":"req-1",
 		"idempotencyKey":"review:project-7:mr-42:head-a13f",
@@ -215,7 +215,7 @@ func TestCreateTaskReplaysTheSameIdempotentRequest(t *testing.T) {
 }
 
 func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentContent(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	firstRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -269,7 +269,7 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentContent(t *testing.T) {
 }
 
 func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentRepositoryReference(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	firstRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -322,7 +322,7 @@ func TestCreateTaskRejectsAnIdempotencyKeyWithDifferentRepositoryReference(t *te
 }
 
 func TestCreateTaskScopesIdempotencyKeysByTenant(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	firstRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -379,7 +379,7 @@ func TestCreateTaskScopesIdempotencyKeysByTenant(t *testing.T) {
 }
 
 func TestGetTask(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -428,7 +428,7 @@ func TestGetTask(t *testing.T) {
 }
 
 func TestGetTaskHidesOtherTenants(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createResponse, httptest.NewRequest(
 		http.MethodPost,
@@ -453,7 +453,7 @@ func TestGetTaskHidesOtherTenants(t *testing.T) {
 }
 
 func TestUpdateTaskQueuesACreatedTask(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -519,7 +519,7 @@ func TestUpdateTaskQueuesACreatedTask(t *testing.T) {
 }
 
 func TestUpdateTaskRejectsAStaleVersion(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -584,7 +584,7 @@ func TestUpdateTaskRejectsAStaleVersion(t *testing.T) {
 }
 
 func TestUpdateTaskReplaysTheSameTransition(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -651,7 +651,7 @@ func TestUpdateTaskReplaysTheSameTransition(t *testing.T) {
 }
 
 func TestUpdateTaskRejectsANewTransitionFromQueuedToQueued(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -713,7 +713,7 @@ func TestUpdateTaskRejectsANewTransitionFromQueuedToQueued(t *testing.T) {
 }
 
 func TestUpdateTaskRejectsReusingAKeyForDifferentTransitionContent(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -775,7 +775,7 @@ func TestUpdateTaskRejectsReusingAKeyForDifferentTransitionContent(t *testing.T)
 }
 
 func TestListTasksReturnsNewestFirst(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	requestBodies := []string{
 		`{"requestId":"req-list-1","idempotencyKey":"review-42","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request 42",` + testRepositoryJSON + `}`,
 		`{"requestId":"req-list-2","idempotencyKey":"bug-fix-checkout","tenantId":"tenant-a","type":"BUG_FIX","goal":"Fix checkout timeout",` + testRepositoryJSON + `}`,
@@ -826,7 +826,7 @@ func TestListTasksReturnsAnEmptyArray(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks?tenantId=tenant-a", nil)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, response.Code)
@@ -847,7 +847,7 @@ func TestListTasksReturnsAnEmptyArray(t *testing.T) {
 }
 
 func TestListTasksHidesOtherTenants(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	for _, body := range []string{
 		`{"requestId":"req-tenant-a","idempotencyKey":"create-a","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review A",` + testRepositoryJSON + `}`,
 		`{"requestId":"req-tenant-b","idempotencyKey":"create-b","tenantId":"tenant-b","type":"PR_REVIEW","goal":"Review B",` + testRepositoryJSON + `}`,
@@ -879,7 +879,7 @@ func TestTaskReadsRequireTenantID(t *testing.T) {
 	for _, path := range []string{"/api/v1/tasks", "/api/v1/tasks/task-1"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400 for missing tenantId, got %d: %s", response.Code, response.Body.String())
 			}
@@ -895,7 +895,7 @@ func TestTaskReadsRequireTenantID(t *testing.T) {
 }
 
 func TestCreateTaskRejectsBlankRequiredFields(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -942,7 +942,7 @@ func TestCreateTaskRequiresRepositoryReference(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
@@ -952,7 +952,7 @@ func TestCreateTaskRequiresRepositoryReference(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.Error != "validation_error" || body.Message != "repository provider, repositoryId, baseSha and headSha are required" {
+	if body.Error != "validation_error" || body.Message != "repository provider, repositoryId and headSha are required" {
 		t.Errorf("unexpected error response: %#v", body)
 	}
 }
@@ -977,7 +977,7 @@ func TestCreateTaskRejectsAnUnsupportedRepositoryProvider(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
@@ -1017,7 +1017,7 @@ func TestCreateTaskValidatesGitLabRepositoryID(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"requestId":"req-repository-id","idempotencyKey":"repository-id","tenantId":"tenant-a","type":"PR_REVIEW","goal":"Review pull request", "repository":{"provider":"gitlab","repositoryId":%q,"baseSha":%q,"headSha":%q}}`, test.repositoryID, testBaseSHA, testHeadSHA)
 			response := httptest.NewRecorder()
-			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+			newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
 			if response.Code != test.wantStatus {
 				t.Fatalf("repositoryId %q: expected status %d, got %d: %s", test.repositoryID, test.wantStatus, response.Code, response.Body.String())
 			}
@@ -1054,7 +1054,7 @@ func TestCreateTaskRejectsBranchNamesAsRepositorySHA(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
@@ -1064,7 +1064,7 @@ func TestCreateTaskRejectsBranchNamesAsRepositorySHA(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.Error != "validation_error" || body.Message != "baseSha and headSha must be 40 or 64 hexadecimal characters" {
+	if body.Error != "validation_error" || body.Message != "headSha and any legacy baseSha must be 40 or 64 hexadecimal characters" {
 		t.Errorf("unexpected error response: %#v", body)
 	}
 }
@@ -1077,7 +1077,7 @@ func TestCreateTaskRequiresRequestAndTenantMetadata(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
@@ -1099,7 +1099,7 @@ func TestCreateTaskRequiresRequestAndTenantMetadata(t *testing.T) {
 }
 
 func TestCreateTaskRejectsInvalidJSON(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -1133,7 +1133,7 @@ func TestCreateTaskRejectsBodyLargerThan64KiB(t *testing.T) {
 	body := `{"requestId":"req-large-body","idempotencyKey":"large-body","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", 64<<10) + `",` + testRepositoryJSON + `}`
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for oversized request body, got %d", response.Code)
@@ -1151,7 +1151,7 @@ func TestCreateTaskRejectsGoalLargerThan4KiB(t *testing.T) {
 	body := `{"requestId":"req-large-goal","idempotencyKey":"large-goal","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", (4<<10)+1) + `",` + testRepositoryJSON + `}`
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for oversized goal, got %d", response.Code)
@@ -1169,7 +1169,7 @@ func TestCreateTaskAcceptsGoalAt4KiBBoundary(t *testing.T) {
 	body := `{"requestId":"req-goal-boundary","idempotencyKey":"goal-boundary","tenantId":"tenant-a","type":"PR_REVIEW","goal":"` + strings.Repeat("x", 4<<10) + `",` + testRepositoryJSON + `}`
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
 
 	if response.Code != http.StatusCreated {
 		t.Fatalf("expected 201 for a 4 KiB goal, got %d", response.Code)
@@ -1191,7 +1191,7 @@ func TestWriteRoutesRejectOversizedTrailingWhitespace(t *testing.T) {
 		t.Run(route.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			body := `{}` + strings.Repeat(" ", maxRequestBodyBytes)
-			NewHandler().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(body)))
+			newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(body)))
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400 for oversized body, got %d", response.Code)
 			}
@@ -1222,7 +1222,7 @@ func TestCreateTaskRejectsOversizedIdentifiers(t *testing.T) {
 			longField := `"` + field.name + `":"` + strings.Repeat("x", maxIdentifierBytes+1) + `"`
 			body := strings.Replace(validBody, field.value, longField, 1)
 			response := httptest.NewRecorder()
-			NewHandler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+			newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400 for oversized %s, got %d", field.name, response.Code)
 			}
@@ -1252,7 +1252,7 @@ func TestOtherWriteRoutesRejectOversizedIdempotencyKey(t *testing.T) {
 	} {
 		t.Run(route.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			NewHandler().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(route.body)))
+			newHandlerWithVerifiedRepositories().ServeHTTP(response, httptest.NewRequest(route.method, route.path, strings.NewReader(route.body)))
 			if response.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400 for oversized idempotencyKey, got %d", response.Code)
 			}
@@ -1268,7 +1268,7 @@ func TestOtherWriteRoutesRejectOversizedIdempotencyKey(t *testing.T) {
 }
 
 func TestGetTaskReturnsNotFound(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-missing?tenantId=tenant-a", nil)
 	response := httptest.NewRecorder()
 
@@ -1298,7 +1298,7 @@ func TestGetTaskReturnsNotFound(t *testing.T) {
 }
 
 func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -1374,7 +1374,7 @@ func TestListTaskEventsReturnsTheCreationEvent(t *testing.T) {
 }
 
 func TestListTaskEventsReturnsTheQueuedEventAfterCreation(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -1450,7 +1450,7 @@ func TestListTaskEventsReturnsTheQueuedEventAfterCreation(t *testing.T) {
 }
 
 func TestListTaskEventsDoesNotDuplicateAnIdempotentTransition(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -1504,7 +1504,7 @@ func TestListTaskEventsDoesNotDuplicateAnIdempotentTransition(t *testing.T) {
 }
 
 func TestListTaskEventsHidesTasksFromOtherTenants(t *testing.T) {
-	handler := NewHandler()
+	handler := newHandlerWithVerifiedRepositories()
 	createRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -1548,7 +1548,7 @@ func TestListTaskEventsRequiresTenantID(t *testing.T) {
 	)
 	response := httptest.NewRecorder()
 
-	NewHandler().ServeHTTP(response, request)
+	newHandlerWithVerifiedRepositories().ServeHTTP(response, request)
 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, response.Code)
@@ -1622,11 +1622,13 @@ func TestCreateWorkspaceForQueuedTask(t *testing.T) {
 			Provider     string `json:"provider"`
 			RepositoryID string `json:"repositoryId"`
 		} `json:"repository"`
-		BaseSHA   string `json:"baseSha"`
-		HeadSHA   string `json:"headSha"`
-		State     string `json:"state"`
-		Version   uint64 `json:"version"`
-		CreatedAt string `json:"createdAt"`
+		TargetBranch string `json:"targetBranch"`
+		TargetSHA    string `json:"targetSha"`
+		BaseSHA      string `json:"baseSha"`
+		HeadSHA      string `json:"headSha"`
+		State        string `json:"state"`
+		Version      uint64 `json:"version"`
+		CreatedAt    string `json:"createdAt"`
 	}
 	if err := json.NewDecoder(workspaceResponse.Body).Decode(&created); err != nil {
 		t.Fatalf("decode workspace response: %v", err)
@@ -1639,6 +1641,9 @@ func TestCreateWorkspaceForQueuedTask(t *testing.T) {
 	}
 	if created.BaseSHA != "1111111111111111111111111111111111111111" || created.HeadSHA != "2222222222222222222222222222222222222222" {
 		t.Errorf("unexpected immutable refs: %#v", created)
+	}
+	if created.TargetBranch != "master" || created.TargetSHA != "3333333333333333333333333333333333333333" {
+		t.Errorf("expected the frozen master snapshot in Workspace, got %#v", created)
 	}
 	if created.State != "REGISTERED" || created.Version != 1 || created.CreatedAt == "" {
 		t.Errorf("unexpected workspace state: %#v", created)
@@ -2135,7 +2140,7 @@ func TestWorkspaceRegistrationLogsServiceAndUnexpectedFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			logOutput := captureJSONLogs(t)
-			handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+			handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 				func(context.Context, task.RepositoryReference) error { return test.failure },
 			))
 			createQueuedTaskForWorkspaceTest(t, handler)
@@ -2206,7 +2211,7 @@ func TestGetWorkspaceDiffFailureLogsHeaderRequestID(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
-	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrRepositoryNotFound
 		},
@@ -2249,7 +2254,7 @@ func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
-	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrBaseCommitNotFound
 		},
@@ -2281,7 +2286,7 @@ func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
-	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrHeadCommitNotFound
 		},
@@ -2313,7 +2318,11 @@ func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
 }
 
 func TestCreateWorkspaceFailsClosedWhenRepositoryVerificationIsUnavailable(t *testing.T) {
-	handler := NewHandler()
+	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+		func(context.Context, task.RepositoryReference) error {
+			return repository.ErrVerificationUnavailable
+		},
+	))
 	createQueuedTaskForWorkspaceTest(t, handler)
 
 	request := httptest.NewRequest(
@@ -2382,7 +2391,7 @@ func TestCreateWorkspaceRejectsATaskThatIsNotQueued(t *testing.T) {
 
 func TestCreateWorkspaceReplaysTheSameIdempotentRequest(t *testing.T) {
 	verificationAttempts := 0
-	handler := NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			verificationAttempts++
 			if verificationAttempts > 1 {
@@ -2694,6 +2703,13 @@ func (verify repositoryVerifierFunc) Verify(ctx context.Context, reference task.
 	return verify(ctx, reference)
 }
 
+func (repositoryVerifierFunc) Resolve(_ context.Context, selection task.RepositoryReference) (task.RepositoryReference, error) {
+	selection.TargetBranch = "master"
+	selection.TargetSHA = "3333333333333333333333333333333333333333"
+	selection.BaseSHA = testBaseSHA
+	return selection, nil
+}
+
 type workspacePreparerFunc func(context.Context, task.RepositoryReference, string) error
 
 var _ workspace.Preparer = workspacePreparerFunc(nil)
@@ -2709,7 +2725,7 @@ func (read diffReaderFunc) Read(ctx context.Context, input repository.DiffInput)
 }
 
 func newHandlerWithVerifiedRepositories() http.Handler {
-	return NewHandlerWithRepositoryVerifier(repositoryVerifierFunc(
+	return NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return nil
 		},

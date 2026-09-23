@@ -25,9 +25,19 @@ _Avoid_: Ready Workspace、Prepared Workspace
 代码工作区就绪，不表示容器、Codex 或 Workflow 已经启动。
 _Avoid_: Running Workspace、Runtime-ready Workspace
 
+**Review Base**:
+PR Review 中目标分支快照与待评审 head 的最近公共祖先（merge-base）提交；平台在创建 Task 时确定并固定
+其 SHA，而不是由调用方指定。
+_Avoid_: 目标分支最新提交、target tip
+
+**Review Target Snapshot**:
+创建 Task 时目标分支 `master` 所指向的不可变提交；即使 `master` 后来移动，本次评审仍以该提交确定
+Review Base。
+_Avoid_: 当前 master、动态目标分支
+
 **Immutable Review Diff**:
-平台只使用 Ready Workspace 已记录的 base SHA 与 head SHA 生成的只读补丁；调用方不能临时替换 revision
-或本地路径。当前补丁用于 Phase 0 PR Review 的受控输入，不等同于可长期保存的 Artifact。
+平台只使用 Ready Workspace 已记录的 Review Base SHA 与 head SHA 生成的只读补丁；调用方不能临时替换
+revision 或本地路径。当前补丁用于 Phase 0 PR Review 的受控输入，不等同于可长期保存的 Artifact。
 _Avoid_: 最新差异、工作区当前改动
 
 **Artifact**:
@@ -36,8 +46,8 @@ _Avoid_: 最新差异、工作区当前改动
 _Avoid_: Workspace 临时文件、可修改附件
 
 **Repository Reference**:
-由代码托管平台、仓库标识、base SHA 和 head SHA 共同确定的可复现代码输入；Task 创建时先记录，
-Workspace 登记前必须向代码托管平台验证。
+由代码托管平台、仓库标识、Review Target Snapshot、Review Base 和 head SHA 共同确定的可复现代码输入；
+Task 创建时固定，Workspace 登记前再次验证所需提交。
 _Avoid_: 分支名、最新代码
 
 **Task Event**:

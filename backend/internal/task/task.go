@@ -9,6 +9,9 @@ import (
 
 type Status string
 
+// Phase 0 的目标分支政策；实际参与计算的是创建 Task 时解析出的 TargetSHA。
+const ReviewTargetBranch = "master"
+
 const (
 	StatusCreated Status = "CREATED"
 	StatusQueued  Status = "QUEUED"
@@ -21,9 +24,13 @@ var (
 	ErrInvalidTransition   = errors.New("task status transition is not allowed")
 )
 
+// RepositoryReference 保存一次任务的不可变代码坐标：TargetSHA 是 master 快照，
+// BaseSHA 是它与 HeadSHA 的 merge-base；评审 diff 使用 BaseSHA，不直接使用 TargetSHA。
 type RepositoryReference struct {
 	Provider     string `json:"provider"`
 	RepositoryID string `json:"repositoryId"`
+	TargetBranch string `json:"targetBranch"`
+	TargetSHA    string `json:"targetSha"`
 	BaseSHA      string `json:"baseSha"`
 	HeadSHA      string `json:"headSha"`
 }
@@ -160,6 +167,30 @@ func NewStore() *Store {
 	}
 }
 
+// ReplayCreate 在访问会变化的 master 之前检查幂等键：同一请求应返回第一次固定的快照。
+// Java 可类比先查幂等操作表，再调用外部 GitLab；不能每次重试都重新解析分支。
+func (s *Store) ReplayCreate(input CreateInput) (CreateResult, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	taskID, ok := s.idempotency[idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}]
+	if !ok {
+		return CreateResult{}, false, nil
+	}
+	existing := s.tasks[taskID]
+	if !sameCreateRequest(existing, input) {
+		return CreateResult{}, true, ErrIdempotencyConflict
+	}
+	return CreateResult{Task: existing}, true, nil
+}
+
+func sameCreateRequest(existing Task, input CreateInput) bool {
+	return existing.Type == input.Type &&
+		existing.Goal == input.Goal &&
+		existing.Repository.Provider == input.Repository.Provider &&
+		existing.Repository.RepositoryID == input.Repository.RepositoryID &&
+		existing.Repository.HeadSHA == input.Repository.HeadSHA
+}
+
 func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -167,7 +198,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}
 	if taskID, ok := s.idempotency[scope]; ok {
 		existing := s.tasks[taskID]
-		if existing.Type != input.Type || existing.Goal != input.Goal || existing.Repository != input.Repository {
+		if !sameCreateRequest(existing, input) {
 			return CreateResult{}, ErrIdempotencyConflict
 		}
 		return CreateResult{Task: existing}, nil

@@ -367,6 +367,7 @@ Application Service 或 Repository；测试关注 HTTP 响应和用户界面，�
 
 ### M9：Repository Reference 前移到 Task
 
+- 以下记录 M9 当时的接口与实现；当前契约已由 M13.1 第 9 步改为服务端固定 master 并计算 base。
 - 状态：完成（2026-09-22）。
 - 依据：架构文档附录 A.1 在创建 Task 时接收 repository provider/repositoryId/baseSha/headSha；
   分支名不是可复现输入，PR Review 必须固定不可变 base/head SHA。
@@ -1059,6 +1060,57 @@ Workspace 版本放在 `payload.workspace.version`，避免同名字段被误解
 当前 Workspace、Artifact 状态和 Task 事件保存在不同的内存 Store 中，虽然调用是同步的，
 却没有跨 Store 的原子事务。进程重启后状态与事件都会丢失；未来落数据库时，要让业务状态与
 Outbox 记录同事务提交，再异步发布到 Event Bus，才能成为可靠、可恢复的审计链。
+
+### M13.1（第 9 步）：由平台固定 master 快照并计算 Review Base
+
+- 状态：完成（2026-09-23）；M14 仍暂停。
+- 问题：最初只把“调用方提供的 `baseSha` 必须是 merge-base”写成契约。它解释了两点 diff 的
+  前置条件，却不能阻止调用方误传目标分支 tip。用户提出更准确的规则：Phase 0 固定以
+  `master` 为目标，由服务端自己计算共同祖先。
+- 决定：创建 Task 时先读取 `master` 当前提交 `T`，再以固定的 `T` 和调用方提供的 head `H`
+  向 GitLab 查询 `B = merge-base(T, H)`。Task 保存 `targetBranch=master`、`targetSha=T`、
+  `baseSha=B`、`headSha=H`，Workspace 登记时复制它们；后续仍以 `git diff B H` 生成补丁。
+
+#### 为什么先固定 T，再计算 B
+
+假设 `A` 分叉成 `A→B`（master）和 `A→C→D→E`（待评审分支），则
+`merge-base(B, E)=A`，`git diff A E` 只显示待评审分支到 E 的最终净变化，不混入 B。
+这与该时刻的三点差异思路相同，但不能每次读取时重新解析会移动的 `master`：同一个 Task 的
+预览和归档可能得到不同补丁。因此读取分支后，后续 merge-base 请求使用固定的 SHA `T`，
+而不是再传分支名 `master`。GitLab 的[分支接口](https://docs.gitlab.com/api/branches/)提供
+`commit.id`，[merge-base 接口](https://docs.gitlab.com/api/repositories/)接收两个 refs 并返回
+共同祖先的 `id`。
+
+#### 代码拆解与 Java 对照
+
+1. `repository.ReferenceResolver` 是应用层端口，类似 Java interface；GitLab `Verifier.Resolve`
+   是 adapter，读取分支、确认 head、调用 merge-base API，并校验返回的 SHA 是完整 Git 对象 ID。API token
+   仍只进请求 header，不随重定向外传，响应体也有大小上限。
+2. HTTP 创建接口只要求调用方给仓库与 `headSha`，先检查幂等记录，再访问 GitLab。Java 可类比
+   Application Service 先查操作记录、再调用外部服务；同一 key 的重试即使碰上 master 前进，
+   也返回第一次固定的 T/B/H。并发首创最终由 `task.Store.Create` 在锁内选定赢家的快照。
+3. `task.RepositoryReference` 与 `workspace.Workspace` 显式保存 target/base/head，避免只存一个
+   会移动的分支名。React 创建表单不再让用户填写 Base SHA，只说明平台将以 master 计算它；
+   Workspace 详情同时展示固定的目标分支和目标提交，方便核对这次任务的基线来源。
+   旧客户端暂时仍可传格式正确的 `baseSha`，但服务端忽略该值并返回自己计算的结果。
+4. `gitworkspace.DiffReader` 仍执行两点 diff；这里的 B 已由平台计算，不再是人工前置条件。
+   类比 Java 中先生成不可变的 `ReviewInput(T, B, H)`，再把它交给只读 DiffService。
+
+#### 测试先行与边界
+
+- GitLab 解析测试先因 `Resolve` 不存在而编译 RED；实现后验证先读 master、确认 head，
+  再以固定 T/H 求 merge-base。异常测试覆盖缺少 master/head、无共同祖先、GitLab 返回畸形 SHA，以及错误不回显
+  响应正文。
+- HTTP 测试先因缺少 `baseSha` 返回 400（RED），实现后确认响应固定 T/B/H；另测幂等回放
+  不再访问解析器。Store 测试模拟两个首创请求分别看到不同 target，确认只保存首个快照；
+  无 GitLab 配置时创建返回 503 并失败关闭。
+- Workspace 测试先看不到 target 快照（RED），实现后确认登记结果继承 T；前端先要求不再出现
+  Base SHA 输入并说明平台计算（RED），删去输入后变绿。详情页展示 T 的断言也先失败，补齐
+  Task/Workspace 两处展示后变绿。
+- 真实 Git 分叉测试继续证明用 merge-base 做两点 diff 不会混入 target 独有改动。当前只固定
+  `master`，尚未通过 MR 身份信息确认某个 MR 的实际目标分支；非 master 目标的 MR 不在此契约内。
+- 收尾验证：`go test ./... -count=1`、`go test -race ./... -count=1`、`go vet ./...`、
+  `node --run test`（28 个前端测试）和 `node --run build` 全部通过。
 
 ## 7. 常用验证命令
 

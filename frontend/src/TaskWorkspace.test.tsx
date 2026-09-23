@@ -16,6 +16,8 @@ afterEach(() => {
 const repositoryReference = {
   provider: 'gitlab',
   repositoryId: 'project-7',
+  targetBranch: 'master',
+  targetSha: '3333333333333333333333333333333333333333',
   baseSha: '1111111111111111111111111111111111111111',
   headSha: '2222222222222222222222222222222222222222',
 }
@@ -26,9 +28,6 @@ function fillValidTaskForm() {
   })
   fireEvent.change(screen.getByLabelText('仓库 ID'), {
     target: { value: 'project-7' },
-  })
-  fireEvent.change(screen.getByLabelText('Base SHA'), {
-    target: { value: repositoryReference.baseSha },
   })
   fireEvent.change(screen.getByLabelText('Head SHA'), {
     target: { value: repositoryReference.headSha },

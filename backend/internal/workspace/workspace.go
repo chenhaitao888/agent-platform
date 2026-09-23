@@ -50,16 +50,18 @@ type Repository struct {
 }
 
 type Workspace struct {
-	ID         string     `json:"id"`
-	TenantID   string     `json:"tenantId"`
-	TaskID     string     `json:"taskId"`
-	Repository Repository `json:"repository"`
-	BaseSHA    string     `json:"baseSha"`
-	HeadSHA    string     `json:"headSha"`
-	Path       string     `json:"path,omitempty"`
-	State      State      `json:"state"`
-	Version    uint64     `json:"version"`
-	CreatedAt  time.Time  `json:"createdAt"`
+	ID           string     `json:"id"`
+	TenantID     string     `json:"tenantId"`
+	TaskID       string     `json:"taskId"`
+	Repository   Repository `json:"repository"`
+	TargetBranch string     `json:"targetBranch"`
+	TargetSHA    string     `json:"targetSha"`
+	BaseSHA      string     `json:"baseSha"`
+	HeadSHA      string     `json:"headSha"`
+	Path         string     `json:"path,omitempty"`
+	State        State      `json:"state"`
+	Version      uint64     `json:"version"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 type RegisterInput struct {
@@ -188,11 +190,13 @@ func (m *Manager) Register(ctx context.Context, input RegisterInput) (RegisterRe
 			Provider:     currentTask.Repository.Provider,
 			RepositoryID: currentTask.Repository.RepositoryID,
 		},
-		BaseSHA:   currentTask.Repository.BaseSHA,
-		HeadSHA:   currentTask.Repository.HeadSHA,
-		State:     StateRegistered,
-		Version:   1,
-		CreatedAt: time.Now().UTC(),
+		TargetBranch: currentTask.Repository.TargetBranch,
+		TargetSHA:    currentTask.Repository.TargetSHA,
+		BaseSHA:      currentTask.Repository.BaseSHA,
+		HeadSHA:      currentTask.Repository.HeadSHA,
+		State:        StateRegistered,
+		Version:      1,
+		CreatedAt:    time.Now().UTC(),
 	}
 	m.byTask[input.TaskID] = registered
 	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}

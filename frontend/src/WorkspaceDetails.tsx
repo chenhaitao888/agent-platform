@@ -238,6 +238,14 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
               </dd>
             </div>
             <div>
+              <dt>目标分支</dt>
+              <dd>{task.repository.targetBranch}</dd>
+            </div>
+            <div>
+              <dt>目标提交 SHA</dt>
+              <dd>{task.repository.targetSha}</dd>
+            </div>
+            <div>
               <dt>Base SHA</dt>
               <dd>{task.repository.baseSha}</dd>
             </div>
@@ -278,6 +286,14 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
                 {state.workspace.repository.provider} /{' '}
                 {state.workspace.repository.repositoryId}
               </dd>
+            </div>
+            <div>
+              <dt>目标分支</dt>
+              <dd>{state.workspace.targetBranch}</dd>
+            </div>
+            <div>
+              <dt>目标提交 SHA</dt>
+              <dd>{state.workspace.targetSha}</dd>
             </div>
             <div>
               <dt>Base SHA</dt>

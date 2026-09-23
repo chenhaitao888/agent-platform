@@ -14,15 +14,19 @@ function fillValidTaskForm() {
   fireEvent.change(screen.getByLabelText('仓库 ID'), {
     target: { value: 'platform/project-7' },
   })
-  fireEvent.change(screen.getByLabelText('Base SHA'), {
-    target: { value: '1111111111111111111111111111111111111111' },
-  })
   fireEvent.change(screen.getByLabelText('Head SHA'), {
     target: { value: '2222222222222222222222222222222222222222' },
   })
 }
 
 describe('TaskCreator', () => {
+  it('explains that the platform derives the base from master', () => {
+    render(<TaskCreator />)
+
+    expect(screen.getByText(/master.*平台计算/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Base SHA')).not.toBeInTheDocument()
+  })
+
   it('creates a task and shows the server result', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi
@@ -42,6 +46,8 @@ describe('TaskCreator', () => {
           repository: {
             provider: 'gitlab',
             repositoryId: 'platform/project-7',
+            targetBranch: 'master',
+            targetSha: '3333333333333333333333333333333333333333',
             baseSha: '1111111111111111111111111111111111111111',
             headSha: '2222222222222222222222222222222222222222',
           },
@@ -76,7 +82,6 @@ describe('TaskCreator', () => {
         repository: {
           provider: 'gitlab',
           repositoryId: 'platform/project-7',
-          baseSha: '1111111111111111111111111111111111111111',
           headSha: '2222222222222222222222222222222222222222',
         },
       }),

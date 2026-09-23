@@ -5,6 +5,8 @@ export type TaskStatus = 'CREATED' | 'QUEUED'
 export type RepositoryReference = {
   provider: 'gitlab'
   repositoryId: string
+  targetBranch: 'master'
+  targetSha: string
   baseSha: string
   headSha: string
 }

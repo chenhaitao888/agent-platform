@@ -17,6 +17,8 @@ const task: Task = {
   repository: {
     provider: 'gitlab',
     repositoryId: 'project-7',
+    targetBranch: 'master',
+    targetSha: '3333333333333333333333333333333333333333',
     baseSha: '1111111111111111111111111111111111111111',
     headSha: '2222222222222222222222222222222222222222',
   },

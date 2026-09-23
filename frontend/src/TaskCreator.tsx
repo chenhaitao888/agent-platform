@@ -14,7 +14,6 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
   const [taskType, setTaskType] = useState('PR_REVIEW')
   const [goal, setGoal] = useState('')
   const [repositoryID, setRepositoryID] = useState('')
-  const [baseSHA, setBaseSHA] = useState('')
   const [headSHA, setHeadSHA] = useState('')
   const [createdTask, setCreatedTask] = useState<Task | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -35,7 +34,6 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
         repository: {
           provider: 'gitlab',
           repositoryId: repositoryID.trim(),
-          baseSha: baseSHA.trim(),
           headSha: headSHA.trim(),
         },
       }
@@ -110,13 +108,9 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           onChange={(event) => setRepositoryID(event.target.value)}
         />
 
-        <label htmlFor="task-base-sha">Base SHA</label>
-        <input
-          id="task-base-sha"
-          required
-          value={baseSHA}
-          onChange={(event) => setBaseSHA(event.target.value)}
-        />
+        <p className="task-creator-fixed-value">
+          目标分支：master；Review Base（merge-base）由平台计算并固定。
+        </p>
 
         <label htmlFor="task-head-sha">Head SHA</label>
         <input

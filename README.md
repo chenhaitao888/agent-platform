@@ -3,8 +3,8 @@
 这是“企业研发智能体与工作流平台”的最小可运行骨架。当前只完成：
 
 - Go HTTP 服务与 `GET /healthz`
-- 内存版 Task 幂等创建、不可变仓库引用、查询、最近列表、状态迁移与事件时间线
-- GitLab 仓库/commit 可信验证，以及 Workspace 登记、bare clone、detached worktree 和状态查询
+- 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
+- GitLab 仓库/分支/merge-base 只读解析，以及 Workspace 登记、bare clone、detached worktree 和状态查询
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
 - 固定 diff 的幂等 Artifact 归档、元数据查询和租户范围内容读取
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
@@ -53,7 +53,8 @@ export AGENT_PLATFORM_GITLAB_TOKEN
 export AGENT_PLATFORM_WORKSPACE_ROOT='/var/lib/agent-platform/workspaces'
 ```
 
-三个变量都未配置时，服务仍可启动，健康检查和 Task 接口仍可使用，但 Workspace 操作会失败关闭。
+三个变量都未配置时，服务仍可启动并提供健康检查；创建 Task 因无法固定 `master` 与 merge-base
+返回 `503 repository_resolution_unavailable`，Workspace 操作也失败关闭。
 只配置其中一部分时，服务拒绝启动。根目录必须是绝对路径，且不能是文件系统根目录；服务启动时会
 以 `0700` 创建不存在的目录。当前 token 只属于控制平面及其受控 Git 子进程，不会写入 clone URL、
 命令参数、Workspace、Runtime 或 Codex shell；后续仍要接入 Credential Broker。
@@ -107,7 +108,6 @@ curl -i \
     "repository":{
       "provider":"gitlab",
       "repositoryId":"platform/project-7",
-      "baseSha":"1111111111111111111111111111111111111111",
       "headSha":"2222222222222222222222222222222222222222"
     }
   }'
@@ -125,6 +125,8 @@ curl -i \
   "repository": {
     "provider": "gitlab",
     "repositoryId": "platform/project-7",
+    "targetBranch": "master",
+    "targetSha": "3333333333333333333333333333333333333333",
     "baseSha": "1111111111111111111111111111111111111111",
     "headSha": "2222222222222222222222222222222222222222"
   },
@@ -135,11 +137,19 @@ curl -i \
 ```
 
 服务端会回显 `X-Request-ID`。同一租户使用同一 `idempotencyKey` 和相同任务内容
-重放时返回 `200 OK` 以及原 Task；如果复用该 key 却改变 `type`、`goal` 或仓库引用，返回
-`409 Conflict`。不同租户可以使用相同的幂等键。
+重放时返回 `200 OK` 以及原 Task；即使这时 `master` 已移动，也不会重新计算原 Task 的快照。
+如果复用该 key 却改变 `type`、`goal`、仓库 ID 或 head SHA，返回 `409 Conflict`。
+不同租户可以使用相同的幂等键。
 
-Phase 0 只接受 `gitlab` provider。`baseSha` 和 `headSha` 必须是 40 或 64 位十六进制对象 ID；
-这里仅校验格式，尚未连接 Git 平台验证仓库和 commit 是否真实存在。
+Phase 0 只接受 `gitlab` provider，并固定以 `master` 为目标分支。调用方只提供完整的 40 或 64 位
+十六进制 `headSha`；服务端先读取 `master` 当前的提交作为 `targetSha`，再用固定的 target/head SHA
+先确认 head 提交可读取，再查询 merge-base，保存为 `baseSha`。这些 GitLab 读取必须成功，
+Task 才会创建。请求中的
+`targetBranch`、`targetSha` 由服务端负责，不能由调用方指定；旧客户端若仍传有效格式的
+`baseSha`，当前版本暂时接受但**忽略其值**，返回的总是服务端计算的 base。后续会移除这个兼容入口。
+GitLab 缺少 master 或 head 时返回 404、两提交没有可用共同祖先时返回 422、GitLab 不可用时返回
+稳定的 503，不在响应中回显内部诊断。相关 GitLab API 见[分支查询](https://docs.gitlab.com/api/branches/)
+与[merge-base 查询](https://docs.gitlab.com/api/repositories/)。
 
 按 ID 查询：
 
@@ -171,6 +181,8 @@ Task 与查询不存在的 ID 一样返回 404。创建响应中的 `Location` �
       "repository": {
         "provider": "gitlab",
         "repositoryId": "platform/project-7",
+        "targetBranch": "master",
+        "targetSha": "3333333333333333333333333333333333333333",
         "baseSha": "1111111111111111111111111111111111111111",
         "headSha": "2222222222222222222222222222222222222222"
       },
@@ -325,15 +337,16 @@ GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必�
 
 ### 查看固定 base/head 差异
 
-Workspace 进入 READY 后，可以读取 Task 创建时已经固定的两个 commit 之间的补丁：
+Workspace 进入 READY 后，可以读取 Task 创建时由服务端固定的 Review Base 与 head 之间的补丁：
 
 ```bash
 curl -i \
   'http://localhost:8080/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local'
 ```
 
-请求没有 `baseSha`、`headSha` 或本地路径参数。服务端从 READY Workspace 读取这些值，再执行受控的
-本地 Git 命令；调用方不能把评审目标临时换成其他 revision。响应包含补丁本身和可校验元数据：
+请求没有 `baseSha`、`headSha` 或本地路径参数。服务端从 READY Workspace 读取创建 Task 时已计算
+并固定的 SHA，执行 `git diff <baseSha> <headSha>` 两点差异；读取时不再查询当前 `master`。
+调用方不能临时更换评审目标。响应包含补丁本身和可校验元数据：
 
 ```json
 {

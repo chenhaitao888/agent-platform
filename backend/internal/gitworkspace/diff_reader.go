@@ -55,6 +55,8 @@ func (r *DiffReader) Read(ctx context.Context, input repository.DiffInput) ([]by
 		return nil, fmt.Errorf("%w: %w: base and head must be immutable Git object IDs", repository.ErrDiffUnavailable, ErrGitDiffOperation)
 	}
 
+	// Task 创建时，GitLab adapter 已用固定的 master target SHA 和 HeadSHA 算出 BaseSHA。
+	// 这里仅消费这份不可变快照做两点 diff，不重新读取会移动的 master 分支。
 	// 与 Java 的 ProcessBuilder 一样，这里直接传参数数组，不拼 shell 命令字符串。
 	// 末尾的 -- 明确结束选项，后续即使增加路径参数，也不会被 Git 当成开关。
 	command := exec.CommandContext(

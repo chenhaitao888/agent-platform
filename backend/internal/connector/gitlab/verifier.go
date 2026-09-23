@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ type Verifier struct {
 // gitLabProjectsAPIPath 是 GitLab REST API v4 定义的协议路径，不是某个项目的配置。
 // 可变部分只有后面的项目 ID；例如 platform/agent-project 会被编码成 platform%2Fagent-project。
 const gitLabProjectsAPIPath = "/api/v4/projects/"
+const maxGitLabReferenceResponseBytes = 1 << 20
 
 func projectAPIPath(repositoryID string) string {
 	return gitLabProjectsAPIPath + url.PathEscape(repositoryID)
@@ -69,6 +71,78 @@ func (v *Verifier) Verify(ctx context.Context, reference task.RepositoryReferenc
 		return err
 	}
 	return v.verifyGET(ctx, projectPath+"/repository/commits/"+url.PathEscape(reference.HeadSHA), repository.ErrHeadCommitNotFound)
+}
+
+// Resolve 先把 master 冻结成 TargetSHA，再请 GitLab 求 TargetSHA 与 HeadSHA 的共同祖先。
+// 类比 Java 先保存不可变的 CommitId；第二次请求不能再传会移动的分支名 master。
+func (v *Verifier) Resolve(ctx context.Context, selection task.RepositoryReference) (task.RepositoryReference, error) {
+	if !isFullGitObjectID(selection.HeadSHA) {
+		return task.RepositoryReference{}, fmt.Errorf("%w: invalid head commit ID", repository.ErrVerificationUnavailable)
+	}
+	projectPath := projectAPIPath(selection.RepositoryID)
+	branchPath := projectPath + "/repository/branches/" + url.PathEscape(task.ReviewTargetBranch)
+	targetSHA, err := v.readCommitID(ctx, branchPath, repository.ErrTargetBranchNotFound, true)
+	if err != nil {
+		return task.RepositoryReference{}, err
+	}
+	// merge_base 的 404 还可能表示 head 不存在；先单独验证，HTTP 才能准确区分两种情况。
+	if err := v.verifyGET(ctx, projectPath+"/repository/commits/"+url.PathEscape(selection.HeadSHA), repository.ErrHeadCommitNotFound); err != nil {
+		return task.RepositoryReference{}, err
+	}
+	query := url.Values{}
+	query.Add("refs[]", targetSHA)
+	query.Add("refs[]", selection.HeadSHA)
+	baseSHA, err := v.readCommitID(ctx, projectPath+"/repository/merge_base?"+query.Encode(), repository.ErrReviewBaseNotFound, false)
+	if err != nil {
+		return task.RepositoryReference{}, err
+	}
+	selection.TargetBranch = task.ReviewTargetBranch
+	selection.TargetSHA = targetSHA
+	selection.BaseSHA = baseSHA
+	return selection, nil
+}
+
+func (v *Verifier) readCommitID(ctx context.Context, path string, notFoundError error, nested bool) (string, error) {
+	// 分支响应使用 commit.id；merge_base 响应使用顶层 id。两者都只取完整 SHA，
+	// 不把 GitLab 返回的标题、message 或其他正文带进领域对象。
+	response, err := v.get(ctx, path, notFoundError)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxGitLabReferenceResponseBytes+1))
+	if err != nil || len(data) > maxGitLabReferenceResponseBytes {
+		return "", fmt.Errorf("%w: read GitLab reference response", repository.ErrVerificationUnavailable)
+	}
+	var result struct {
+		ID     string `json:"id"`
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", fmt.Errorf("%w: decode GitLab reference response", repository.ErrVerificationUnavailable)
+	}
+	id := result.ID
+	if nested {
+		id = result.Commit.ID
+	}
+	if !isFullGitObjectID(id) {
+		return "", fmt.Errorf("%w: GitLab returned an invalid commit ID", repository.ErrVerificationUnavailable)
+	}
+	return id, nil
+}
+
+func isFullGitObjectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *Verifier) verifyGET(ctx context.Context, path string, notFoundError error) error {
