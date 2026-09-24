@@ -1112,6 +1112,38 @@ Outbox 记录同事务提交，再异步发布到 Event Bus，才能成为可靠
 - 收尾验证：`go test ./... -count=1`、`go test -race ./... -count=1`、`go vet ./...`、
   `node --run test`（28 个前端测试）和 `node --run build` 全部通过。
 
+### M13.1（第 10 步）：隔离前端旧请求并收紧 diff 预览、日志遮盖
+
+- 状态：完成（2026-09-24）；M14 仍暂停。
+- 问题：切换 Task 后，旧 Task 的 Workspace diff 或事件请求可能晚于新 Task 返回，覆盖当前页面；
+  前端会把最多 1 MiB 的补丁全文放进 `<pre>`；日志遮盖每次从进程环境读取 token，可能与实际
+  配置给 GitLab verifier 的 token 不一致。
+
+#### 代码拆解与 Java 对照
+
+1. `WorkspaceDetails` 和 `TaskEventTimeline` 为当前 Task 持有 `AbortController`。Task ID 或租户
+   变化、组件卸载时调用 `abort()`，并把 `signal` 交给 `fetch`。每次 `await` 后还检查
+   `signal.aborted`，因为测试替身或某些异步阶段可能仍交付一个迟到的结果。Java 可类比给一次
+   页面操作绑定 `CancellationToken`：取消不仅通知 I/O，也在写 UI 状态前确认“这还是当前操作”。
+2. Task 切换时清空旧 Workspace、diff、Artifact 和事件状态。新 Task 必须主动加载自己的数据；
+   旧请求不能借新 Task 的标题显示旧内容。POST 请求也携带 signal；取消客户端等待不保证服务端
+   撤销已提交的操作，所以登记、准备、归档仍依赖原有幂等键处理重试。
+3. diff 的 JSON 响应仍保留完整的受限补丁和完整大小，但 `<pre>` 最多渲染前 65,536 个字符，
+   超限时明确提示“仅预览”；归档继续由服务端读取完整 diff。Java 可类比列表页只展示摘要，
+   不把整份大对象展开成 DOM 节点。
+4. API 构造函数现在显式接收 GitLab token，并保存在 handler 内专供 `logServerError` 遮盖；
+   `main.go` 把同一个 token 传给 verifier 与 handler。Java 可类比构造器注入同一份配置，避免
+   日志工具自己去读静态环境变量而与实际依赖脱节。
+
+#### 测试先行记录与验证
+
+- 两个“旧请求晚到”的前端测试先失败：事件页停在旧 Task 的加载态，diff 页被旧补丁覆盖。
+  加入取消、状态重置和迟到结果检查后变绿；测试用会无视取消的 `fetch` 替身，验证额外检查确实有效。
+- 大 diff 测试先看到 70,004 个字符全部进入 `<pre>`，随后验证预览上限、截断提示和完整大小。
+- Go 日志测试把环境变量设为一份过期 token，却把另一份真实 token 传给 handler；先因构造器
+  参数缺失而失败，改为显式注入后确认响应和日志都没有真实 token。
+- `go test ./... -count=1`、`go test -race ./... -count=1`、`go vet ./...`、前端 31 个测试和构建通过。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -1145,8 +1177,8 @@ node --run build
   diff 规模；也没有缓存、重试、限流、熔断与持久化验证证据。
 - GitLab token 暂由控制平面环境变量提供，并只进入受控 clone/fetch 子进程；尚未接入 Credential
   Broker、短时凭据与自动轮换。
-- 固定版本 diff 的预览仍随 HTTP JSON 即时返回，归档 Artifact 也受 1 MiB 上限约束；目前还没有分片、
-  大文件引用、内容分类与保留策略。
+- 固定版本 diff 仍随 HTTP JSON 即时返回最多 1 MiB；页面只渲染前 65,536 个字符，但目前还没有
+  分片、大文件引用、内容分类与保留策略。
 - Artifact 当前是单进程内存 Store，已经具备不可变副本、checksum、幂等和 tenant 范围读取，但进程
   重启即丢失，也没有对象存储、数据库索引、加密、保留期、分页列表或垃圾回收。
 - Repository Connector 目前只支持 GitLab；真实企业 GitLab 凭据联调尚未执行。

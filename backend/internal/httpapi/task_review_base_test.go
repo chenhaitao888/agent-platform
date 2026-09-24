@@ -23,7 +23,7 @@ func (resolve repositoryResolverFunc) Resolve(ctx context.Context, selection tas
 func newHandlerWithTestResolver(resolver repository.ReferenceResolver) http.Handler {
 	tasks := task.NewStore()
 	verifier := repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil })
-	return newHandlerWithDiffReader(tasks, workspace.NewManager(tasks, verifier), repository.UnavailableDiffReader{}, resolver)
+	return newHandlerWithDiffReader(tasks, workspace.NewManager(tasks, verifier), repository.UnavailableDiffReader{}, resolver, "")
 }
 
 func TestCreateTaskStoresServerResolvedMasterSnapshot(t *testing.T) {

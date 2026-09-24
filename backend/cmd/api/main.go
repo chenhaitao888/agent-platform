@@ -49,7 +49,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("configure GitLab Workspace preparer: %v", err)
 		}
-		handler, err = httpapi.NewHandlerWithWorkspaceServices(verifier, workspacePreparer, diffReader, workspaceRoot)
+		handler, err = httpapi.NewHandlerWithWorkspaceServices(verifier, workspacePreparer, diffReader, workspaceRoot, gitlabToken)
 		if err != nil {
 			log.Fatalf("configure Workspace Manager: %v", err)
 		}

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -30,6 +29,8 @@ type handler struct {
 	workspaces *workspace.Manager
 	reviews    *review.Service
 	artifacts  *artifact.Store
+	// 与 GitLab verifier 使用同一份 token；仅用于遮盖日志，不写入响应。
+	logSecret string
 }
 
 type createTaskRequest struct {
@@ -89,16 +90,16 @@ const (
 )
 
 func NewHandler() http.Handler {
-	return NewHandlerWithRepositoryServices(repository.UnavailableVerifier{})
+	return NewHandlerWithRepositoryServices(repository.UnavailableVerifier{}, "")
 }
 
-func NewHandlerWithRepositoryServices(references repository.ReferenceServices) http.Handler {
+func NewHandlerWithRepositoryServices(references repository.ReferenceServices, gitlabToken string) http.Handler {
 	tasks := task.NewStore()
-	return newHandler(tasks, workspace.NewManager(tasks, references), references)
+	return newHandler(tasks, workspace.NewManager(tasks, references), references, gitlabToken)
 }
 
-func NewHandlerWithWorkspacePreparer(verifier repository.ReferenceServices, preparer workspace.Preparer, root string) (http.Handler, error) {
-	return NewHandlerWithWorkspaceServices(verifier, preparer, repository.UnavailableDiffReader{}, root)
+func NewHandlerWithWorkspacePreparer(verifier repository.ReferenceServices, preparer workspace.Preparer, root, gitlabToken string) (http.Handler, error) {
+	return NewHandlerWithWorkspaceServices(verifier, preparer, repository.UnavailableDiffReader{}, root, gitlabToken)
 }
 
 func NewHandlerWithWorkspaceServices(
@@ -106,20 +107,21 @@ func NewHandlerWithWorkspaceServices(
 	preparer workspace.Preparer,
 	diffReader repository.DiffReader,
 	root string,
+	gitlabToken string,
 ) (http.Handler, error) {
 	tasks := task.NewStore()
 	workspaces, err := workspace.NewManagerWithPreparer(tasks, verifier, preparer, root)
 	if err != nil {
 		return nil, err
 	}
-	return newHandlerWithDiffReader(tasks, workspaces, diffReader, verifier), nil
+	return newHandlerWithDiffReader(tasks, workspaces, diffReader, verifier, gitlabToken), nil
 }
 
-func newHandler(tasks *task.Store, workspaces *workspace.Manager, resolver repository.ReferenceResolver) http.Handler {
-	return newHandlerWithDiffReader(tasks, workspaces, repository.UnavailableDiffReader{}, resolver)
+func newHandler(tasks *task.Store, workspaces *workspace.Manager, resolver repository.ReferenceResolver, gitlabToken string) http.Handler {
+	return newHandlerWithDiffReader(tasks, workspaces, repository.UnavailableDiffReader{}, resolver, gitlabToken)
 }
 
-func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver) http.Handler {
+func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver, gitlabToken string) http.Handler {
 	artifacts := artifact.NewStore()
 	h := &handler{
 		tasks:      tasks,
@@ -127,6 +129,7 @@ func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, 
 		workspaces: workspaces,
 		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts, tasks),
 		artifacts:  artifacts,
+		logSecret:  strings.TrimSpace(gitlabToken),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
@@ -227,12 +230,12 @@ func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrDiffUnavailable) {
-		logServerError(r, request.RequestID, request.TenantID, "diff_unavailable", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "diff_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff could not be archived")
 		return
 	}
@@ -269,12 +272,12 @@ func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrDiffUnavailable) {
-		logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "diff_unavailable", err)
+		h.logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "diff_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "diff_unavailable", "repository diff is unavailable")
 		return
 	}
 	if err != nil {
-		logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "internal_error", err)
+		h.logServerError(r, r.Header.Get("X-Request-ID"), tenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "repository diff is unavailable")
 		return
 	}
@@ -324,17 +327,17 @@ func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, workspace.ErrPreparationUnavailable) {
-		logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_unavailable", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "workspace_preparation_unavailable", "workspace preparation is unavailable")
 		return
 	}
 	if errors.Is(err, workspace.ErrPreparationFailed) {
-		logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_failed", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "workspace_preparation_failed", err)
 		writeError(w, http.StatusServiceUnavailable, "workspace_preparation_failed", "workspace preparation failed")
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "workspace preparation failed")
 		return
 	}
@@ -410,12 +413,12 @@ func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, repository.ErrVerificationUnavailable) {
-		logServerError(r, request.RequestID, request.TenantID, "repository_verification_unavailable", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "repository_verification_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "repository_verification_unavailable", "repository verification is unavailable")
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "workspace registration failed")
 		return
 	}
@@ -476,7 +479,7 @@ func (h *handler) updateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "task update failed")
 		return
 	}
@@ -612,12 +615,12 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", err)
 		writeError(w, http.StatusServiceUnavailable, "repository_resolution_unavailable", "repository reference could not be resolved")
 		return
 	}
 	if resolved.Provider != selection.Provider || resolved.RepositoryID != selection.RepositoryID || resolved.HeadSHA != selection.HeadSHA || resolved.TargetBranch != task.ReviewTargetBranch || !isGitObjectID(resolved.TargetSHA) || !isGitObjectID(resolved.BaseSHA) {
-		logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", errors.New("resolver returned an invalid review reference"))
+		h.logServerError(r, request.RequestID, request.TenantID, "repository_resolution_unavailable", errors.New("resolver returned an invalid review reference"))
 		writeError(w, http.StatusServiceUnavailable, "repository_resolution_unavailable", "repository reference could not be resolved")
 		return
 	}
@@ -628,7 +631,7 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
+		h.logServerError(r, request.RequestID, request.TenantID, "internal_error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "task creation failed")
 		return
 	}
@@ -730,16 +733,15 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
 }
 
-func logServerError(r *http.Request, requestID, tenantID, code string, err error) {
+func (h *handler) logServerError(r *http.Request, requestID, tenantID, code string, err error) {
 	// 仅记录定位故障需要的坐标和错误链，不记录 request body、幂等键或凭据。
-	// token 不应进入 Git URL/argv；但 Git stderr 属于外部文本，仍对当前服务 token
+	// token 不应进入 Git URL/argv；但 Git stderr 属于外部文本，仍对构造时传入的 token
 	// 做兜底遮盖，避免远端异常回显时把凭据带进日志。
-	secret := strings.TrimSpace(os.Getenv("AGENT_PLATFORM_GITLAB_TOKEN"))
 	redact := func(value string) string {
-		if secret == "" {
+		if h.logSecret == "" {
 			return value
 		}
-		return strings.ReplaceAll(value, secret, "[REDACTED]")
+		return strings.ReplaceAll(value, h.logSecret, "[REDACTED]")
 	}
 	boundedField := func(value string) string {
 		value = redact(value)

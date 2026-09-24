@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { Task, TaskEvent } from './task'
 
@@ -37,17 +37,31 @@ function eventSummary(event: TaskEvent): string {
 
 export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
   const [state, setState] = useState<TimelineState>({ kind: 'idle' })
+  const controllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    controllerRef.current = controller
+    setState({ kind: 'idle' })
+    // 类似 Java 请求作用域结束时关闭资源：Task 一换，旧请求的结果就失效。
+    return () => controller.abort()
+  }, [task.id, task.tenantId])
 
   async function loadEvents() {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setState({ kind: 'loading' })
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
       const response = await fetch(
         `/api/v1/tasks/${task.id}/events?${query.toString()}`,
+        { signal },
       )
+      if (signal.aborted) return
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -56,8 +70,10 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
       }
 
       const body = (await response.json()) as TaskEventListResponse
+      if (signal.aborted) return
       setState({ kind: 'ready', items: body.items })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setState({ kind: 'failed', message })
     }

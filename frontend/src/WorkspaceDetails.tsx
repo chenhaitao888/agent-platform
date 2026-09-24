@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { Artifact } from './artifact'
 import type { WorkspaceDiff } from './review'
@@ -34,14 +34,29 @@ type ArtifactState =
   | { kind: 'loaded'; artifact: Artifact }
   | { kind: 'failed'; message: string }
 
+const maxDiffPreviewCharacters = 64 * 1024
+
 export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
   const [diffState, setDiffState] = useState<DiffState>({ kind: 'idle' })
   const [artifactState, setArtifactState] = useState<ArtifactState>({
     kind: 'idle',
   })
+  const controllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    controllerRef.current = controller
+    setState({ kind: 'idle' })
+    setDiffState({ kind: 'idle' })
+    setArtifactState({ kind: 'idle' })
+    // 一个 Task 的请求只属于这个 Task；切换时撤销，迟到的结果也不能写入新页面。
+    return () => controller.abort()
+  }, [task.id, task.tenantId])
 
   async function loadWorkspace() {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setState({ kind: 'loading' })
     setDiffState({ kind: 'idle' })
     setArtifactState({ kind: 'idle' })
@@ -50,13 +65,16 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       const query = new URLSearchParams({ tenantId: task.tenantId })
       const response = await fetch(
         `/api/v1/tasks/${task.id}/workspace?${query.toString()}`,
+        { signal },
       )
+      if (signal.aborted) return
       if (response.status === 404) {
         setState({ kind: 'absent' })
         return
       }
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -65,14 +83,18 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       }
 
       const workspace = (await response.json()) as Workspace
+      if (signal.aborted) return
       setState({ kind: 'loaded', workspace })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setState({ kind: 'failed', message })
     }
   }
 
   async function registerWorkspace() {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setState({ kind: 'registering' })
     setDiffState({ kind: 'idle' })
     setArtifactState({ kind: 'idle' })
@@ -80,6 +102,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     try {
       const response = await fetch(`/api/v1/tasks/${task.id}/workspace`, {
         method: 'POST',
+        signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: `req_${crypto.randomUUID()}`,
@@ -88,8 +111,10 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
           tenantId: task.tenantId,
         }),
       })
+      if (signal.aborted) return
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -98,14 +123,18 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       }
 
       const workspace = (await response.json()) as Workspace
+      if (signal.aborted) return
       setState({ kind: 'loaded', workspace })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setState({ kind: 'failed', message })
     }
   }
 
   async function prepareWorkspace(workspace: Workspace) {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setState({ kind: 'preparing' })
     setDiffState({ kind: 'idle' })
     setArtifactState({ kind: 'idle' })
@@ -115,6 +144,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
         `/api/v1/tasks/${task.id}/workspace/prepare`,
         {
           method: 'POST',
+          signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             requestId: `req_${crypto.randomUUID()}`,
@@ -125,8 +155,10 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
           }),
         },
       )
+      if (signal.aborted) return
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -135,14 +167,18 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       }
 
       const prepared = (await response.json()) as Workspace
+      if (signal.aborted) return
       setState({ kind: 'loaded', workspace: prepared })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setState({ kind: 'failed', message })
     }
   }
 
   async function loadDiff() {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setDiffState({ kind: 'loading' })
     setArtifactState({ kind: 'idle' })
 
@@ -150,9 +186,12 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       const query = new URLSearchParams({ tenantId: task.tenantId })
       const response = await fetch(
         `/api/v1/tasks/${task.id}/workspace/diff?${query.toString()}`,
+        { signal },
       )
+      if (signal.aborted) return
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setDiffState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -161,14 +200,18 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       }
 
       const diff = (await response.json()) as WorkspaceDiff
+      if (signal.aborted) return
       setDiffState({ kind: 'loaded', diff })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setDiffState({ kind: 'failed', message })
     }
   }
 
   async function archiveDiff(workspace: Workspace) {
+    const signal = controllerRef.current?.signal
+    if (!signal || signal.aborted) return
     setArtifactState({ kind: 'archiving' })
 
     const requestId = `req_${crypto.randomUUID()}`
@@ -177,6 +220,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     try {
       const response = await fetch(`/api/v1/tasks/${task.id}/artifacts/diff`, {
         method: 'POST',
+        signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId,
@@ -185,8 +229,10 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
           expectedWorkspaceVersion: workspace.version,
         }),
       })
+      if (signal.aborted) return
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
+        if (signal.aborted) return
         setArtifactState({
           kind: 'failed',
           message: error.message ?? `HTTP ${response.status}`,
@@ -195,8 +241,10 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
       }
 
       const artifact = (await response.json()) as Artifact
+      if (signal.aborted) return
       setArtifactState({ kind: 'loaded', artifact })
     } catch (error) {
+      if (signal.aborted) return
       const message = error instanceof Error ? error.message : 'unknown error'
       setArtifactState({ kind: 'failed', message })
     }
@@ -358,7 +406,13 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
                   <dd>{diffState.diff.sha256}</dd>
                 </div>
               </dl>
-              <pre>{diffState.diff.patch}</pre>
+              <pre>{diffState.diff.patch.slice(0, maxDiffPreviewCharacters)}</pre>
+              {diffState.diff.patch.length > maxDiffPreviewCharacters && (
+                <p role="note">
+                  仅预览前 {maxDiffPreviewCharacters.toLocaleString('en-US')} 个字符；
+                  完整差异可归档后读取。
+                </p>
+              )}
               <button
                 type="button"
                 disabled={artifactState.kind === 'archiving'}

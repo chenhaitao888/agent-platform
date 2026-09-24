@@ -62,6 +62,7 @@ func TestWorkspacePreparationAppendsPreparingAndReadyEvents(t *testing.T) {
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -132,6 +133,7 @@ func TestWorkspacePreparationFailureAppendsARedactedFact(t *testing.T) {
 			return errors.New("private Git diagnostic")
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -184,6 +186,7 @@ func TestArchiveDiffAppendsAnArtifactCreatedEvent(t *testing.T) {
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) { return patch, nil }),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)

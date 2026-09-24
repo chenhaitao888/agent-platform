@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import TaskEventTimeline from './TaskEventTimeline'
@@ -122,6 +122,7 @@ describe('TaskEventTimeline', () => {
     expect(timeline).toHaveTextContent('artifact-1 · REPOSITORY_DIFF · 42 B')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/tasks/task-1/events?tenantId=tenant-local',
+      { signal: expect.any(AbortSignal) },
     )
   })
 
@@ -151,5 +152,55 @@ describe('TaskEventTimeline', () => {
     expect(
       screen.getByRole('button', { name: '查看 task-1 的事件' }),
     ).toBeEnabled()
+  })
+
+  it('does not show a previous Task timeline when its response arrives late', async () => {
+    let finishOldRequest!: (response: Response) => void
+    const oldResponse = new Promise<Response>((resolve) => {
+      finishOldRequest = resolve
+    })
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('/task-1/')) return oldResponse
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [{
+              eventId: 'new-event',
+              eventType: 'task.queued',
+              occurredAt: '2026-09-24T01:00:00Z',
+              payload: { task: { status: 'QUEUED', version: 2 } },
+            }],
+          }),
+          { status: 200 },
+        ),
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { rerender } = render(<TaskEventTimeline task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的事件' }))
+    rerender(<TaskEventTimeline task={{ ...task, id: 'task-2' }} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看 task-2 的事件' }))
+    expect(await screen.findByText('QUEUED · version 2')).toBeInTheDocument()
+
+    await act(async () => {
+      finishOldRequest(new Response(
+        JSON.stringify({
+          items: [{
+            eventId: 'old-event',
+            eventType: 'task.created',
+            occurredAt: '2026-09-24T00:00:00Z',
+            payload: { task: { status: 'CREATED', version: 1 } },
+          }],
+        }),
+        { status: 200 },
+      ))
+    })
+
+    expect(
+      screen.getByRole('list', { name: 'task-2 的事件时间线' }),
+    ).toHaveTextContent('QUEUED · version 2')
+    expect(screen.queryByText('CREATED · version 1')).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true)
   })
 })

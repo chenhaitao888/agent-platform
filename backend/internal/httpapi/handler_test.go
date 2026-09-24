@@ -1656,6 +1656,7 @@ func TestPrepareRegisteredWorkspace(t *testing.T) {
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		workspaceRoot,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -1711,6 +1712,7 @@ func TestGetDiffFromAReadyWorkspace(t *testing.T) {
 			return []byte(patch), nil
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -1779,6 +1781,7 @@ func TestGetWorkspaceDiffReturnsAStableOversizedError(t *testing.T) {
 			return nil, fmt.Errorf("%w: internal Git output", repository.ErrDiffTooLarge)
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -1831,6 +1834,7 @@ func TestGetWorkspaceDiffRequiresAReadyWorkspace(t *testing.T) {
 			return []byte("must not be read"), nil
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -1870,6 +1874,7 @@ func TestArchiveReadyWorkspaceDiffAsArtifact(t *testing.T) {
 			return []byte(patch), nil
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -1998,6 +2003,7 @@ func TestPrepareWorkspaceFailureReturnsAStableErrorAndRestoresRegistration(t *te
 			return errors.New("Git output that must stay internal")
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -2056,6 +2062,7 @@ func TestPrepareWorkspaceFailureLogsCauseAndCorrelation(t *testing.T) {
 			return fmt.Errorf("clone failed: %w", errors.New("remote rejected commit"))
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -2092,14 +2099,17 @@ func TestPrepareWorkspaceFailureLogsCauseAndCorrelation(t *testing.T) {
 
 func TestPrepareWorkspaceFailureRedactsGitLabTokenFromLog(t *testing.T) {
 	const token = "service-secret-token"
-	t.Setenv("AGENT_PLATFORM_GITLAB_TOKEN", token)
+	// 进程环境故意放另一份值：遮盖必须跟随传给 handler 的真实 token。
+	t.Setenv("AGENT_PLATFORM_GITLAB_TOKEN", "stale-environment-token")
 	logOutput := captureJSONLogs(t)
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := NewHandlerWithWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			return errors.New("remote echoed " + token)
 		}),
+		repository.UnavailableDiffReader{},
 		t.TempDir(),
+		token,
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -2142,7 +2152,7 @@ func TestWorkspaceRegistrationLogsServiceAndUnexpectedFailures(t *testing.T) {
 			logOutput := captureJSONLogs(t)
 			handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
 				func(context.Context, task.RepositoryReference) error { return test.failure },
-			))
+			), "")
 			createQueuedTaskForWorkspaceTest(t, handler)
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-1/workspace", strings.NewReader(`{
 				"requestId":"req-register-log",
@@ -2180,6 +2190,7 @@ func TestGetWorkspaceDiffFailureLogsHeaderRequestID(t *testing.T) {
 			return nil, fmt.Errorf("%w: git diff exited 128", repository.ErrDiffUnavailable)
 		}),
 		t.TempDir(),
+		"",
 	)
 	if err != nil {
 		t.Fatalf("create handler: %v", err)
@@ -2215,7 +2226,7 @@ func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrRepositoryNotFound
 		},
-	))
+	), "")
 	createQueuedTaskForWorkspaceTest(t, handler)
 
 	request := httptest.NewRequest(
@@ -2258,7 +2269,7 @@ func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrBaseCommitNotFound
 		},
-	))
+	), "")
 	createQueuedTaskForWorkspaceTest(t, handler)
 
 	request := httptest.NewRequest(
@@ -2290,7 +2301,7 @@ func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrHeadCommitNotFound
 		},
-	))
+	), "")
 	createQueuedTaskForWorkspaceTest(t, handler)
 
 	request := httptest.NewRequest(
@@ -2322,7 +2333,7 @@ func TestCreateWorkspaceFailsClosedWhenRepositoryVerificationIsUnavailable(t *te
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrVerificationUnavailable
 		},
-	))
+	), "")
 	createQueuedTaskForWorkspaceTest(t, handler)
 
 	request := httptest.NewRequest(
@@ -2399,7 +2410,7 @@ func TestCreateWorkspaceReplaysTheSameIdempotentRequest(t *testing.T) {
 			}
 			return nil
 		},
-	))
+	), "")
 	createTaskRequest := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/tasks",
@@ -2729,7 +2740,7 @@ func newHandlerWithVerifiedRepositories() http.Handler {
 		func(context.Context, task.RepositoryReference) error {
 			return nil
 		},
-	))
+	), "")
 }
 
 func captureJSONLogs(t *testing.T) *bytes.Buffer {

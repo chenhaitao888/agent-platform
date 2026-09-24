@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import WorkspaceDetails from './WorkspaceDetails'
@@ -28,6 +28,85 @@ const queuedTask: Task = {
 }
 
 describe('WorkspaceDetails', () => {
+  it('keeps the current Task diff when an earlier Task response arrives late', async () => {
+    let finishOldDiff!: (response: Response) => void
+    const oldDiff = new Promise<Response>((resolve) => {
+      finishOldDiff = resolve
+    })
+    const ready = (taskId: string) => ({
+      id: `workspace-${taskId}`,
+      tenantId: 'tenant-local',
+      taskId,
+      repository: { provider: 'gitlab', repositoryId: 'project-7' },
+      targetBranch: 'master',
+      targetSha: queuedTask.repository.targetSha,
+      baseSha: queuedTask.repository.baseSha,
+      headSha: queuedTask.repository.headSha,
+      state: 'READY',
+      version: 3,
+      path: '/tmp/worktree',
+    })
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes('/task-1/workspace/diff')) return oldDiff
+      if (url.includes('/task-2/workspace/diff')) {
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            mediaType: 'text/x-diff',
+            sizeBytes: 9,
+            sha256: 'new-sha',
+            patch: 'NEW PATCH',
+          }),
+          { status: 200 },
+        ))
+      }
+      if (url.includes('/task-1/workspace')) {
+        return Promise.resolve(new Response(
+          JSON.stringify(ready('task-1')),
+          { status: 200 },
+        ))
+      }
+      return Promise.resolve(new Response(
+        JSON.stringify(ready('task-2')),
+        { status: 200 },
+      ))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { rerender } = render(<WorkspaceDetails task={queuedTask} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('READY')
+    fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
+
+    rerender(<WorkspaceDetails task={{ ...queuedTask, id: 'task-2' }} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-2 的 Workspace' }),
+    )
+    await screen.findByText('READY')
+    fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
+    expect(await screen.findByText('NEW PATCH')).toBeInTheDocument()
+
+    await act(async () => {
+      finishOldDiff(new Response(
+        JSON.stringify({
+          mediaType: 'text/x-diff',
+          sizeBytes: 9,
+          sha256: 'old-sha',
+          patch: 'OLD PATCH',
+        }),
+        { status: 200 },
+      ))
+    })
+
+    expect(screen.getByText('NEW PATCH')).toBeInTheDocument()
+    expect(screen.queryByText('OLD PATCH')).not.toBeInTheDocument()
+    const oldDiffCall = fetchMock.mock.calls.find(([url]) =>
+      url.includes('/task-1/workspace/diff'),
+    )
+    expect(oldDiffCall?.[1]?.signal?.aborted).toBe(true)
+  })
+
   it('loads and shows an existing workspace on request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -77,6 +156,7 @@ describe('WorkspaceDetails', () => {
     )
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/tasks/task-1/workspace?tenantId=tenant-local',
+      { signal: expect.any(AbortSignal) },
     )
   })
 
@@ -411,7 +491,57 @@ describe('WorkspaceDetails', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       '/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local',
+      { signal: expect.any(AbortSignal) },
     )
+  })
+
+  it('bounds a large diff preview without changing its reported full size', async () => {
+    const patch = 'A'.repeat(70_000) + 'TAIL'
+    const ready = {
+      id: 'workspace-1',
+      tenantId: 'tenant-local',
+      taskId: 'task-1',
+      repository: { provider: 'gitlab', repositoryId: 'project-7' },
+      targetBranch: 'master',
+      targetSha: queuedTask.repository.targetSha,
+      baseSha: queuedTask.repository.baseSha,
+      headSha: queuedTask.repository.headSha,
+      state: 'READY',
+      version: 3,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify(ready), { status: 200 }),
+        )
+        .mockResolvedValueOnce(new Response(
+          JSON.stringify({
+            mediaType: 'text/x-diff',
+            sizeBytes: patch.length,
+            sha256: 'full-patch-sha',
+            patch,
+          }),
+          { status: 200 },
+        )),
+    )
+
+    render(<WorkspaceDetails task={queuedTask} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+    )
+    await screen.findByText('READY')
+    fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
+
+    const diff = await screen.findByRole('region', {
+      name: 'task-1 的固定版本差异',
+    })
+    expect(diff.querySelector('pre')?.textContent?.length).toBeLessThanOrEqual(
+      65_536,
+    )
+    expect(diff).not.toHaveTextContent('TAIL')
+    expect(diff).toHaveTextContent(`${patch.length} bytes`)
+    expect(diff).toHaveTextContent('仅预览前 65,536 个字符')
   })
 
   it('archives a loaded diff and shows the Artifact link', async () => {
@@ -516,6 +646,7 @@ describe('WorkspaceDetails', () => {
       '/api/v1/tasks/task-1/artifacts/diff',
       {
         method: 'POST',
+        signal: expect.any(AbortSignal),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: 'req_00000000-0000-4000-8000-000000000007',
@@ -533,6 +664,7 @@ describe('WorkspaceDetails', () => {
       '/api/v1/tasks/task-1/artifacts/diff',
       {
         method: 'POST',
+        signal: expect.any(AbortSignal),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requestId: 'req_00000000-0000-4000-8000-000000000008',
