@@ -1261,16 +1261,76 @@ TaskCreateTest、TaskTransitionTest 等测试类，把公共准备函数集中�
 
 #### 验证与远端状态
 
-- HTTP 顶层测试从 66 个增至 69 个，原有名称全部保留；新增并发测试在 race 下连续 20 次通过。
+- 原 `handler_test.go` 范围内的顶层测试从 66 个增至 69 个，原有名称全部保留；新增并发测试在
+  race 下连续 20 次通过。其他已有 HTTP 测试文件保留原样。
 - Go 全套普通测试、race 测试、vet、golangci-lint（0 issues）、gofmt 和 `git diff --check` 通过。
 - 用户已审阅的上一步变更已提交为 `79ee208` 并推送到 `origin/main`。
   [首次 CI 运行](https://github.com/chenhaitao888/agent-platform/actions/runs/37206467792) 的三个 job
   都未开始执行，GitHub check annotations 明确报告账户因账单问题被锁定。因此远端 CI 尚未完成
   代码验证，需要解除账户限制后重跑；本地绿色不能替代该结果。
-- 本步测试和手册变更保留为未提交改动，供用户继续审阅。
+- 本步测试和手册变更经用户审阅后，已提交为 `e06366c` 并推送到 `origin/main`。
 
 下一小步可继续审查 Workspace Prepare 的并发请求与失败重试边界，一次选一条公共 HTTP 行为。
 当前回归只覆盖单进程内存实现，不证明跨进程幂等、数据库 CAS 或事务 Outbox 的正确性。
+
+### M13.1（第 15 步）：在 Workspace 准备开始前绑定幂等键
+
+- 状态：完成（2026-10-04）；继续审查清单 #11 的 Workspace Prepare 并发与失败重试边界。
+- 本步修复一个输入绑定缺口，保持当前同步准备方式；M14 继续暂停。
+
+#### 从公共 HTTP 行为复现缺陷
+
+原实现仅在准备成功后保存 `preparations` 记录。第一个请求进入 PREPARING 并释放锁执行 Git 时，
+相同租户的第二个 Task 仍能用同一准备 key 进入准备，两个成功结果还可能覆盖同一幂等记录。
+失败路径也没有保留绑定，因此同一 key 可以改用新 `expectedVersion` 开始另一轮操作。
+这不符合 README 已有的“复用 key 改变 Task 或版本返回 idempotency_conflict”约定。
+
+先新增两条 HTTP 回归，再修改产品代码，实际得到以下 RED：
+
+- 首请求被 channel 阻塞在准备器中；同租户另一 Task 复用 key，预期 `409 idempotency_conflict`，
+  实际返回 `200 READY`。另一个租户的用例还发现：首请求复用 key 改版本，返回了状态错误而非
+  幂等输入冲突。
+- 准备失败后 Workspace 已恢复为 REGISTERED/v3；复用原 key 改成版本 3，预期幂等输入冲突，
+  实际再次准备成功，返回 `200 READY/v5`。
+
+#### 最小修复及 Java 类比
+
+Manager 在同一个互斥锁内完成版本/状态校验、变为 PREPARING，以及按 `(tenantId, key)` 绑定
+`(taskId, expectedVersion)`，随后才释放锁调用准备器。失败保留该绑定；成功额外保存 Workspace
+快照。`preparationRecord.result` 改为 `*Workspace`：nil 表示已绑定但没有成功快照，只有非 nil
+才能重放成功响应，避免把“已有记录”误当作“已有成功结果”。返回时复制快照值。
+
+Java 可类比先在 `synchronized` 临界区里占用请求键并记录输入，再到锁外执行耗时的
+`ProcessBuilder`。失败不允许把原请求键改绑定到新输入；获取新版本后，生成新键开始新一轮操作。
+这里的锁和记录仍只在单个 Go 进程内生效。
+
+| 场景 | HTTP 结果 | 准备器与时间线 |
+| --- | --- | --- |
+| 同租户复用已绑定 key，改变 Task 或版本 | 409 idempotency_conflict | 不启动准备、不追加事件 |
+| 准备中或失败后，用原 key 和原版本重放 | 409 version_conflict | 不启动准备、不追加事件 |
+| PREPARING 时用新 key 和当前版本尝试准备 | 409 invalid_workspace_state | 不启动准备、不追加事件 |
+| 不同租户使用相同 key | 各自准备成功 | 各自维护状态和事件 |
+| 失败后用新 key 和最新版本重试 | 200 READY/v5 | 追加 PREPARING/v4、READY/v5 |
+| 成功后用成功请求的 key 和输入重放 | 200，返回原成功快照 | 不重复准备、不追加事件 |
+
+版本或状态校验未通过的请求不会占用新 key。已有前端键包含 Workspace version，因此失败后
+刷新为 v3 会生成新键，本步无需修改前端。README 已补全失败后的重试步骤。
+
+#### 验证与审阅位置
+
+- 新增并发和失败重试测试均经过 RED → GREEN；它们通过公开 HTTP 创建、准入、登记、准备、
+  读取和查看事件，不访问 Handler 或 Manager 的私有状态。
+- 并发测试用 channel 固定交错点，GET 能读到 PREPARING/v2；同租户冲突保持另一个 Workspace
+  在 REGISTERED/v1，事件只有登记前后的三条事实。两个租户的 key 互不占用。
+- 失败重试测试确认完整的 v1 → v2 → v3 → v4 → v5 过程、七条事件及 causationId；成功重放
+  返回相同响应，准备器总共只执行两次。
+- 新用例在 race 下连续 20 次通过；Go 全套普通测试、race、vet、golangci-lint（0 issues）、
+  gofmt 与 `git diff --check` 通过。
+- 本步文件：`workspace.go`、`workspace_preparation_concurrency_test.go`、
+  `workspace_preparation_test.go`、`test_helpers_test.go`、README 和本手册。
+- 上一步 `e06366c` 已推送；[该次 CI](https://github.com/chenhaitao888/agent-platform/actions/runs/37208481658)
+  的三个 job 仍未启动，分别报告 GitHub 账户因账单问题被锁定。远端验证需解除该限制后重跑。
+- 本步变更保留为未提交改动，供用户审阅。下一小步可继续检查 Workspace 登记的并发幂等行为。
 
 ## 7. 常用验证命令
 

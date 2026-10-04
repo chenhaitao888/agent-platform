@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -143,4 +145,89 @@ func captureJSONLogs(t *testing.T) *bytes.Buffer {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	return &output
+}
+
+func registerPreparationWorkspaceForTest(t *testing.T, handler http.Handler, tenantID, key string) workspace.Workspace {
+	t.Helper()
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(fmt.Sprintf(`{
+		"requestId":%q,"idempotencyKey":%q,"tenantId":%q,
+		"type":"PR_REVIEW","goal":"Review workspace preparation",%s
+	}`, "req-create-"+key, "create-"+key, tenantID, testRepositoryJSON))))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create Task: %d: %s", created.Code, created.Body.String())
+	}
+	var currentTask task.Task
+	if err := json.Unmarshal(created.Body.Bytes(), &currentTask); err != nil {
+		t.Fatalf("decode Task: %v", err)
+	}
+	queued := httptest.NewRecorder()
+	handler.ServeHTTP(queued, httptest.NewRequest(http.MethodPatch, "/api/v1/tasks/"+currentTask.ID, strings.NewReader(fmt.Sprintf(`{
+		"requestId":%q,"idempotencyKey":%q,"tenantId":%q,"expectedVersion":1,"status":"QUEUED"
+	}`, "req-queue-"+key, "queue-"+key, tenantID))))
+	if queued.Code != http.StatusOK {
+		t.Fatalf("queue Task: %d: %s", queued.Code, queued.Body.String())
+	}
+	registered := httptest.NewRecorder()
+	handler.ServeHTTP(registered, httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+currentTask.ID+"/workspace", strings.NewReader(fmt.Sprintf(`{
+		"requestId":%q,"idempotencyKey":%q,"tenantId":%q
+	}`, "req-register-"+key, "register-"+key, tenantID))))
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("register Workspace: %d: %s", registered.Code, registered.Body.String())
+	}
+	var result workspace.Workspace
+	if err := json.Unmarshal(registered.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode Workspace: %v", err)
+	}
+	return result
+}
+
+func postWorkspacePreparationForTest(handler http.Handler, ctx context.Context, current workspace.Workspace, key, requestID string, version uint64) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+current.TaskID+"/workspace/prepare", strings.NewReader(fmt.Sprintf(`{
+		"requestId":%q,"idempotencyKey":%q,"tenantId":%q,"expectedVersion":%d
+	}`, requestID, key, current.TenantID, version))).WithContext(ctx)
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func assertPreparationConflictForTest(t *testing.T, response *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	var body errorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode preparation conflict: %v", err)
+	}
+	if response.Code != http.StatusConflict || body.Error != code {
+		t.Fatalf("expected 409 %s, got %d: %s", code, response.Code, response.Body.String())
+	}
+}
+
+func getPreparationWorkspaceForTest(t *testing.T, handler http.Handler, current workspace.Workspace) workspace.Workspace {
+	t.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+current.TaskID+"/workspace?tenantId="+current.TenantID, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("get Workspace: %d: %s", response.Code, response.Body.String())
+	}
+	var result workspace.Workspace
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode Workspace: %v", err)
+	}
+	return result
+}
+
+func preparationEventsForTest(t *testing.T, handler http.Handler, current workspace.Workspace) []task.Event {
+	t.Helper()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/tasks/"+current.TaskID+"/events?tenantId="+current.TenantID, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("get Task events: %d: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Items []task.Event `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode Task events: %v", err)
+	}
+	return result.Items
 }

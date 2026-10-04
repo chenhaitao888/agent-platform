@@ -101,7 +101,7 @@ type registrationRecord struct {
 type preparationRecord struct {
 	taskID          string
 	expectedVersion uint64
-	result          Workspace
+	result          *Workspace // nil 表示 key 已绑定，但尚无成功快照可重放。
 }
 
 type Manager struct {
@@ -257,8 +257,10 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 			m.mu.Unlock()
 			return PrepareResult{}, ErrPreparationIdempotencyConflict
 		}
-		m.mu.Unlock()
-		return PrepareResult{Workspace: record.result}, nil
+		if record.result != nil {
+			m.mu.Unlock()
+			return PrepareResult{Workspace: *record.result}, nil
+		}
 	}
 	current, ok := m.byTask[input.TaskID]
 	if !ok || current.TenantID != input.TenantID {
@@ -281,6 +283,11 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 	current.State = StatePreparing
 	current.Version++
 	m.byTask[input.TaskID] = current
+	// 在外部 I/O 前绑定输入；失败也保留绑定，新版本的重试需要新 key。
+	m.preparations[scope] = preparationRecord{
+		taskID:          input.TaskID,
+		expectedVersion: input.ExpectedVersion,
+	}
 	m.appendWorkspaceEvent(current, task.EventTypeWorkspacePreparing, input.RequestID, time.Now().UTC())
 	m.mu.Unlock()
 
@@ -325,7 +332,7 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (PrepareResul
 	m.preparations[scope] = preparationRecord{
 		taskID:          input.TaskID,
 		expectedVersion: input.ExpectedVersion,
-		result:          current,
+		result:          &current,
 	}
 	m.appendWorkspaceEvent(current, task.EventTypeWorkspaceReady, input.RequestID, time.Now().UTC())
 	return PrepareResult{Workspace: current, Prepared: true}, nil

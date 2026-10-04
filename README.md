@@ -328,10 +328,12 @@ GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必�
 这个 helper 由 Go 临时写到 `workspace-{id}/git-askpass.sh`，脚本模板位于
 `backend/internal/gitworkspace/preparer.go`，并不是需要手工准备的部署文件。`cat-file` 和
 `worktree add` 不再携带 token。失败时平台删除本次新建的半成品目录，并把 Workspace 恢复为
-`REGISTERED`，但 version 增加到 3，调用方应重新 GET 后再重试。
+`REGISTERED`，但 version 增加到 3，调用方应重新 GET，使用新幂等键和最新版本再重试。
 
-同一准备幂等键和相同输入重放不会再次 clone；复用该 key 改变 Task 或 `expectedVersion` 返回
-`409 idempotency_conflict`。版本过期返回 `409 version_conflict`，状态不允许返回
+准备开始前，同租户的幂等键就会绑定到 Task 和 `expectedVersion`，准备失败也保留该绑定；不同租户
+可以使用相同的键。成功后的同键、同输入重放返回原 Workspace 快照，不会再次 clone。
+原请求在准备中或失败后重放，因版本已经递增而返回 `409 version_conflict`；复用该 key 改变 Task
+或 `expectedVersion` 返回 `409 idempotency_conflict`。版本过期返回 `409 version_conflict`，状态不允许返回
 `409 invalid_workspace_state`，Git/API 失败返回稳定的 `503 workspace_preparation_failed`，不会把
 内部 Git 输出返回给调用方。
 
