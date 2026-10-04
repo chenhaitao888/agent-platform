@@ -1221,8 +1221,56 @@ export GOPATH=/private/tmp/agent-platform-gopath
 export GOLANGCI_LINT_CACHE=/private/tmp/agent-platform-golangci-cache
 ```
 
-下一小步按交接审查清单 #11 检视 `handler_test.go` 的职责划分及边界/并发覆盖，再选一个独立行为
-推进 RED → GREEN。历史审查报告未出现在本机仓库，具体缺口须以当前测试和代码为准；不自动恢复 M14。
+当时的下一小步是按交接审查清单 #11 检视 `handler_test.go` 的职责划分及边界/并发覆盖，见下方
+第 14 步。历史审查报告未出现在本机仓库，具体缺口以当前测试和代码为准；不自动恢复 M14。
+
+### M13.1（第 14 步）：拆分 HTTP 测试并补齐 Task 并发、字节边界覆盖
+
+- 状态：完成（2026-10-04）；接续审查清单 #11 的一个测试小切片，M14 继续暂停。
+- 本步整理测试和补充已有契约的回归约束，产品代码无需修改。
+- 原 `handler_test.go` 有 2,753 行。按健康检查、Task 创建/读取/迁移/事件、请求校验、Workspace
+  登记/准备、diff、Artifact 和日志分到对应测试文件，通用 fixture 移到 `test_helpers_test.go`。
+  拆分后最大文件为 `workspace_registration_test.go`，511 行。
+
+#### 为什么这样拆
+
+Go 会把同一目录、同一 package 的 `*_test.go` 一起编译。移动测试不要求新增接口或修改测试名称；
+可以按 HTTP 职责查找文件，同时保留共享 fixture。Java 可类比将一个巨大 ControllerTest 拆成
+TaskCreateTest、TaskTransitionTest 等测试类，把公共准备函数集中到测试辅助类。
+
+拆分时直接按 Go AST 提取原声明，重新生成必要 imports。先确认原有 66 个 HTTP 顶层测试名称
+没有增减，再运行 HTTP 测试，全部通过；没有借移动文件改写旧断言。
+
+#### 逐条补充行为约束
+
+1. **并发创建仍只固定一个 Task 快照**：两个同租户、同幂等键、相同内容的 POST 都先进入外部仓库
+   解析；测试通过 channel 放行，让两次解析返回不同的 master/base 快照。响应必须恰为一份 201
+   和一份 200，并返回完全相同的 Task；列表只有一个 Task，只有一条创建事件，causationId 属于
+   首创请求。这里约束公开结果，不要求外部解析只能调用一次。
+2. **并发准入只递增一次版本、追加一次事件**：16 个 PATCH 都携带 `expectedVersion=1`。
+   同幂等键时全部返回 200/v2；不同键时只有一个 200，另外 15 个返回 `409 version_conflict`。
+   最终 GET 是 QUEUED/v2，时间线只有 created 与 queued 两条事实。Java 可类比多个并发请求
+   更新同一条带 `@Version` 的记录，业务重试通过幂等键识别，竞争操作通过版本号拒绝。
+3. **中文目标按 UTF-8 字节限长**：1,365 个“中”加一个 ASCII 字符正好 4,096 字节，创建成功且原文
+   完整保存；再加一字节返回 400/validation_error，列表仍为空。该约束避免把 Java/JavaScript
+   的字符数与 Go 的 UTF-8 字节数混用，也确认拒绝请求不会留下 Task。
+
+新增用例逐条运行，首次就通过：现有实现已满足这些并发与长度约束，因此没有声称发现缺陷，也
+没有人为制造 RED。两个并发测试使用 channel 确定起跑/交错点，以 5 秒 context deadline 防止
+挂起；没有用 sleep 猜执行顺序，goroutine 只交付结果，断言在测试主 goroutine 中执行。
+
+#### 验证与远端状态
+
+- HTTP 顶层测试从 66 个增至 69 个，原有名称全部保留；新增并发测试在 race 下连续 20 次通过。
+- Go 全套普通测试、race 测试、vet、golangci-lint（0 issues）、gofmt 和 `git diff --check` 通过。
+- 用户已审阅的上一步变更已提交为 `79ee208` 并推送到 `origin/main`。
+  [首次 CI 运行](https://github.com/chenhaitao888/agent-platform/actions/runs/37206467792) 的三个 job
+  都未开始执行，GitHub check annotations 明确报告账户因账单问题被锁定。因此远端 CI 尚未完成
+  代码验证，需要解除账户限制后重跑；本地绿色不能替代该结果。
+- 本步测试和手册变更保留为未提交改动，供用户继续审阅。
+
+下一小步可继续审查 Workspace Prepare 的并发请求与失败重试边界，一次选一条公共 HTTP 行为。
+当前回归只覆盖单进程内存实现，不证明跨进程幂等、数据库 CAS 或事务 Outbox 的正确性。
 
 ## 7. 常用验证命令
 
@@ -1245,7 +1293,8 @@ node --run build
 
 ## 8. 当前限制
 
-- CI 配置已恢复，ESLint/Go lint 已本地验证；本次未推送，GitHub 托管 runner 结果仍待确认。
+- CI 配置已推送，ESLint/Go lint 已本地验证；首次远端运行因 GitHub 账户账单锁定未启动任何 job，
+  解除限制后仍需重跑以验证托管 runner。
 - Task ID 是单进程递增值，不适合多实例部署。
 - Task 数据重启即丢失。
 - 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
