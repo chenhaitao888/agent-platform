@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrGitDiffOperation = errors.New("Git diff operation failed")
+	ErrGitDiffOperation = errors.New("git diff operation failed")
 )
 
 const maxDiffBytes = 1 << 20

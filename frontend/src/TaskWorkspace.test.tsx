@@ -281,7 +281,7 @@ describe('TaskWorkspace', () => {
     })
     let patchCalls = 0
     const fetchMock = vi.fn(
-      (input: RequestInfo | URL, init?: RequestInit) => {
+      (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'PATCH') {
           patchCalls++
           if (patchCalls === 1) {

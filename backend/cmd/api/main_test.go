@@ -25,7 +25,8 @@ func TestServeUntilShutdownWaitsForActiveRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen locally: %v", err)
 	}
-	defer listener.Close()
+	// Shutdown 也会关闭 listener；这里仅兜底清理，允许重复关闭。
+	defer func() { _ = listener.Close() }()
 	requestStarted := make(chan struct{})
 	releaseRequest := make(chan struct{})
 	defer func() {
@@ -52,7 +53,7 @@ func TestServeUntilShutdownWaitsForActiveRequest(t *testing.T) {
 			clientDone <- err
 			return
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		if response.StatusCode != http.StatusNoContent {
 			clientDone <- fmt.Errorf("expected 204, got %d", response.StatusCode)
 			return

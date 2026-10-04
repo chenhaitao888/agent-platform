@@ -28,7 +28,7 @@ func NewWorkspacePreparer(verifier *Verifier, git gitPreparer) (*WorkspacePrepar
 		return nil, errors.New("GitLab verifier is required")
 	}
 	if git == nil {
-		return nil, errors.New("Git preparer is required")
+		return nil, errors.New("git preparer is required")
 	}
 	return &WorkspacePreparer{verifier: verifier, git: git}, nil
 }
@@ -58,7 +58,8 @@ func (p *WorkspacePreparer) cloneURL(ctx context.Context, repositoryID string) (
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	// 关闭只读 API 响应只负责清理，不覆盖 clone URL 的解析结果。
+	defer func() { _ = response.Body.Close() }()
 
 	var project struct {
 		HTTPURLToRepo string `json:"http_url_to_repo"`

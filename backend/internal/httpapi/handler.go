@@ -709,7 +709,8 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, destination any) bool
 	// MaxBytesReader 限制实际读取量，不依赖客户端可能伪造或省略的 Content-Length。
 	// 所有写接口共用此入口，避免某条路由漏掉限制。
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	defer r.Body.Close()
+	// 请求体已经只读解码；关闭错误不替代解码结果或已写出的 HTTP 响应。
+	defer func() { _ = r.Body.Close() }()
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(destination); err != nil {
 		writeDecodeError(w, err)

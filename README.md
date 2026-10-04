@@ -433,7 +433,7 @@ go test ./...
 
 ```bash
 cd frontend
-npm install
+npm ci
 node --run dev
 ```
 
@@ -442,7 +442,7 @@ node --run dev
 业务接口，所以需要同时启动 Go 后端。
 
 页面会先调用 `GET /api/v1/tasks?tenantId=tenant-local` 加载最近 Task。“创建 Task”表单调用
-`POST /api/v1/tasks`；表单同时采集仓库 ID 与不可变 base/head SHA，提交成功后会显示后端生成的
+`POST /api/v1/tasks`；表单采集仓库 ID 与不可变 head SHA，平台计算并固定 master 快照与 Review Base，提交成功后会显示后端生成的
 Task ID、状态、仓库和目标，并立即更新最近列表。前端在 Phase 0 固定使用 `tenant-local` 与
 GitLab provider。每次提交都有新的 request ID；同一份未修改的 Task 表单在当前页面内重试会沿用
 原幂等键，修改表单或成功后再次提交才生成新键。准入、Workspace 登记和准备则由 Task ID、Workspace
@@ -455,17 +455,39 @@ GitLab provider。每次提交都有新的 request ID；同一份未修改的 Ta
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
 base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和内容读取链接。
 
-运行前端测试与构建：
+运行前端静态检查、测试与构建：
 
 ```bash
 cd frontend
+node --run lint
+node --run typecheck
 node --run test
 node --run build
 ```
 
-`node --run` 是 Node.js 22 自带的 package script 运行方式。在当前这台使用
-universal Node 的 macOS 上，它能稳定保持 arm64 架构；脚本内容与常见的
-`npm run dev/test/build` 完全相同。
+`node --run` 是 Node.js 22 支持的 package script 运行方式；也可使用对应的 `npm run` 命令。
+前端使用固定版本 ESLint 10.12.0，检查 JS/TS 推荐规则、核心 React Hooks 规则和 Vite Fast Refresh
+导出规则；`--max-warnings 0` 让告警也阻断检查。类型检查仍由 TypeScript 负责。
+
+## 持续集成
+
+[CI 工作流](.github/workflows/ci.yml) 在 `main` 推送和 Pull Request 时运行三个独立 job：
+
+- 后端：从 `backend/go.mod` 读取 Go 版本，运行 `go vet` 和 race 测试。
+- Go lint：固定 golangci-lint v2.13.2，使用 `backend/.golangci.yml` 的 `standard` 规则并校验配置。
+- 前端：使用 Node 22 和 `npm ci`，运行 lint、类型检查、31 条现有行为测试及生产构建。
+
+本地 Go lint 使用同一版本，安装方式见 [golangci-lint 官方说明](https://golangci-lint.run/docs/welcome/install/local/)。
+安装 v2.13.2 后运行：
+
+```bash
+cd backend
+golangci-lint config verify
+golangci-lint run ./...
+```
+
+这些检查不需要真实 GitLab token。GitHub 托管 runner 的结果需要代码推送后确认；本地通过不等于
+远端工作流已运行。迁移恢复和 ESLint 规则取舍见开发手册 M13.1 第 11–13 步。
 
 ## Java 开发者速记
 

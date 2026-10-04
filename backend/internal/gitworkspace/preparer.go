@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var ErrGitOperation = errors.New("Git workspace operation failed")
+var ErrGitOperation = errors.New("git workspace operation failed")
 
 type Credentials struct {
 	Username string

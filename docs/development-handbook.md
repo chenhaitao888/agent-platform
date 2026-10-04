@@ -27,6 +27,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 | 前端 | React 19、TypeScript、Vite | 浏览器侧表示层；React 组件近似“根据状态生成视图”的函数 |
 | 后端测试 | Go `testing`、`httptest` | JUnit + MockMvc 的轻量组合 |
 | 前端测试 | Vitest、Testing Library、jsdom | JUnit + 面向用户行为的 UI 测试 |
+| 静态检查 | golangci-lint v2.13.2、ESLint 10.12.0、TypeScript | Checkstyle/PMD + 编译期检查 |
 | 持久化 | 进程内存 | 临时的 InMemoryRepository，重启即丢失 |
 
 当前代码只覆盖健康检查、持有不可变仓库引用的 Task 幂等创建、查询、第一条状态迁移、Task
@@ -1144,6 +1145,85 @@ Outbox 记录同事务提交，再异步发布到 Event Bus，才能成为可靠
   参数缺失而失败，改为显式注入后确认响应和日志都没有真实 token。
 - `go test ./... -count=1`、`go test -race ./... -count=1`、`go vet ./...`、前端 31 个测试和构建通过。
 
+### M13.1（第 11–12 步）：新机恢复 CI 与 Go lint
+
+- 状态：按交接说明恢复并验证（2026-10-04）；M14 继续暂停。
+- 迁移核对：交接称原机已有 `88bbaa8`（CI）与 `bfc41b5`（Go lint），但本机 HEAD 和实时查询的
+  远端 `main` 都是 `607dbd5`，本地也没有这两个提交对象。用户确认暂时无法从原机推送，授权按
+  交接恢复配置。因此此处记录本次恢复结果，不冒充原提交或原机开发记录。
+- 先使用 Go 1.27.1、Node 22.23.3 复跑基线：Go 普通/race 测试、vet、前端 31 条测试和构建通过。
+- 恢复 `.github/workflows/ci.yml`，在 main push 与 PR 分别执行后端测试/vet、Go lint 和前端检查。
+  Go 版本取自 go.mod；当前无第三方 Go 模块和 go.sum，setup-go 暂不开模块缓存。
+- 恢复 `backend/.golangci.yml`，固定配置版本 2、`standard` 规则和 5 分钟时限，CI 使用 v2.13.2。
+
+#### Go lint 的 RED → GREEN
+
+首次检查显示 9 处告警；处理后又显示 2 处同文本的 Close 告警，总计处理 11 处。最后用
+`--max-same-issues=0 --max-issues-per-linter=0` 核对完整结果为 `0 issues`，避免默认输出限额隐藏问题。
+
+1. `errcheck` 要求调用方明确对待返回的 error。7 处只读请求/响应关闭或测试 listener 清理，改为
+   `defer func() { _ = ...Close() }()`，表明有意忽略清理错误，并继续执行关闭。这里没有文件写入
+   或 flush，关闭错误不替代读取/解析结果；listener 已由 Shutdown 关闭时允许兜底重复关闭。
+   Java 可类比 finally 中清理资源，同时保留主要操作的结果；不能把此约定推广到文件写入。
+2. `staticcheck` 的 3 处错误文案改为小写开头；公开 HTTP 错误码仍由 Handler 映射。
+3. SHA 字符校验拆为 `isDigit/isLowerHex/isUpperHex`，然后检查三者都为 false；与原判断等价，
+   类似 Java 中给复杂布尔表达式起局部变量名，让读者直接看懂条件。
+
+### M13.1（第 13 步）：前端 ESLint 与 CI 门禁
+
+- 状态：完成（2026-10-04）；接续交接中的 ESLint 小切片，M14 仍暂停。
+- 新增 `frontend/eslint.config.js`、`lint` 和独立 `typecheck` 脚本；CI 前端 job 依次运行
+  `npm ci`、lint、typecheck、行为测试和构建。
+- 新依赖均固定精确版本并写入 lockfile：ESLint 10.12.0、@eslint/js 10.0.1、typescript-eslint
+  8.71.0、react-hooks 7.1.1、react-refresh 0.5.7、globals 17.13.0。现有依赖版本未改变。
+- 选型依据：[ESLint 的 Node 要求](https://eslint.org/docs/latest/use/getting-started)、
+  [typescript-eslint 兼容范围](https://typescript-eslint.io/users/dependency-versions/)、
+  [官方 Hooks 插件](https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks)、
+  [Fast Refresh 的 Vite 配置](https://github.com/ArnaudBarre/eslint-plugin-react-refresh)。
+
+#### 配置拆解与 Java 对照
+
+1. flat config 是按文件匹配叠加的配置数组：所有 JS/TS/TSX 使用 JS 与 TS 推荐规则；src 声明浏览器
+   globals；配置文件声明 Node globals。类似按模块分别配置 Checkstyle，避免混淆执行环境。
+2. 核心 Hooks 规则检查“Hook 只能按固定顺序调用”和“Effect 依赖必须完整”；两者都是 error。
+   本切片没有启用整套 React Compiler 规则。官方插件把核心 Hooks 与 Compiler 规则分组，本项目
+   尚未配置 Compiler，其规则采纳另行评估。本步也没有引入格式化或需要类型信息的 lint 规则。
+3. TSX 使用插件的 `reactRefresh.configs.vite()`，检查组件导出是否符合热更新要求。
+4. 测试 fetch 替身需要保留签名，后续才能对 `mock.calls` 的请求参数做类型检查。仅测试文件允许
+   未使用的形参以 `_` 开头，并设置 `args: 'all'`；未使用局部变量、普通形参和源码里的参数仍报错。
+   Java 可类比测试 callback 必须保留接口签名，即使某次用例只检查第二个参数。
+5. 只忽略 dist、coverage、.vitest 生成物，node_modules 由 ESLint 默认忽略；源码、测试、Vite 配置
+   和 ESLint 配置都参与检查。`--max-warnings 0` 类似构建中的 warnings-as-errors。
+
+#### RED → GREEN 与验证
+
+- 初次 lint 得到 8 条测试替身的未使用形参错误（RED）；限定测试 `_` 参数约定后，另检出一个
+  未标记的 `input`，将其改名为 `_input` 后 lint 转绿。没有发现需要修改产品行为的缺陷，因此
+  本步使用检查器的真实失败输出，复跑已有行为测试，没有新增重复实现的测试。
+- 用 ESLint API 对 10 个临时代码样例验证：条件调用 Hook、Effect 遗漏依赖、显式 any、混合导出、
+  未使用参数和局部变量均触发对应规则；合法浏览器/Node 代码与测试占位参数通过。
+  另外确认四类生成物路径被忽略；这些样例没有写入仓库源码。
+- 从更新后的 lockfile 执行 `npm ci` 后，lint、typecheck、31 条前端测试和生产构建通过。
+- 恢复后的 Go config verify、lint（0 issues）、普通/race 测试、vet、gofmt 和 diff 检查通过。
+- CI 工作流通过本地 actionlint 检查；未提交、未推送，GitHub 托管 runner 尚未验证。
+
+#### 新机工具与下一小步
+
+本机全局环境最初没有 Go，Node 为 23.10.0。迁移恢复时从官方发行包下载并校验 SHA-256，工具先解压在
+`/private/tmp/agent-platform-tools`。随后按用户要求，通过 Homebrew 正式安装 Go 1.27.1（2026-10-04），
+命令位于 `/opt/homebrew/bin/go`；新开的 zsh 终端可直接使用，后端全部测试通过。
+Node 22 和 golangci-lint 仍在临时目录，当前终端可这样继续验证（临时目录清理后需重装这两项）：
+
+```bash
+export PATH="/private/tmp/agent-platform-tools/node-v22.23.3-darwin-arm64/bin:/private/tmp/agent-platform-tools/golangci-lint-2.13.2-darwin-arm64:$PATH"
+export GOCACHE=/private/tmp/agent-platform-go-cache
+export GOPATH=/private/tmp/agent-platform-gopath
+export GOLANGCI_LINT_CACHE=/private/tmp/agent-platform-golangci-cache
+```
+
+下一小步按交接审查清单 #11 检视 `handler_test.go` 的职责划分及边界/并发覆盖，再选一个独立行为
+推进 RED → GREEN。历史审查报告未出现在本机仓库，具体缺口须以当前测试和代码为准；不自动恢复 M14。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -1153,14 +1233,19 @@ cd backend
 go test ./...
 go test -race ./...
 go vet ./...
+golangci-lint config verify
+golangci-lint run ./...
 
 cd ../frontend
+node --run lint
+node --run typecheck
 node --run test
 node --run build
 ```
 
 ## 8. 当前限制
 
+- CI 配置已恢复，ESLint/Go lint 已本地验证；本次未推送，GitHub 托管 runner 结果仍待确认。
 - Task ID 是单进程递增值，不适合多实例部署。
 - Task 数据重启即丢失。
 - 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。

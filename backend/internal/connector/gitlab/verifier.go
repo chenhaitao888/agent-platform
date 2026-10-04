@@ -109,7 +109,8 @@ func (v *Verifier) readCommitID(ctx context.Context, path string, notFoundError 
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	// 只读响应的 Close 用于释放连接，不改变下面的读取/解析结果。
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxGitLabReferenceResponseBytes+1))
 	if err != nil || len(data) > maxGitLabReferenceResponseBytes {
 		return "", fmt.Errorf("%w: read GitLab reference response", repository.ErrVerificationUnavailable)
@@ -138,7 +139,10 @@ func isFullGitObjectID(value string) bool {
 		return false
 	}
 	for _, character := range value {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F') {
+		isDigit := character >= '0' && character <= '9'
+		isLowerHex := character >= 'a' && character <= 'f'
+		isUpperHex := character >= 'A' && character <= 'F'
+		if !isDigit && !isLowerHex && !isUpperHex {
 			return false
 		}
 	}
@@ -150,7 +154,7 @@ func (v *Verifier) verifyGET(ctx context.Context, path string, notFoundError err
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 	return nil
 }
@@ -175,7 +179,7 @@ func (v *Verifier) get(ctx context.Context, path string, notFoundError error) (*
 	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
 		return response, nil
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 	if response.StatusCode == http.StatusNotFound {
 		return nil, notFoundError
