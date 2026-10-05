@@ -1378,8 +1378,67 @@ REGISTERED/v1。与上一步 Prepare 保存成功快照的方式不同，这是�
 - 新增并发回归在 race 下连续 20 次通过。
 - Go 全套普通测试、race、vet、golangci-lint（0 issues）、gofmt 与 `git diff --check` 通过。
 - 本步文件：`workspace_registration_concurrency_test.go`、`test_helpers_test.go` 和本手册。
-- 上一步 `228e49d` 已推送；本步变更保留为未提交改动，供用户审阅。
+- 上一步 `228e49d` 已推送；本步经用户审阅后，已提交为 `65cc552` 并推送到 `origin/main`。
 - 下一小步可继续检查 Artifact 归档的并发幂等行为；当前回归仍只覆盖单进程内存实现。
+
+### M13.1（第 17 步）：补齐 Artifact 并发归档与租户隔离回归
+
+- 状态：完成（2026-10-05）；继续审查清单 #11，M14 继续暂停。
+- 本步补充已有归档契约的公共 HTTP 测试；现有实现直接通过，产品代码无需修改。
+
+#### 两个归档请求重叠时的结果
+
+新增 `artifact_concurrency_test.go`，用一个表驱动测试覆盖五种组合：
+
+| 并发请求组合 | 两份响应 | 可见的 Artifact 与创建事件 |
+| --- | --- | --- |
+| 同一 Workspace、同一 key、相同内容 | 一个 201、一个 200，元数据相同 | 相同 Artifact ID，只追加一次创建事件 |
+| 同一 Workspace、同一 key、不同内容 | 一个 201、一个 409 idempotency_conflict | 保存赢家的内容与 checksum，只追加一次创建事件 |
+| 同一 Workspace、不同 key、相同内容 | 两个 201 | 两个不同 ID、相同 checksum，追加两次创建事件 |
+| 同租户、不同 Task/Workspace、同一 key | 一个 201、一个 409 idempotency_conflict | 只有赢家 Task 追加创建事件 |
+| 不同租户、不同 Task/Workspace、同一 key | 两个 201 | 各自的 Artifact 和创建事件，两个 ID 不同 |
+
+不同 key 是两次独立归档，不按内容自动合并 Artifact。为检验同键内容冲突，测试只在外部
+DiffReader 接缝模拟两个请求返回不同 patch；没有改变真实仓库的 SHA 或上传浏览器内容。
+哪个请求先成功由实际执行顺序决定，测试从 201 响应识别赢家，再用它的 SHA 核对保存的内容。
+
+#### 并发与持久结果如何验证
+
+两个 HTTP 请求都进入外部 diff 读取后，由 channel 统一放行；读取阻塞期间，各 Task 仍只有
+创建、准入、Workspace 登记、准备中和准备完成这五条事件。请求完成后验证：
+
+- 每个响应的 request ID 对应自己的请求；成功响应的 Location、Task/租户/Workspace 归属正确。
+- Artifact GET 返回成功请求的完整元数据；content GET 的内容、字节数、Content-Type、ETag
+  与元数据一致，并包含 nosniff。冲突请求没有覆盖已保存的内容。
+- 用另一租户读取 metadata 或 content 均返回 404，包含两个租户各自已归档的场景。
+- 成功请求在完成后重放仍返回 200 和相同元数据，时间线不追加重放或冲突事件。
+- READY Workspace 的完整公开结果保持不变，包括版本、路径及固定仓库引用。
+- 每个 `artifact.created` 事件都与一个返回 201 的请求对应，causationId、发生时间、归属及
+  checksum 等元数据一致。事件 sequence 在原五条事实后连续追加：一份归档是六条事件，
+  同 Task 的两次独立归档是七条事件；败方 Task 仍是五条。
+
+两个独立归档的事件顺序按实际追加顺序校验，每条事件通过 Artifact ID 找到对应请求，
+没有要求事件顺序与 Artifact ID 的分配顺序相同。
+
+#### 现有实现与 Java 类比
+
+`artifact.Store.Create` 在互斥锁内按 `(tenantId, key)` 查找记录，比较 Task/Workspace 归属、
+类型、media type 和完整内容，再返回原元数据或创建新 Artifact。Java 可类比在
+`synchronized` 中完成请求键索引、归属及 `byte[]` 内容校验，并复制内容后保存。
+`review.Service` 仅在 `Created=true` 时追加创建事件，因此并发重放不会重复记录创建事实。
+
+五个子用例首次运行全部通过，本步如实记录为回归补充，没有人为制造 RED。公共 fixture 通过
+HTTP 把 Workspace 准备到 READY/v3；5 秒 context deadline 和清理时的放行、等待，保证请求
+goroutine 能结束。断言在测试主 goroutine 中执行。
+
+#### 验证与审阅位置
+
+- 新增并发回归在 race 下连续 20 次通过。
+- Go 全套普通测试、race、vet、golangci-lint（0 issues）、gofmt 与 `git diff --check` 通过。
+- 本步文件：`artifact_concurrency_test.go` 和本手册。上一步 `65cc552` 已推送，本步变更保留为
+  未提交改动，供用户审阅。
+- 下一小步可检查归档失败和版本过期时的 HTTP 边界，确认拒绝请求不留下归档事件。
+- 这些断言检查并发请求完成后的结果，仍是单进程内存回归，不证明跨 Store 的原子事务或 Outbox。
 
 ## 7. 常用验证命令
 
