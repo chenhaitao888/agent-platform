@@ -147,7 +147,7 @@ func captureJSONLogs(t *testing.T) *bytes.Buffer {
 	return &output
 }
 
-func registerPreparationWorkspaceForTest(t *testing.T, handler http.Handler, tenantID, key string) workspace.Workspace {
+func createQueuedTaskForTest(t *testing.T, handler http.Handler, tenantID, key string) task.Task {
 	t.Helper()
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(fmt.Sprintf(`{
@@ -168,6 +168,15 @@ func registerPreparationWorkspaceForTest(t *testing.T, handler http.Handler, ten
 	if queued.Code != http.StatusOK {
 		t.Fatalf("queue Task: %d: %s", queued.Code, queued.Body.String())
 	}
+	if err := json.Unmarshal(queued.Body.Bytes(), &currentTask); err != nil {
+		t.Fatalf("decode queued Task: %v", err)
+	}
+	return currentTask
+}
+
+func registerPreparationWorkspaceForTest(t *testing.T, handler http.Handler, tenantID, key string) workspace.Workspace {
+	t.Helper()
+	currentTask := createQueuedTaskForTest(t, handler, tenantID, key)
 	registered := httptest.NewRecorder()
 	handler.ServeHTTP(registered, httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+currentTask.ID+"/workspace", strings.NewReader(fmt.Sprintf(`{
 		"requestId":%q,"idempotencyKey":%q,"tenantId":%q

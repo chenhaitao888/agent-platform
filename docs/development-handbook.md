@@ -19,6 +19,9 @@
 
 README 负责五分钟内跑起来；本手册负责解释开发过程，避免两处重复维护同一份启动说明。
 
+当前协作约定（2026-10-04）：按用户要求，忽略已知的 GitHub CI 账户账单锁定问题，不重复排查或
+提醒，也不把它作为开发和推送的阻塞项。本地测试与静态检查照常执行。
+
 ## 2. 当前技术基线
 
 | 范围 | 当前选择 | Java 类比 |
@@ -1330,7 +1333,53 @@ Java 可类比先在 `synchronized` 临界区里占用请求键并记录输入�
   `workspace_preparation_test.go`、`test_helpers_test.go`、README 和本手册。
 - 上一步 `e06366c` 已推送；[该次 CI](https://github.com/chenhaitao888/agent-platform/actions/runs/37208481658)
   的三个 job 仍未启动，分别报告 GitHub 账户因账单问题被锁定。远端验证需解除该限制后重跑。
-- 本步变更保留为未提交改动，供用户审阅。下一小步可继续检查 Workspace 登记的并发幂等行为。
+- 本步经用户审阅后，已提交为 `228e49d` 并推送到 `origin/main`；继续第 16 步的登记并发回归。
+
+### M13.1（第 16 步）：补齐 Workspace 登记的并发幂等回归
+
+- 状态：完成（2026-10-04）；继续审查清单 #11，M14 继续暂停。
+- 本步只补充已有契约的测试并整理公共 fixture；现有登记实现已满足这些约束，产品代码无需修改。
+
+#### 同时登记时，调用方应观察到什么
+
+新增 `workspace_registration_concurrency_test.go`，通过一个表驱动的 HTTP 测试覆盖四种组合：
+
+| 并发请求组合 | 两份响应 | 最终 Workspace 与事件 |
+| --- | --- | --- |
+| 同一 Task、同一 key | 一个 201、一个 200，相同响应内容 | 一个 REGISTERED/v1，只追加一次登记事件 |
+| 同一 Task、不同 key | 一个 201、一个 409 workspace_already_exists | 一个 REGISTERED/v1，只追加一次登记事件 |
+| 同租户、不同 Task、同一 key | 一个 201、一个 409 idempotency_conflict | 只有赢家 Task 有 Workspace，败方没有登记事件 |
+| 不同租户、不同 Task、同一 key | 两个 201，Workspace ID 不同 | 各自 REGISTERED/v1，各自追加一次登记事件 |
+
+测试通过 channel 等待两个请求都进入外部仓库校验，再统一放行，确定覆盖校验结束后的竞争。
+校验阻塞期间 GET 返回 404，Task 时间线仍只有 created 与 queued；放行后检查响应的 request ID、
+Location、Task/租户归属、状态和版本，并用 GET 确认实际保存的是成功请求的结果。
+
+登记事件的 sequence 必须是 3，causationId 必须属于返回 201 的请求，payload 必须对应该
+Workspace。失败请求和重放不会追加事件；不同 Task 的成功登记不能共用 Workspace ID。
+全部请求结束后，使用成功请求的 key 再重放，必须返回 200，并保持两次初始校验的调用总数，
+确认并发请求没有覆盖赢家的幂等记录。
+
+#### 为什么现有实现能直接通过
+
+`Manager.Register` 在外部校验前检查一次，校验成功后重新取得锁，再检查一次并提交登记。
+Java 可类比先检查请求键，释放 `synchronized` 锁执行只读 I/O，回来后再在锁内确认另一请求
+是否已经写入。第二次检查同时保护 Task 的唯一 Workspace 和租户内的 key 绑定。
+
+登记记录只保存 Task 归属，重放读取它的当前 Workspace；本步未启动准备操作，因此响应保持
+REGISTERED/v1。与上一步 Prepare 保存成功快照的方式不同，这是各自已有的重放契约。
+
+新增四个子用例首次运行就全部通过，因此本步记录为补齐回归，没有人为制造 RED。
+公共 fixture 提取 `createQueuedTaskForTest`，通过创建和准入 HTTP 响应返回 QUEUED Task；已有
+准备测试继续复用它。测试使用 5 秒 context deadline，结束时放行并等待所有请求 goroutine 退出。
+
+#### 验证与审阅位置
+
+- 新增并发回归在 race 下连续 20 次通过。
+- Go 全套普通测试、race、vet、golangci-lint（0 issues）、gofmt 与 `git diff --check` 通过。
+- 本步文件：`workspace_registration_concurrency_test.go`、`test_helpers_test.go` 和本手册。
+- 上一步 `228e49d` 已推送；本步变更保留为未提交改动，供用户审阅。
+- 下一小步可继续检查 Artifact 归档的并发幂等行为；当前回归仍只覆盖单进程内存实现。
 
 ## 7. 常用验证命令
 
@@ -1353,8 +1402,7 @@ node --run build
 
 ## 8. 当前限制
 
-- CI 配置已推送，ESLint/Go lint 已本地验证；首次远端运行因 GitHub 账户账单锁定未启动任何 job，
-  解除限制后仍需重跑以验证托管 runner。
+- CI 配置已推送，ESLint/Go lint 已本地验证；已知的账户账单锁定问题按当前协作约定忽略。
 - Task ID 是单进程递增值，不适合多实例部署。
 - Task 数据重启即丢失。
 - 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
