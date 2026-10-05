@@ -37,7 +37,7 @@ function mergeTasks(currentItems: Task[], serverItems: Task[]) {
 export default function TaskWorkspace() {
   const [listState, setListState] = useState<TaskListState>({ kind: 'loading' })
   const [updatingTaskIDs, setUpdatingTaskIDs] = useState<Set<string>>(() => new Set())
-  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [updateErrors, setUpdateErrors] = useState<Map<string, string>>(() => new Map())
 
   function handleTaskCreated(task: Task) {
     setListState((current) => {
@@ -50,7 +50,11 @@ export default function TaskWorkspace() {
   async function queueTask(task: Task) {
     // 不同 Task 可以分别准入；每个请求只管理自己的按钮状态。
     setUpdatingTaskIDs((current) => new Set(current).add(task.id))
-    setUpdateError(null)
+    setUpdateErrors((current) => {
+      const remaining = new Map(current)
+      remaining.delete(task.id)
+      return remaining
+    })
 
     try {
       const response = await fetch(`/api/v1/tasks/${task.id}`, {
@@ -67,7 +71,9 @@ export default function TaskWorkspace() {
       })
       if (!response.ok) {
         const error = (await response.json()) as ErrorResponse
-        setUpdateError(error.message ?? `HTTP ${response.status}`)
+        setUpdateErrors((current) =>
+          new Map(current).set(task.id, error.message ?? `HTTP ${response.status}`),
+        )
         return
       }
 
@@ -85,7 +91,7 @@ export default function TaskWorkspace() {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error'
-      setUpdateError(message)
+      setUpdateErrors((current) => new Map(current).set(task.id, message))
     } finally {
       setUpdatingTaskIDs((current) => {
         const remaining = new Set(current)
@@ -183,17 +189,16 @@ export default function TaskWorkspace() {
                     </button>
                   )}
                 </div>
+                {updateErrors.has(task.id) && (
+                  <p className="error-message" role="alert">
+                    Task 更新失败：{updateErrors.get(task.id)}
+                  </p>
+                )}
                 {task.status === 'QUEUED' && <WorkspaceDetails task={task} />}
                 <TaskEventTimeline task={task} />
               </li>
             ))}
           </ul>
-        )}
-
-        {updateError && (
-          <p className="error-message" role="alert">
-            Task 更新失败：{updateError}
-          </p>
         )}
       </section>
     </div>
