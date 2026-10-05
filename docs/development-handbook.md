@@ -1498,10 +1498,85 @@ Java 可类比 Application Service 先校验归属、状态和乐观版本，再
 
 - 三个新增测试、九个子用例全部通过；Go 全套普通测试、race、vet、golangci-lint（0 issues）、
   gofmt 与 `git diff --check` 通过。
-- 本步文件：`artifact_boundary_test.go` 和本手册。上一步 `2dcd813` 已推送，本步保留为未提交
-  改动，供用户审阅。
+- 本步文件：`artifact_boundary_test.go` 和本手册。上一步 `2dcd813` 已推送；本步经用户授权，
+  已提交为 `d6c4ec2` 并推送到 `origin/main`。
 - 下一小步可复核审查清单 #11 的剩余覆盖缺口，并整理已验证范围；M14 继续暂停。
 - 当前校验仍基于单进程内存数据和受控外部接缝，不证明多实例幂等或跨 Store 的原子事务。
+
+### M13.1（第 19 步）：复核 HTTP 测试覆盖范围，接续前端审查
+
+- 状态：完成（2026-10-05）。以交接中已知的 #11 要求“拆分超长 handler_test.go 并补边界/并发
+  用例”为范围，第 14～18 步已经完成对应工作，可以转入 #12 的前端细节检查。
+- 历史 `docs/code-review-2026-09-23.md` 在本机仍不存在；这个结论只针对已知交接要求，不表示
+  已逐条核销无法读取的历史报告，也不自动恢复 M14。
+
+#### 公开行为与测试的对应关系
+
+`handler.go` 当前登记 13 个路由。测试目录有 19 个 `*_test.go` 文件，其中一个是公共 helper，
+其余文件共 76 个顶层 `Test...` 函数；表驱动子用例不计入这个数量。原 2,753 行的集中测试文件
+已移除，目前最大文件是 `workspace_registration_test.go`，512 行。
+
+| 公开接口职责 | 已验证的关键行为 | 主要测试文件（backend/internal/httpapi 下） |
+| --- | --- | --- |
+| healthz | 健康结果、非 GET 请求拒绝 | health_test.go |
+| 创建 Task | 幂等、租户键隔离、固定 master/base/head、解析失败、并发只保存一个快照和事件 | task_create_test.go、task_review_base_test.go、task_concurrency_test.go |
+| Task 查询、列表、事件与 PATCH 准入 | 租户过滤、404、排序、版本冲突、状态迁移、并发同键重放与异键竞争、事件只追加一次 | task_read_test.go、task_transition_test.go、task_events_test.go、task_concurrency_test.go |
+| Workspace 登记与查询 | 仓库/commit 验证、QUEUED 前置状态、唯一归属、租户过滤、四种并发登记竞争 | workspace_registration_test.go、workspace_registration_concurrency_test.go |
+| Workspace Prepare | 准备中可见、I/O 前绑定键、同租户冲突与跨租户独立、失败恢复、新版本新键重试、成功重放不重复事件 | workspace_preparation_test.go、workspace_preparation_concurrency_test.go |
+| 固定 diff 读取 | 固定 Workspace 路径和 base/head、READY 前置状态、超限错误、失败日志关联 | review_diff_test.go、handler_logging_test.go |
+| diff 归档、Artifact metadata/content 读取 | 五种并发归档、版本/归属/状态拒绝、部分读取失败不保存、恢复后重试、内容/hash/字节数一致、租户过滤与事件对应 | artifact_http_test.go、artifact_concurrency_test.go、artifact_boundary_test.go、event_lifecycle_test.go |
+| 写请求通用校验与日志 | 64 KiB body（含尾随空白）、字段长度、4 KiB UTF-8 字节边界、稳定错误和内部日志/token 遮盖 | request_validation_test.go、handler_logging_test.go |
+
+#### 证据与范围边界
+
+本次额外运行 HTTP 包的覆盖率测试，全部通过，语句覆盖率为 **89.7%**；报告仅保存在
+`/private/tmp/agent-platform-httpapi-coverage-2026-10-05.out`。这个数值只统计 HTTP 包，
+不表示整个后端的覆盖率，也不能证明并发交错或分布式事务正确。表中的行为依据具体断言复核；
+第 14～18 步记录了各次 race、全套 Go 测试和静态检查结果。
+
+本轮没有穷尽每条路由的所有字段组合。例如 Workspace/Artifact 部分 GET 接口的空 tenant 校验
+仍缺少独立 HTTP 用例；它们不影响本次已验证行为的结论。跨 Store 的原子事务、多实例幂等和
+持久化恢复仍属于既有架构限制。后续出现对应实现或缺陷时，再补能约束行为的测试。
+
+复核 #12 的当前前端时发现一个可复现的准入状态问题：`TaskWorkspace` 用单个 Task ID 表示
+在途请求，同时准入两条 Task 会相互覆盖按钮状态。下一步只处理这个用户可见行为，见第 20 步。
+
+### M13.1（第 20 步）：修复多条 Task 同时准入时的按钮状态
+
+- 状态：完成（2026-10-05）；接续交接中的 #12，一个前端行为修复切片，M14 继续暂停。
+- 场景：Task A 的 PATCH 尚未返回，用户又准入 Task B。原实现把在途 ID 从 A 改为 B，导致
+  A 的按钮提前恢复；任一请求结束后又清空 ID，导致另一条尚未完成的请求也可被重复点击。
+
+#### RED → GREEN
+
+1. 基线：现有 31 条前端测试全部通过。
+2. 新增 [TaskWorkspace.concurrency.test.tsx](../frontend/src/TaskWorkspace.concurrency.test.tsx)，
+   只在浏览器 fetch 接缝控制两条 PATCH 的响应。先点击 A，再点击 B，断言两个按钮均保持禁用。
+   原实现明确失败：A 的按钮已经变成可点击，得到真实 RED。
+3. 将单个在途 ID 改为 `Set<string>`。请求开始时加入自己的 Task ID，结束时仅删除自己的 ID，
+   每次 React 状态更新都复制 Set；按钮按自身 ID 是否在集合内显示“准入中…”及禁用状态。
+   首个失败用例转绿，后端接口和准入幂等键无需改变。
+4. 将同一行为测试扩展为四个场景：A 或 B 先成功、A 或 B 先收到 409。两条请求都在途时不能
+   重复点击；先结束的请求只更新自己，另一条保持 CREATED/v1 且按钮禁用。成功结果为 QUEUED/v2，
+   被拒绝的 Task 保持 CREATED/v1 并恢复可点击；最后一条请求成功后也更新到 QUEUED/v2。
+
+测试检查各自的 PATCH 路径、tenant、expectedVersion 和由 Task/版本派生的幂等键，确认两次
+独立操作没有串用请求内容。通过可见按钮、状态和版本断言，不读取 React 内部集合。
+延迟响应由 Promise 显式放行，没有用 sleep 推测顺序；finally 中完成未结束的响应，避免泄漏。
+
+#### Java 类比与验证
+
+Java 可类比维护一个请求中的 Task ID 集合：开始操作时 add(id)，finally 中 remove(id)。
+某个请求完成只能移除自己的条目。浏览器中这些回调按事件循环执行；React 使用函数式状态更新
+读取最新集合，并复制为新对象供视图渲染，不需要引入线程锁。
+
+- 四个新增场景全部通过；前端共 **35 条测试**通过，ESLint（零 warning）、TypeScript 检查及
+  生产构建通过，`git diff --check` 通过。
+- 本轮没有修改后端代码；第 19 步的 HTTP 覆盖率测试已通过，未重复执行无改动的全套 Go 检查。
+- 本步文件：`frontend/src/TaskWorkspace.tsx`、新增并发测试和本手册。第 18 步已推送；本轮
+  第 19～20 步的改动保留为未提交状态，供用户审阅。
+- 下一小步检查准入错误的归属：当前多个 Task 仍共享一个错误提示，另一条操作可能清除它；
+  先用用户可见行为测试确认，再决定如何按 Task 展示。此次修复只处理在途按钮状态。
 
 ## 7. 常用验证命令
 

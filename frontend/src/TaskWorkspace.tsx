@@ -36,7 +36,7 @@ function mergeTasks(currentItems: Task[], serverItems: Task[]) {
 
 export default function TaskWorkspace() {
   const [listState, setListState] = useState<TaskListState>({ kind: 'loading' })
-  const [updatingTaskID, setUpdatingTaskID] = useState<string | null>(null)
+  const [updatingTaskIDs, setUpdatingTaskIDs] = useState<Set<string>>(() => new Set())
   const [updateError, setUpdateError] = useState<string | null>(null)
 
   function handleTaskCreated(task: Task) {
@@ -48,7 +48,8 @@ export default function TaskWorkspace() {
   }
 
   async function queueTask(task: Task) {
-    setUpdatingTaskID(task.id)
+    // 不同 Task 可以分别准入；每个请求只管理自己的按钮状态。
+    setUpdatingTaskIDs((current) => new Set(current).add(task.id))
     setUpdateError(null)
 
     try {
@@ -86,7 +87,11 @@ export default function TaskWorkspace() {
       const message = error instanceof Error ? error.message : 'unknown error'
       setUpdateError(message)
     } finally {
-      setUpdatingTaskID(null)
+      setUpdatingTaskIDs((current) => {
+        const remaining = new Set(current)
+        remaining.delete(task.id)
+        return remaining
+      })
     }
   }
 
@@ -171,10 +176,10 @@ export default function TaskWorkspace() {
                     <button
                       type="button"
                       aria-label={`将 ${task.id} 加入队列`}
-                      disabled={updatingTaskID === task.id}
+                      disabled={updatingTaskIDs.has(task.id)}
                       onClick={() => void queueTask(task)}
                     >
-                      {updatingTaskID === task.id ? '准入中…' : '加入队列'}
+                      {updatingTaskIDs.has(task.id) ? '准入中…' : '加入队列'}
                     </button>
                   )}
                 </div>
