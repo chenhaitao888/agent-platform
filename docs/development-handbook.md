@@ -1435,10 +1435,73 @@ goroutine 能结束。断言在测试主 goroutine 中执行。
 
 - 新增并发回归在 race 下连续 20 次通过。
 - Go 全套普通测试、race、vet、golangci-lint（0 issues）、gofmt 与 `git diff --check` 通过。
-- 本步文件：`artifact_concurrency_test.go` 和本手册。上一步 `65cc552` 已推送，本步变更保留为
-  未提交改动，供用户审阅。
+- 本步文件：`artifact_concurrency_test.go` 和本手册。上一步 `65cc552` 已推送；本步经用户授权，
+  已提交为 `2dcd813` 并推送到 `origin/main`。
 - 下一小步可检查归档失败和版本过期时的 HTTP 边界，确认拒绝请求不留下归档事件。
 - 这些断言检查并发请求完成后的结果，仍是单进程内存回归，不证明跨 Store 的原子事务或 Outbox。
+
+### M13.1（第 18 步）：补齐 Artifact 归档拒绝、读取失败和重试边界
+
+- 状态：完成（2026-10-05）；继续审查清单 #11，M14 继续暂停。
+- 本步新增三个公共 HTTP 测试、共九个子用例；现有业务实现满足这些约束，产品代码无需修改。
+
+#### 请求应在哪里被拒绝
+
+新增 `artifact_boundary_test.go`，验证以下错误及副作用边界：
+
+| 场景 | HTTP 结果 | diff 读取与业务事实 |
+| --- | --- | --- |
+| expectedWorkspaceVersion 为 0 | 400 validation_error | 不读取 diff、不归档、不追加事件 |
+| READY/v3 请求携带版本 2 或 4 | 409 version_conflict | 不读取 diff、不归档、不追加事件 |
+| Task 尚未登记 Workspace | 404 not_found | 不读取 diff，也不自动登记 Workspace |
+| Workspace 仍为 REGISTERED/v1 | 409 workspace_not_ready | 不读取 diff，保持原状态和时间线 |
+| 请求中的 tenant 不属于该 Workspace | 404 not_found | 不读取 diff，保持所有者的状态和时间线 |
+| 读取器返回包装后的 ErrDiffTooLarge | 413 diff_too_large | 不保存读取器交付的部分内容 |
+| 读取器返回包装后的 ErrDiffUnavailable | 503 diff_unavailable | 不保存部分内容，不追加创建事件 |
+| 读取器返回其他错误 | 500 internal_error | 返回稳定文案，不暴露内部原因或部分内容 |
+
+版本、状态和租户用例在外部 DiffReader 接缝记录调用数，确认拒绝发生在 I/O 之前。读取失败用例
+故意让接缝同时返回部分字节和错误，确认服务遵守错误结果，业务写入尚未开始。
+所有错误响应都校验错误码与稳定文案，且没有成功结果的 Location。
+
+#### 拒绝后如何验证没有残留，以及可以重试
+
+每个用例通过 GET 确认首次预期 Artifact ID `artifact-1` 的 metadata 和 content 均返回 404，
+并比较失败前后的完整 Workspace 结果与 Task 事件数组。缺少 Workspace 的用例确认它仍不存在；
+其他用例确认原对象没有被改写。检查只使用公开 HTTP 接口。
+
+随后纠正前置条件或让外部读取器恢复，再使用同一租户、同一 key 和新的 requestId 发起请求：
+
+- 版本错误改用当前 v3；缺少 Workspace 时先登记并准备，REGISTERED 时先完成准备。
+- 另一租户改用自己的 READY Workspace；该租户成功归档后，原所有者的 Task 与 Workspace
+  仍保持不变。
+- 读取恢复后保存完整 patch，首次返回 201/artifact-1，checksum 和字节数与完整内容一致，
+  content GET 返回完整内容及相同 ETag。
+- 成功请求重放返回 200 和相同元数据；最终只新增一条创建事件，之前的事件保持原样，
+  causationId 属于纠正后的成功请求，payload 对应此次 Artifact。
+
+这验证失败请求没有提前占用归档键或分配 Artifact。测试通过明确的第二次 HTTP 请求检查重试，
+没有增加服务端自动重试策略。
+
+#### 测试记录与 Java 类比
+
+首次运行八个子用例通过；零版本的用例因测试额外要求 400 字段校验响应回显 requestId 而失败。
+现有接口在字段校验通过后才采用该标识，因此移除了零版本用例的额外请求头约束；该用例仍检查
+稳定错误、I/O 调用数、状态、时间线和重试。调整测试预期后九个子用例全部通过。
+这次校准没有修改产品代码，也不记作功能缺陷的 RED → GREEN。
+
+Java 可类比 Application Service 先校验归属、状态和乐观版本，再调用基础设施；读取抛出异常时
+直接返回，后续 Repository 写入和业务事件尚未执行。Go 的 `errors.Is` 沿包装链识别领域错误，
+使适配器的错误即使被 Service 包装，HTTP 层仍能区分 413、503 与其他 500。
+
+#### 验证与审阅位置
+
+- 三个新增测试、九个子用例全部通过；Go 全套普通测试、race、vet、golangci-lint（0 issues）、
+  gofmt 与 `git diff --check` 通过。
+- 本步文件：`artifact_boundary_test.go` 和本手册。上一步 `2dcd813` 已推送，本步保留为未提交
+  改动，供用户审阅。
+- 下一小步可复核审查清单 #11 的剩余覆盖缺口，并整理已验证范围；M14 继续暂停。
+- 当前校验仍基于单进程内存数据和受控外部接缝，不证明多实例幂等或跨 Store 的原子事务。
 
 ## 7. 常用验证命令
 
