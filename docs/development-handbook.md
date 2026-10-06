@@ -35,8 +35,17 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 
 当前代码只覆盖健康检查、持有不可变仓库引用的 Task 幂等创建、查询、第一条状态迁移、Task
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
-真实 path 与对应前端闭环。数据库、工作流执行、Codex app-server、Credential Broker、鉴权与其他
-企业 Connector 仍未接入。
+真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
+并具备对应前端闭环。数据库、工作流执行、Codex app-server、Credential Broker、鉴权与其他企业
+Connector 仍未接入。
+
+当前阶段（2026-10-06）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
+第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
+第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
+具备开始 M14 第一个开发切片的条件，具体入口与验收见第 28 步，版本策略与 Harness 分工见第 29 步，
+当前预检边界见第 30 步。用户已审阅第 22～30 步，授权提交、推送并开始 M14 第一个实现切片。
+实际模型调用和 M14 执行接口尚未接入。
 
 ## 3. 当前目录与职责
 
@@ -44,14 +53,19 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java main 启动类
+│   ├── cmd/runtimecheck/        # 不调用模型的 Codex 版本与选项预检
 │   └── internal/
+│       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
+│       ├── codex/               # CLI 版本/摘要记录与能力预检
 │       ├── connector/gitlab/    # GitLab 验证与可信 clone URL adapter
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
 │       ├── repository/          # 验证接口与 provider 无关的错误分类
+│       ├── review/              # 固定 diff 读取/归档与 Findings 输出契约
 │       ├── task/                # Task 模型与内存 Store
 │       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
+├── scripts/                     # 不调用模型的容器隔离预检
 ├── CONTEXT.md                   # 领域统一语言
 ├── docs/development-handbook.md # 本手册
 └── README.md                    # 快速启动与使用方式
@@ -1616,10 +1630,439 @@ Java 可类比从一个全局 `String error` 改为 `Map<TaskId, String>`：发�
   生产构建和 `git diff --check` 通过。
 - 没有修改后端接口、Task 版本规则或准入幂等键；本轮没有后端改动，未重复 Go 检查。
 - 本步文件：`frontend/src/TaskWorkspace.tsx`、新增错误回归和本手册。上一提交 `e539ef9`
-  已推送；本步保留为未提交改动，供用户审阅。
+  已推送；本步经用户授权，已提交为 `cd05bda` 并推送到 `origin/main`。
 - 下一小步检查页面健康请求的取消边界：当前 App 只识别 AbortError，没有在结果写入前确认
   signal 是否已经取消。先以入口已启用的 StrictMode 和延迟结果验证旧请求会不会影响新一轮状态，
   再决定是否修复；本步没有扩大到页面初始化或其他组件。
+
+### M13.1（第 22 步）：阻止已取消的健康请求改写页面状态
+
+- 状态：完成（2026-10-05）；继续交接中的 #12，M14 继续暂停。
+- 场景：一轮健康请求因 Effect 清理被取消，下一轮请求已经更新页面，旧请求却仍交付成功或失败
+  结果。原 App 只忽略 AbortError，其他晚到结果仍会调用 setPageState，覆盖当前状态。
+- 结果：App 在 fetch 完成、JSON 读取完成和错误处理时检查本轮 signal 是否取消。已经取消的
+  请求不再更新页面；仍有效的请求正常展示健康结果或失败原因。
+
+#### RED → GREEN
+
+1. 基线：现有 38 条前端测试通过，第 21 步已按用户要求推送。
+2. 新增 [App.cancellation.test.tsx](../frontend/src/App.cancellation.test.tsx)，将 App 放在与
+   页面入口一致的 StrictMode 中。通过浏览器 fetch 接缝确认发起两轮健康请求，第一轮的 signal
+   已取消，第二轮仍有效；先让第二轮展示当前服务名，再放行旧请求交付不同的服务名。
+   原实现明确失败：页面从当前服务名变为旧服务名，得到真实 RED。
+3. 在每次异步读取之后检查 `controller.signal.aborted`，取消后直接结束此轮处理。
+   catch 同样先识别已取消作用域，并保留原来的 AbortError 处理；首个失败用例转绿。
+4. 将测试扩展为五个回归场景，补充用例首次即绿：
+
+| 当前请求结果 | 已取消请求的晚到结果 | 最终页面 |
+| --- | --- | --- |
+| 成功 | 成功，包含旧服务名 | 保留当前服务名和“运行正常” |
+| 成功 | HTTP 503 | 保留健康结果，不显示旧失败 |
+| 成功 | 普通网络异常 | 保留健康结果，不显示旧异常 |
+| 成功 | AbortError | 保留健康结果 |
+| HTTP 503 | 成功 | 保留“暂时不可用”和当前 HTTP 503 原因 |
+
+测试故意让 fetch 替身在收到取消信号后仍可交付旧结果，用于验证回调的有效性边界；它不表示
+浏览器取消请求后一定会继续返回响应。断言检查可见状态、服务名和错误文案，不读取 React 内部
+状态。响应由 Promise 显式放行，finally 结束未完成的请求，没有依靠 sleep 推测顺序。
+
+#### Java 类比、验证与审阅
+
+Java 可类比异步回调持有一个请求作用域的有效标志：作用域关闭后，回调在读取结果及更新视图前
+先确认标志仍有效。这里的 AbortSignal 属于单次 Effect；即使后续异步结果继续到达，也不能写入
+新一轮页面状态。JSON 读取后的检查与现有 Workspace/事件组件的处理方式保持一致。
+
+- 五个新增场景通过，前端共 **43 条测试**通过；ESLint（零 warning）、TypeScript 检查、
+  生产构建和 `git diff --check` 通过。
+- 本步只修改 `frontend/src/App.tsx`、新增取消回归和本手册；没有后端改动，未重复 Go 检查。
+- 上一提交 `cd05bda` 已推送；本步保留为未提交改动，供用户审阅。
+- 下一小步检查 Task 列表首次加载的取消边界：当前 TaskWorkspace 同样只识别 AbortError。
+  先验证已取消请求是否会影响新一轮列表状态，再决定是否修复；本步没有改变 Task 列表行为。
+
+### M13.1（第 23 步）：阻止已取消的 Task 列表请求影响当前加载
+
+- 状态：完成（2026-10-05）；继续交接中的 #12，M14 继续暂停。
+- 本步按用户要求继续开发，没有提交或推送。第 22 步的 App 健康取消修复仍保留在工作区，
+  与本步一起供用户审阅；远端最新提交仍为 `cd05bda`。
+- 场景：Task 列表会合并服务器响应与本地数据。旧请求取消后返回的数据仍会进入合并，可能把
+  已取消响应里的 Task 加回当前空列表，或覆盖当前加载失败状态。旧请求的普通网络异常还会在
+  新请求尚未完成时把“正在加载”改为失败。
+- 结果：TaskWorkspace 在 fetch 完成、JSON 读取完成和错误处理时检查本轮 signal 是否取消；
+  已取消作用域的成功和失败结果都停止处理。仍有效的列表请求继续使用原版本合并规则。
+
+#### 两次 RED → GREEN
+
+1. 基线：包含第 22 步未提交修复的 43 条前端测试通过。
+2. 新增 [TaskWorkspace.cancellation.test.tsx](../frontend/src/TaskWorkspace.cancellation.test.tsx)，
+   通过 StrictMode 发起两轮列表加载，确认第一轮的 signal 已取消、第二轮仍有效。
+   先让第二轮返回空列表，再放行旧请求返回一条 Task。原实现明确失败：页面出现了已取消请求的
+   Task，得到第一次 RED。补充异步读取后的取消检查，此用例转绿。
+3. 再新增一个独立用例：第二轮仍在等待时，让已取消请求返回普通网络异常，要求页面继续加载且
+   不显示错误。读取后的检查无法处理 Promise rejection，原 catch 仍显示旧网络异常，得到
+   第二次 RED。catch 增加取消状态判断，保留原 AbortError 处理，两个用例均转绿。
+4. 将成功结果和错误结果的回归各扩展到三个场景，共六个；补充用例首次即绿：
+
+| 当前请求状态 | 已取消请求的结果 | 用户可见结果 |
+| --- | --- | --- |
+| 已返回空列表 | 成功，包含旧 Task | 保留“暂无 Task”，不显示旧 Task |
+| 已返回有数据列表 | 成功，包含旧 Task | 保留当前唯一 Task、版本和列表，不合并旧 Task |
+| 已返回 HTTP 503 | 成功，包含旧 Task | 保留当前错误，不改为成功列表 |
+| 仍在等待 | HTTP 503 | 继续加载，不显示旧错误；当前响应随后正常展示 |
+| 仍在等待 | 普通网络异常 | 继续加载，不显示旧异常；当前响应随后正常展示 |
+| 仍在等待 | AbortError | 继续加载；当前响应随后正常展示 |
+
+测试只模拟浏览器 fetch，使用可见 Task、列表、版本、加载文案和 alert 断言，不读取 React 内部
+状态。Promise 显式控制响应顺序，finally 放行未完成请求。替身故意在收到取消信号后仍交付结果，
+用于检验旧回调失效，不代表浏览器一定继续返回已取消的响应。
+
+#### Java 类比、验证与审阅
+
+Java 可类比异步回调在写入 ViewModel 前检查请求作用域是否仍有效。每一轮 Effect 都持有自己的
+AbortSignal；作用域关闭后，成功回调与异常回调都应结束。有效请求的版本合并仍负责处理列表读取
+与本地 Task 创建、准入操作之间的交错，这部分业务规则没有改动。
+
+- 六个新增场景通过，前端共 **49 条测试**通过；ESLint（零 warning）、TypeScript 检查、
+  生产构建和 `git diff --check` 通过。既有的迟到列表保留新建 Task、保留较新 QUEUED 版本，
+  以及多条 Task 准入的按钮和错误归属回归均继续通过。
+- 本步只修改 `frontend/src/TaskWorkspace.tsx`、新增列表取消回归和本手册；没有后端改动，
+  未重复 Go 检查。
+- 第 22～23 步全部保留为未提交改动，供用户审阅。
+- 下一小步核对页面连接说明：当前简介固定写“Portal 已连接 Go API”，在检查中或失败状态下
+  也显示成功连接。需要让文案与健康状态一致；本步没有修改页面文案或 Task 操作入口。
+
+### M13.1（第 24 步）：让页面连接说明与健康状态一致
+
+- 状态：完成（2026-10-05）；继续交接中的 #12，M14 继续暂停。
+- 场景：App 的简介固定声称“Portal 已连接 Go API”，健康检查尚未完成或已经失败时也显示，
+  与下方的“检查中”或“暂时不可用”状态相互矛盾。
+- 结果：简介直接使用现有 `pageState.kind` 选择说明，与 API 状态共用同一份状态来源：
+
+| 健康状态 | 页面说明 |
+| --- | --- |
+| loading | 正在检查 API 连接… |
+| healthy | API 连接正常，可以在下方创建 Task 并查看最近记录。 |
+| unavailable | API 健康检查未通过，请查看下方错误信息。 |
+
+Java 可类比视图层根据已有的状态 enum 选择说明文字。此次调整沿用现有的加载、健康和失败状态，
+Task 表单与列表仍按自己的请求结果工作，健康检查失败不会禁用 Task 操作入口。
+
+- 沿用已有健康状态及取消回归验证，本步属于既有状态下的文案纠正，测试数量保持 **49 条**，
+  不记作新的功能 RED → GREEN。
+- 前端 49 条测试、ESLint（零 warning）、TypeScript 检查、生产构建和 `git diff --check`
+  全部通过；没有后端改动，未重复 Go 检查。
+- 本步修改 `frontend/src/App.tsx` 的简介及本手册。按用户“继续”的要求，第 22～24 步
+  全部保留为未提交改动，供用户一起审阅；最近已推送提交为 `cd05bda`。
+- 下一小步复核本轮前端审查的已修复行为、对应回归和剩余限制，整理 M13.1 的阶段交接。
+  历史审查报告仍未出现在本机，复核以已知交接要求和当前代码为范围；M14 不自动恢复。
+
+### M13.1（第 25 步）：复核前端行为并整理阶段交接
+
+- 状态：完成（2026-10-05）；本步复核现有代码与测试，只更新本手册。
+- 交接中的 #10 已补齐 ESLint 与 CI 配置；#11 的 HTTP 测试拆分、边界与并发回归已在第 19 步
+  复核；#12 的本轮前端检查在第 20～24 步修复了下表五类用户可见问题。
+- 历史 `docs/code-review-2026-09-23.md` 仍未出现在本机。此次交接确认已知要求和已发现问题的
+  处理结果，不将其记为对历史报告所有条目的逐项验收；M14 继续暂停。
+
+#### 本轮前端修复与证据
+
+| 行为 | 修复后的结果 | 证据与提交状态 |
+| --- | --- | --- |
+| 两条 Task 同时准入 | 每条按钮仅随自己的请求禁用、恢复 | 第 20 步四个到达顺序回归；已随 `e539ef9` 推送 |
+| 不同 Task 准入失败、重试 | 各卡片保留自己的错误，重试只清除本条提示 | 第 21 步三个错误归属回归；已随 `cd05bda` 推送 |
+| 已取消健康请求晚到 | 旧成功与失败结果均不能改写当前页面 | 第 22 步五个取消回归；未提交 |
+| 已取消列表请求晚到 | 旧数据不进入合并，旧异常不结束当前加载 | 第 23 步六个取消回归；未提交 |
+| 页面连接说明 | 检查中、健康、失败各自使用现有状态对应的说明 | 第 24 步沿用状态回归；未提交 |
+
+第 20～23 步均先观察到真实失败，再补最小修复；后续扩展场景首次通过的部分按回归记录。
+第 24 步只是已有状态下的文案纠正，没有新增测试或宣称新的 RED → GREEN。
+
+#### 当前前端行为测试清单
+
+本次核对了全部九个测试文件。下表按实际运行时展开的参数化用例计数，共 **49 条**；相对
+第 19 步的 31 条基线新增 18 条，分别为按钮并发 4 条、错误归属 3 条、健康取消 5 条、列表取消
+6 条。文件均位于 `frontend/src/`。
+
+| 测试文件 | 用例数 | 已验证的主要行为 |
+| --- | --- | --- |
+| App.test.tsx | 2 | 健康检查成功显示服务名，网络失败显示不可用 |
+| App.cancellation.test.tsx | 5 | StrictMode 清理后旧响应或异常不覆盖当前健康结果 |
+| TaskCreator.test.tsx | 8 | 创建结果、提交禁用、错误恢复、同内容重试复用键、改内容或成功后使用新键 |
+| TaskWorkspace.test.tsx | 9 | 列表、创建后展示、迟到列表保留本地新 Task 与较新版本、准入幂等重试与版本冲突 |
+| TaskWorkspace.concurrency.test.tsx | 4 | 两条准入请求以不同顺序完成，各自控制按钮与状态 |
+| TaskWorkspace.errors.test.tsx | 3 | 独立错误、分别重试、不同失败顺序不相互清除提示 |
+| TaskWorkspace.cancellation.test.tsx | 6 | 取消后的旧列表与错误不影响当前列表或加载状态 |
+| WorkspaceDetails.test.tsx | 9 | 查看与登记、准备重试键、失败后新版本新键、固定 diff、有限预览、归档重放、旧 Task diff 隔离 |
+| TaskEventTimeline.test.tsx | 3 | Task/Workspace/Artifact 事件展示、加载失败恢复按钮、旧 Task 事件隔离 |
+
+最近一次完整前端验证在第 24 步：49 条测试、ESLint（零 warning）、TypeScript 检查和生产
+构建全部通过。本步没有修改源码或测试，未重复运行这些检查；文档修改另用 `git diff --check`
+验证。后端最近验证与 HTTP 覆盖率证据沿用第 18～19 步，不把前端结果当作后端验证。
+
+#### 验证范围与后续边界
+
+- 组件测试通过 jsdom 和浏览器 fetch 接缝控制响应顺序，验证可见状态、按钮、错误与请求契约。
+  取消回归的替身故意仍交付已取消结果，用于验证回调失效；它们不是浏览器端到端测试，也不是
+  真实企业 GitLab 凭据联调。
+- 已有回归覆盖指定的请求交错，不表示每个操作、每个 JSON 读取阶段或租户切换组合都已穷尽。
+  Workspace 的跨 Task 延迟测试直接验证 diff；归档测试验证成功后的同键重放，不宣称已验证
+  归档网络失败后重试。事件错误测试验证按钮恢复，不宣称已经跑通第二次成功加载。
+- 准入版本冲突仍保留错误与本地版本，没有自动读取服务器新版本。Workspace 和事件仍由用户
+  主动查看；后台轮询、跨标签页同步与冲突自动恢复尚未引入。
+- 单进程内存、鉴权、持久化和工作流执行等架构限制继续见第 8 节。本次审查不改变这些能力边界。
+
+#### 待审阅文件与接续约定
+
+| 工作区文件 | 待审阅内容 |
+| --- | --- |
+| frontend/src/App.tsx | 健康请求取消检查与三种连接说明 |
+| frontend/src/TaskWorkspace.tsx | 首次列表请求取消检查 |
+| frontend/src/App.cancellation.test.tsx | 新增 5 个健康请求取消回归；文件尚未加入 Git 索引 |
+| frontend/src/TaskWorkspace.cancellation.test.tsx | 新增 6 个列表请求取消回归；文件尚未加入 Git 索引 |
+| docs/development-handbook.md | 第 22～25 步记录、当前能力与目录职责更新 |
+
+以上五个文件保留为未提交改动，最近已推送提交仍为 `cd05bda`。后续用户明确要求 push 时，
+一并提交已审阅的代码、新增测试与文档；仅要求“继续”时不自动提交或推送。
+已知交接范围的阶段复核到此完成；后续收到历史审查报告或具体问题时，按对应行为继续小切片。
+当时 M14 按用户约定暂停；用户后来明确允许持续准备只读 Codex exec 与 Findings，见第 26～28 步。
+
+### M14 准备（第 26 步）：贯通真实 Git、HTTP 与 Artifact 输入
+
+- 状态：完成（2026-10-05）。用户要求持续推进到具备执行 M14 的条件，并确认 M14 准备范围为
+  架构 17.0 的只读 Codex exec 与结构化 Findings。
+- 起点：前端现有 49 条测试、后端现有测试通过。已知 M13.1 交接要求沿用第 25 步结论；
+  缺失的历史报告不阻塞当前代码的输入与执行准备。
+- 新增 [review_input_integration_test.go](../backend/internal/httpapi/review_input_integration_test.go)，
+  使用真实 Git Preparer、DiffReader、HTTP server/client 和内存 Store；只在 GitLab 接缝用本机仓库
+  替代远端项目和服务凭据。测试首次通过，属于贯穿回归，没有宣称发现新的产品 RED。
+
+测试创建共同祖先、master 独有提交与 feature 独有提交，经过公开接口创建 Task 并固定引用。
+随后推进 master，再重放创建、准入、登记、准备 Workspace、读取 diff、归档并读取 Artifact：
+
+1. 创建重放仍返回原 Task；master 移动不改变 target/base/head。
+2. Workspace 为 READY/v3，真实 worktree HEAD 等于固定 head；master 独有文件不进入 worktree。
+3. diff 只包含 feature 的改动，保留 Task/Workspace/base/head 归属，完整内容与 SHA-256、字节数一致。
+4. Artifact 正文、ETag 与 Content-Length 对应同一份 diff；其他 tenant 读取返回 404。
+5. 归档重放返回同一 Artifact；时间线只有创建、准入、登记、准备中、就绪与归档六个有序事件。
+
+Java 可类比把真实 Git 进程、HTTP 客户端与内存 Repository 组合成一个集成测试，只替换外部 GitLab
+边界。这证明现有组件能共同产生 M14 的固定输入，仍不等同于企业 GitLab 凭据联调或 Runtime 执行。
+
+### M14 准备（第 27 步）：定义并校验 Findings 输出契约
+
+- 状态：完成（2026-10-05）。新增 [Findings schema](../backend/internal/review/pr-review-findings-v1.json)、
+  [解析与业务校验](../backend/internal/review/findings.go)、行为测试，以及空结果/单条结果两份
+  [共享 fixture](../backend/internal/review/testdata/findings-valid.json)。
+- 架构 5.3 要求 Agent 输出结构化 Findings，再由平台校验和去重。这里先准备该确定性边界，
+  没有启动模型、创建 Session 空壳或增加 HTTP 路由。
+
+| 字段或边界 | 初始合同 |
+| --- | --- |
+| schemaVersion | `1.0`；只版本化 Findings 输出，不冻结全部平台领域契约 |
+| baseSha、headSha | 完整小写 40/64 位十六进制 SHA，并与平台传入的固定引用逐字一致 |
+| findings | 必填数组，可为空，去重前最多 50 条 |
+| title、description | 必填非空白文本；上限分别为 256、4,096 个 Unicode 字符 |
+| severity、confidence | LOW/MEDIUM/HIGH/CRITICAL；必填置信度，范围 0～1，零分合法 |
+| path | 最多 1,024 个 Unicode 字符的规范相对路径；拒绝绝对路径、越界段、反斜杠、冒号和控制字符 |
+| startLine、endLine | 正整数，start ≤ end ≤ 2,147,483,647 |
+| JSON 载荷 | 最多 256 KiB；拒绝非法 UTF-8、未知/重复/大小写不符字段、缺失或 null 字段、尾随 JSON |
+| 失败与去重 | 任一条无效则整份拒绝且无可用结果；完全相同的七字段记录去重，保留首次出现顺序 |
+
+#### RED → GREEN 与验证
+
+1. 空结果测试先因缺少 `ParseFindings` 编译失败，补最小实现后通过。
+2. `../private.txt` 被原实现接受，新增路径拒绝得到真实 RED，补路径边界后转绿。
+3. 缺少 confidence 被普通 JSON 解码当作合法的零分，得到真实 RED；明确字段存在性后转绿。
+4. startLine 大于 endLine 的报告仍返回前面的有效结果，得到真实 RED；整份验证失败时返回空结果。
+5. 扩展场景观察到未知/重复字段、空白文本、非法置信度、超限和非法 UTF-8 被接受；逐类补齐边界。
+   既有版本/引用拒绝与其他首次通过的场景按回归记录。
+6. 三条输出中的一个精确重复未去除，得到真实 RED；以完整 Finding 值去重后，保留两个不同问题及顺序。
+
+行为回归还覆盖所有字段的缺失/null、四种 severity 与 0/1 置信度边界、50 条不同 findings、
+256 KiB 载荷边界、中文标题字符计数、64 位 SHA 和共享 fixture。schema 及两份 fixture 另用
+前端现有依赖中的 Ajv 6.15.0 做了 Draft-07 校验；本步没有增加依赖。
+
+Java 可类比先用 JSON Schema 定义返回 DTO，再做 Bean Validation 和业务校验；DTO 能反序列化
+不表示字段齐全、引用正确或结果适合发布。Go 的 token 检查只处理本合同的三层结构，避免默认
+解码器把重复字段覆盖、把 null 数字变成零，再用具体 Finding 做领域验证。
+
+当前只验证结构、引用、路径形式与行号范围，没有证明该文件存在、该行位于改动中，或缺陷判断正确。
+精确去重也不是语义去重；发布的置信度阈值、定位校验和评测策略由后续场景切片处理。
+
+### M14 准备（第 28 步）：准备固定 CLI 与可重复的隔离预检
+
+本节保留 2026-10-05 的验证记录。版本策略已在第 29 步调整：0.154.0 是当时的验证基线，
+当前预检已取消指定版本与 darwin/arm64 默认摘要限制；所需能力仍须通过检查。
+
+- 状态：完成（2026-10-05）。本机全局 Codex 是 0.160.0；另从官方 npm 发布包准备 0.154.0，
+  存放于 `/private/tmp/agent-platform-tools/codex-0.154.0-darwin-arm64/`，全局 CLI 未调整。
+- darwin/arm64 二进制 SHA-256 为
+  `4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc`，与架构 v0.4.10 的固定身份一致。
+  该摘要不适用于 Linux 镜像；其他平台必须为对应二进制提供另一个经验证的摘要。
+- 新增 [codex.Probe](../backend/internal/codex/probe.go) 与 [runtimecheck](../backend/cmd/runtimecheck/main.go)。
+  先比对二进制摘要，再检查固定版本、exec 选项和 read-only；没有发起模型请求。
+
+#### CLI 预检行为与命令
+
+Probe 只执行 `--version` 和 `exec --help`，使用临时 CODEX_HOME、独立工作目录和最小环境；
+不读取用户 config/auth，不继承 GitLab token 或模型 key。检查过程有 10 秒超时并接受调用方取消。
+成功返回二进制身份和所需选项，失败返回空 Profile，不启动 review。
+
+首个外部可执行文件测试先因缺少 Probe 编译 RED；实现后转绿。真实 0.154.0 的帮助中
+`read-only,` 带逗号，使初始选项识别误判；补真实帮助格式的失败回归，再处理列表标点后转绿。
+测试还覆盖版本不符、七种缺失选项、沙箱不符、摘要无效或不匹配、取消、配置与凭据隔离。
+实际固定二进制已通过以下预检：
+
+```bash
+cd backend
+go run ./cmd/runtimecheck \
+  -codex /private/tmp/agent-platform-tools/codex-0.154.0-darwin-arm64/package/vendor/aarch64-apple-darwin/bin/codex
+```
+
+所需选项为 `--sandbox`、`--ephemeral`、`--output-schema`、`--output-last-message`、`--json`、
+`--ignore-user-config` 和 `--ignore-rules`。官方用法说明见
+[OpenAI 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)；具体选项以本次固定二进制实测为准。
+
+#### 本机容器边界验证
+
+已启动本机安装的 Docker Desktop，Server 为 28.3.0。新增
+[隔离预检脚本](../scripts/check-runtime-isolation.py)，只创建自己的临时目录与容器，使用无凭据的
+公开 Alpine 镜像验证运行边界；镜像以摘要指定，不依赖运行时可变 tag：
+
+```bash
+python3 scripts/check-runtime-isolation.py \
+  alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+```
+
+实际通过：非 root、全部 capabilities 移除、no-new-privileges、根文件系统及 Workspace 的 ro
+挂载标志、写入拒绝、无启用的非 loopback 接口与外部默认路由、临时 CODEX_HOME 可写、无模型或
+GitLab 凭据、宿主输入未改变。容器还设置 PID/内存/CPU 限制；这些上限是探针资源配置，未做性能评测。
+临时容器退出后删除，临时目录清理；下载的工具与镜像保留作开发缓存。
+
+首版探针错误地要求 sysfs 中只有 lo。本机内核还创建关闭的隧道接口和 `bonding_masters` 普通文件；
+实际检查后改为过滤真实接口、确认非 loopback 的 UP 标志未设置，并检查默认路由与进程权限。
+该修正不是绕过网络约束。容器运行参数依据见 [Docker 运行说明](https://docs.docker.com/engine/containers/run/)。
+
+这份探针证明本机能执行上述隔离边界，不是 Codex Linux 镜像，也没有验证真实模型网络、企业服务
+身份、Linux Codex 的 sandbox 兼容性或真实输出质量。CLI 帮助探测同样不能替代这些执行验证。
+
+#### M14 的具体起点与验收
+
+| 开始开发前的条件 | 证据 |
+| --- | --- |
+| 现有功能基线稳定 | 本轮前端 49 条测试、lint/typecheck/build；Go 普通/race/vet/lint 全部通过 |
+| 固定输入可贯穿现有组件 | 第 26 步真实 Git + HTTP + Artifact 回归通过 |
+| 输出合同和确定性校验可用 | 第 27 步 Findings 行为回归、schema 与共享 fixture 校验通过 |
+| CLI 身份可记录、所需能力可预检 | 第 28 步验证基线通过；第 29 步本机 0.160.0 预检通过，不再限定 0.154.0 |
+| 本机具备隔离开发环境 | Docker 已启动，容器探针实际通过 |
+
+**结论：具备开始 M14 第一个开发切片的条件。** 第一步建立只读 Review Runner 的应用层 port 和
+进程 adapter，以外部假可执行文件测试固定 argv、stdin、隔离环境、最终输出文件、超时/取消和
+失败分类，再调用现成 ParseFindings 返回经过校验的结果。Java 可类比先定义业务接口，再用
+ProcessBuilder adapter 实现它，接口测试不依赖真实模型费用与企业凭据。
+
+第一切片验收：合法 Findings 保留固定 base/head；非零退出、缺失/超限/非法输出、版本引用不符、
+超时和取消均无成功结果；请求正文不能指定 CLI 路径、凭据或安全选项。后续再接 Task/Workspace
+前置状态、幂等执行与 Findings Artifact/事件，以及固定 Linux Codex 镜像和受控模型连接的实际验证。
+首次真实模型调用必须使用场景指定的服务身份和模型配置，不能复用本机个人登录；网络只开放模型
+连接所需路径。它们属于 M14 的执行实现与验收，不是本轮已经完成的能力。
+
+本轮新增 18 个顶层 Go 行为测试（HTTP 贯穿 1、Findings 11、CLI Probe 6），包含表驱动子场景。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）、gofmt 通过；前端 49 条测试及静态检查、
+生产构建通过。未修改后端现有公开接口，也没有实际模型调用或评论发布。
+第 22～28 步所有改动继续保留未提交，供用户审阅；没有提交或推送。
+
+### M14 准备（第 29 步）：按能力预检 CLI，并明确 Harness 分工
+
+- 状态：完成（2026-10-06）。用户要求 Codex 升级时不要强依赖 0.154.0，并询问 M14 是否复用 Codex Harness。
+- [Probe](../backend/internal/codex/probe.go) 已移除固定版本和平台摘要常量，读取实际 `codex-cli` 版本，
+  计算并返回二进制 SHA-256。兼容性预检继续要求七个选项及 read-only 沙箱能力。
+- [runtimecheck](../backend/cmd/runtimecheck/main.go) 默认检查 PATH 中的 `codex`；摘要校验改为可选。
+  显式提供摘要时，格式错误或不匹配仍在执行二进制前拒绝；不会因为版本放宽而跳过能力、配置或凭据边界。
+
+#### 版本策略与验证
+
+先扩展外部假可执行文件的公共行为测试：0.154.0 通过，0.160.0 因固定版本限制 RED；
+改为记录实际版本后两者 GREEN。再增加不指定摘要的行为测试，因必填摘要 RED；
+将摘要改为可选后 GREEN。原先的“版本不同就拒绝”回归改为检查错误 CLI 身份、缺少版本、
+异常版本输出；缺失能力、摘要不匹配、取消、配置和控制平面凭据隔离回归继续通过。
+
+本机真实 CLI 已用默认命令完成预检：
+
+```bash
+cd backend
+go run ./cmd/runtimecheck
+```
+
+实际版本为 `0.160.0`，路径 `/opt/homebrew/bin/codex`，SHA-256 为
+`112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b`。
+`-codex` 可选择部署二进制，`-sha256` 可指定对应 OS/架构的已验证摘要；没有默认平台摘要。
+版本与摘要用于追溯具体部署，不能仅凭版本号或帮助信息断言执行兼容。
+升级时先做能力预检，再运行 M14 adapter、输出契约与隔离执行回归，通过后更新部署制品记录；
+当前 adapter 尚待第一个 M14 切片实现。本步骤没有自动安装或升级 Codex。
+
+#### M14 如何复用 Codex Harness
+
+M14 通过 `codex exec` 启动 OpenAI 开源 Codex Harness，运行一次有边界的只读 PR Review。
+官方将 exec 定位为非交互任务入口，将 app-server 定位为持久会话、流式事件与审批入口，见
+[OpenAI Harness 集成说明](https://developers.openai.com/blog/codex-as-a-platform)。
+当前阶段采用 exec，后续需要会话恢复与交互审批时再接 app-server。
+
+| 组件 | 承担的职责 |
+| --- | --- |
+| 平台的 Task / Workspace | 固定 base/head、准备只读代码与 diff、检查任务和工作区状态 |
+| 平台的 Runtime adapter / Worker | 构造受控 argv/stdin、隔离运行环境与配置、限制凭据、处理超时/取消/退出错误 |
+| Codex Harness | 模型调用循环、上下文管理、工具调用，以及其配置下的沙箱与审批策略 |
+| 平台的 Findings / Artifact / 事件 | 校验输出契约与固定引用、去重、幂等归档、记录执行结果 |
+
+`--output-schema` 请求结构化 Findings，平台仍独立解析和校验结果，见
+[OpenAI 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)。Harness 的开源执行层与模型访问
+分开，实际模型执行仍需场景服务身份与模型配置。Java 可类比业务 Service 调用一个 Runtime 接口，
+ProcessBuilder adapter 启动第三方执行引擎；升级主要影响 adapter 与集成回归，不把上游内部代码耦合到业务层。
+
+本轮 Go 全套普通/race 测试、vet、golangci-lint（0 issues）通过；CLI Probe 现有 7 个顶层行为测试，
+含版本与能力的表驱动子场景。前端与容器探针未改动，沿用第 28 步验证记录；实际模型调用与评论发布仍未接入。
+第 22～29 步改动保留未提交，供用户审阅。
+
+### M14 准备（第 30 步）：修正帮助文本误判，明确检查总预算
+
+- 状态：完成（2026-10-06）。用户指出帮助文本分词、read-only 检查和共享 context 三个审阅点。
+- 修改 [Probe](../backend/internal/codex/probe.go) 与 [公共行为测试](../backend/internal/codex/probe_test.go)，
+  保留第 29 步按能力预检、记录实际版本/摘要的策略。
+
+#### 三个审阅点的结论
+
+| 审阅点 | 原行为与影响 | 当前处理 |
+| --- | --- | --- |
+| 对整个 help 使用 `strings.Fields` | 描述或示例提到 `--json` 也会被当作支持；标点或换行变化还可能误拒绝 | 只识别 Options 中的选项声明及所属描述块，支持短/长选项别名，排除正文、缩进示例与其他章节 |
+| 全文出现 read-only 就通过 | 即使 `--sandbox` 不支持该值，其他选项或描述出现同名文本也会误通过 | 只检查 `--sandbox` 块中的 possible values，按逗号拆分并精确匹配枚举值，支持紧邻逗号和换行 |
+| 两条命令共享 context | 这是总预算语义，本身不是 bug；若理解为每条命令各 10 秒，就会误判剩余时间 | 保留总预算，命名为 inspectionContext，并补充接口注释、文档和行为回归 |
+
+两条子进程检查命令 `--version` 与 `exec --help` **合计共用 10 秒执行期限**。
+版本检查若用了约 8 秒，help 仅剩约 2 秒；调用方更短的截止时间或取消仍优先生效。
+这不是整个 Probe 从读取二进制到清理目录的耗时上限；命令停止与清理也有额外开销。
+Java 可类比两个步骤共用一个请求级 deadline，后一个步骤使用剩余预算。
+
+#### 行为回归与验证
+
+先用外部假 CLI 复现“描述里提到 `--json` 却通过”的 RED，限定选项声明后 GREEN；
+再复现“只有其他选项的可选值含 read-only 却通过”的 RED，绑定 sandbox 枚举后 GREEN。
+原来的单行帮助片段已换为与真实 CLI 一致的 Options、别名、描述与枚举布局。
+扩展回归覆盖正文/示例/其他章节中的 flag、沙箱描述或其他选项中的 read-only、枚举近似值、
+未闭合枚举，以及紧邻逗号和换行的合法枚举。
+
+执行中取消测试等待 help 实际启动后取消调用方 context，检查返回 `context.Canceled` 且无成功 Profile。
+总预算测试让版本命令持续 4 秒、help 持续 7 秒：两者各自小于 10 秒，但合计超限，
+应返回 `context.DeadlineExceeded` 且无成功 Profile，调用方的 20 秒期限尚未耗尽。
+等待阶段使用 `exec sleep` 替换测试 shell，取消时直接终止该进程。
+这两条测试确认已有预算与取消语义，未把共享 context 描述为新修复的 bug。
+
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）和 gofmt 检查通过；Probe 现有 12 个顶层行为测试，
+包含表驱动子场景。本机真实 0.160.0 和缓存中的历史 0.154.0 均通过帮助预检，实际版本/摘要记录正确。
+前端与容器探针未修改，沿用已有验证记录；第 22～30 步改动继续保留未提交。
+
+help 仍是面向人的文本，不是稳定的机器协议。当前解析针对已验证的完整帮助布局；
+无法识别的布局会拒绝预检，升级时需要更新适配并回归。帮助中的能力声明不能替代真实只读执行、
+隔离边界和 Findings 输出契约的集成验收；这些仍由后续 M14 执行切片完成。
 
 ## 7. 常用验证命令
 

@@ -16,6 +16,21 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
+M14（只读 Codex exec 与 Findings）的准备记录和第一个开发切片验收见开发手册第 26～30 步。
+M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
+Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检和
+容器隔离探针；实际模型执行尚未接入。
+以下命令检查已安装 CLI 帮助中声明的所需选项，并记录实际版本与 SHA-256，不调用模型：
+
+```bash
+cd backend
+go run ./cmd/runtimecheck
+```
+
+不限定 0.154.0；本机 0.160.0 已通过上述预检。可用 `-codex` 指定二进制路径，部署时可用
+`-sha256` 校验该平台二进制的已验证摘要。升级还需执行 adapter 与输出契约回归，帮助信息预检
+不能替代实际执行验证。集成分工见 [OpenAI 的 Harness 说明](https://developers.openai.com/blog/codex-as-a-platform)。
+
 ## 目录
 
 ```text

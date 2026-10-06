@@ -110,11 +110,13 @@ export default function TaskWorkspace() {
         const response = await fetch(`/api/v1/tasks?${query.toString()}`, {
           signal: controller.signal,
         })
+        if (controller.signal.aborted) return
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`)
         }
 
         const body = (await response.json()) as TaskListResponse
+        if (controller.signal.aborted) return
         setListState((current) => {
           if (current.kind !== 'ready') {
             return { kind: 'ready', items: body.items }
@@ -126,7 +128,10 @@ export default function TaskWorkspace() {
           }
         })
       } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
+        if (
+          controller.signal.aborted ||
+          (error instanceof DOMException && error.name === 'AbortError')
+        ) {
           return
         }
 

@@ -22,15 +22,20 @@ export default function App() {
         const response = await fetch('/api/healthz', {
           signal: controller.signal,
         })
+        if (controller.signal.aborted) return
 
         if (!response.ok) {
           throw new Error(`health check returned HTTP ${response.status}`)
         }
 
         const health = (await response.json()) as HealthResponse
+        if (controller.signal.aborted) return
         setPageState({ kind: 'healthy', health })
       } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
+        if (
+          controller.signal.aborted ||
+          (error instanceof DOMException && error.name === 'AbortError')
+        ) {
           return
         }
 
@@ -52,7 +57,11 @@ export default function App() {
         <p className="eyebrow">ENTERPRISE AGENT CONTROL PLANE</p>
         <h1 id="page-title">Agent Platform</h1>
         <p className="intro">
-          Portal 已连接 Go API，可以创建 Task 并查看当前进程中的最近记录。
+          {pageState.kind === 'loading' && '正在检查 API 连接…'}
+          {pageState.kind === 'healthy' &&
+            'API 连接正常，可以在下方创建 Task 并查看最近记录。'}
+          {pageState.kind === 'unavailable' &&
+            'API 健康检查未通过，请查看下方错误信息。'}
         </p>
 
         <div className={`status-panel status-panel--${pageState.kind}`}>
