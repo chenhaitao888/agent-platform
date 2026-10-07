@@ -53,17 +53,10 @@ func Probe(ctx context.Context, binary, expectedSHA256 string) (Profile, error) 
 	if err != nil {
 		return Profile{}, err
 	}
-	file, err := os.Open(resolved)
+	actualSHA256, err := binarySHA256(resolved)
 	if err != nil {
 		return Profile{}, err
 	}
-	digest := sha256.New()
-	_, readErr := io.Copy(digest, file)
-	closeErr := file.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return Profile{}, fmt.Errorf("hash Codex binary: %w", err)
-	}
-	actualSHA256 := fmt.Sprintf("%x", digest.Sum(nil))
 	if expectedSHA256 != "" && actualSHA256 != expectedSHA256 {
 		return Profile{}, fmt.Errorf("%w: binary SHA-256 differs from the configured pin", ErrIncompatibleRuntime)
 	}
@@ -75,15 +68,7 @@ func Probe(ctx context.Context, binary, expectedSHA256 string) (Profile, error) 
 	inspectionContext, cancel := context.WithTimeout(ctx, inspectionTimeout)
 	defer cancel()
 	inspect := func(args ...string) (string, error) {
-		command := exec.CommandContext(inspectionContext, resolved, args...)
-		command.Env = []string{"PATH=/usr/bin:/bin", "CODEX_HOME=" + isolatedHome}
-		command.Dir = isolatedHome
-		command.WaitDelay = time.Second
-		output, err := command.Output()
-		if inspectionContext.Err() != nil {
-			return "", inspectionContext.Err()
-		}
-		return strings.TrimSpace(string(output)), err
+		return inspectCLI(inspectionContext, resolved, isolatedHome, args...)
 	}
 	version, err := inspect("--version")
 	if err != nil {
@@ -111,6 +96,32 @@ func Probe(ctx context.Context, binary, expectedSHA256 string) (Profile, error) 
 		Version: identity[1], BinaryPath: resolved, BinarySHA256: actualSHA256,
 		Integration: "exec", Sandbox: "read-only", Ephemeral: true, RequiredFlags: required,
 	}, nil
+}
+
+func binarySHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	_, readErr := io.Copy(digest, file)
+	closeErr := file.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return "", fmt.Errorf("hash Codex binary: %w", err)
+	}
+	return fmt.Sprintf("%x", digest.Sum(nil)), nil
+}
+
+func inspectCLI(ctx context.Context, binary, home string, args ...string) (string, error) {
+	command := exec.CommandContext(ctx, binary, args...)
+	command.Env = []string{"PATH=/usr/bin:/bin", "CODEX_HOME=" + home}
+	command.Dir = home
+	command.WaitDelay = time.Second
+	output, err := command.Output()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	return strings.TrimSpace(string(output)), err
 }
 
 // execOptionBlocks recognizes the inspected CLI's full-help option declarations.

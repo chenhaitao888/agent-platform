@@ -15,6 +15,8 @@ import (
 
 var ErrInvalidFindings = errors.New("invalid review findings")
 
+const MaxFindingsBytes = 256 << 10
+
 //go:embed pr-review-findings-v1.json
 var findingsSchema string
 
@@ -40,7 +42,7 @@ type FindingsReport struct {
 
 // ParseFindings binds model output to the commits selected by the platform.
 func ParseFindings(content []byte, baseSHA, headSHA string) (FindingsReport, error) {
-	if len(content) > 256<<10 || !utf8.Valid(content) || !validFindingsCommit(baseSHA) || !validFindingsCommit(headSHA) || !validFindingsJSONShape(content) {
+	if len(content) > MaxFindingsBytes || !utf8.Valid(content) || !validFindingsCommit(baseSHA) || !validFindingsCommit(headSHA) || !validFindingsJSONShape(content) {
 		return FindingsReport{}, ErrInvalidFindings
 	}
 	var report FindingsReport

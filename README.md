@@ -7,6 +7,7 @@
 - GitLab 仓库/分支/merge-base 只读解析，以及 Workspace 登记、bare clone、detached worktree 和状态查询
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
 - 固定 diff 的幂等 Artifact 归档、元数据查询和租户范围内容读取
+- 只读 Review Runner 内部接口、Codex 进程 adapter、Findings 输出契约和平台校验
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
 - Go 接口测试与 React 组件测试
 
@@ -16,10 +17,10 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录和第一个开发切片验收见开发手册第 26～30 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；第一个实现切片见第 31 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
-Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检和
-容器隔离探针；实际模型执行尚未接入。
+Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
+容器隔离探针与只读进程 adapter。Runner 尚未接入 HTTP 触发、Task 执行状态和结果归档；真实模型联调尚未执行。
 以下命令检查已安装 CLI 帮助中声明的所需选项，并记录实际版本与 SHA-256，不调用模型：
 
 ```bash
@@ -37,13 +38,15 @@ go run ./cmd/runtimecheck
 agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java 的 main 启动类
+│   ├── cmd/runtimecheck/        # 不调用模型的 CLI 预检
 │   └── internal/
+│       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
 │       ├── artifact/            # 不可变结果元数据、内容与幂等创建
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
 │       ├── repository/          # Repository Reference 验证接口与错误分类
-│       ├── review/              # 从 READY Workspace 读取不可变评审输入
+│       ├── review/              # 固定评审输入、Findings 契约与 Runner port
 │       ├── task/                # Task 模型与内存仓库，类似精简的领域/Repository 层
 │       └── workspace/           # Workspace 登记、准备状态机与路径所有权
 ├── CONTEXT.md                   # 领域统一语言，不包含实现细节

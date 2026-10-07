@@ -44,8 +44,9 @@ Connector 仍未接入。
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
 具备开始 M14 第一个开发切片的条件，具体入口与验收见第 28 步，版本策略与 Harness 分工见第 29 步，
-当前预检边界见第 30 步。用户已审阅第 22～30 步，授权提交、推送并开始 M14 第一个实现切片。
-实际模型调用和 M14 执行接口尚未接入。
+当前预检边界见第 30 步。第 22～30 步已由用户审阅并提交、推送至 `origin/main`，提交为 `04d9b15`。
+第 31 步完成 M14 的 Runner 内部接口与只读进程 adapter，用户于 2026-10-08 审阅并批准本次提交推送。
+HTTP 评审触发、Task 执行投影、Findings Artifact/事件及真实模型身份/隔离 Worker 尚未接入。
 
 ## 3. 当前目录与职责
 
@@ -56,12 +57,12 @@ agent-platform/
 │   ├── cmd/runtimecheck/        # 不调用模型的 Codex 版本与选项预检
 │   └── internal/
 │       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
-│       ├── codex/               # CLI 版本/摘要记录与能力预检
+│       ├── codex/               # CLI 版本/摘要预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab 验证与可信 clone URL adapter
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
 │       ├── repository/          # 验证接口与 provider 无关的错误分类
-│       ├── review/              # 固定 diff 读取/归档与 Findings 输出契约
+│       ├── review/              # 固定 diff、Findings 契约与 Runner 应用层 port
 │       ├── task/                # Task 模型与内存 Store
 │       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
@@ -2063,6 +2064,79 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）和 gofmt 检查�
 help 仍是面向人的文本，不是稳定的机器协议。当前解析针对已验证的完整帮助布局；
 无法识别的布局会拒绝预检，升级时需要更新适配并回归。帮助中的能力声明不能替代真实只读执行、
 隔离边界和 Findings 输出契约的集成验收；这些仍由后续 M14 执行切片完成。
+
+### M14 实现（第 31 步）：只读 Runner port 与 Codex 进程 adapter
+
+- 状态：完成（2026-10-06）。用户审阅并要求 push 后，已推送第 22～30 步为 `04d9b15`，再开始本切片。
+- 新增 [review.Runner](../backend/internal/review/runner.go)、[codex.ExecRunner](../backend/internal/codex/runner.go)
+  和 [外部 CLI 行为测试](../backend/internal/codex/runner_test.go)。接口只接收工作区路径、固定 base/head 和 patch，
+  返回已校验 Findings；二进制、模型、超时与权限选项来自部署配置。Java 可类比业务接口及 ProcessBuilder adapter。
+
+#### 启动与每次执行的边界
+
+部署必须配置存在的绝对 Workspace 根目录、模型和正数执行时限。构造 Runner 时先执行现有 Probe，
+再检查根帮助中的 `--no-daemon`、`--ask-for-approval` 和 `--model`；三次元数据命令共用 10 秒启动预算。
+Runner 的 Profile 返回实际版本、摘要与所需选项的副本；每次执行前再比对启动时记录的二进制摘要。
+部署二进制改变后须重新预检、创建 Runner，以使升级与追溯记录一致；没有按指定版本号判断兼容性。
+
+M14 的直接进程 profile 增加上述根选项要求。本机 0.160.0 已通过真实构造/启动预检；历史 0.154.0
+不声明 `--no-daemon`，因此通用 exec Probe 仍可通过，但不满足本切片的直接进程 profile。
+该控制项依据本机已安装 CLI 的根帮助实测；升级时仍须重新做能力与执行契约验收。
+
+每次 Run 先检查完整小写 Git SHA、UTF-8 patch（最多 1 MiB）和实际 worktree 位置。
+路径解析后必须是配置根目录直接下属 `workspace-*/worktree`，外部目录、相似前缀和指向外部的链接被拒绝。
+Runtime 参数由 adapter 固定，业务文本通过 JSON stdin 输入；patch 中的 CLI 开关不会变成命令参数。
+
+执行采用 `--no-daemon`、审批 never、显式模型、read-only、ephemeral、忽略用户配置/rules、
+平台 Findings schema、最终输出路径及 JSONL 模式。每次生成自己的临时 HOME、CODEX_HOME 和 TMPDIR，
+仅设置基础 PATH，不继承控制平面 GitLab token、个人模型 key 或个人登录文件。
+输出与配置目录位于临时执行目录，成功和失败都清理；重复执行不会复用旧输出。
+选项用途参考 [OpenAI 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)，实际 profile 以预检结果为准。
+
+CLI 进程运行期间使用部署时限及调用方 context。每次执行创建独立 POSIX 进程组，取消、超时和主进程
+退出后终止该组的剩余进程。JSONL 与 stderr 当前只排空，不作为 Findings 或公开错误正文。
+只有进程退出成功，才读取指定的最终输出文件，再调用现有 ParseFindings 绑定 base/head、校验和去重。
+
+最终输出使用原子 no-follow、non-blocking 打开并检查描述符，只接受单链接普通文件；
+拒绝符号链接、硬链接、目录和 FIFO。先检查文件大小，再以 256 KiB + 1 的读取上限防止文件增长越界；
+平台解析仍执行完整 Findings 契约。非零退出即使写了合法 JSON，也不会返回成功结果。
+
+| 失败类型 | 调用方可判断的结果 |
+| --- | --- |
+| 输入、引用或工作区路径不合法 | ErrInvalidRunInput；不启动评审 |
+| 二进制与启动记录不符 | ErrIncompatibleRuntime；不启动评审 |
+| 非零退出或进程无法启动 | ErrExecutionFailed |
+| 缺失、链接或非普通输出文件 | ErrOutputUnavailable |
+| 输出超出 256 KiB | ErrOutputTooLarge |
+| JSON/字段/固定引用不合法 | ErrInvalidFindings |
+| 调用方取消或执行超时 | context.Canceled / context.DeadlineExceeded |
+
+所有失败都返回空 FindingsReport，没有部分成功数据。
+
+#### 回归与真实预检
+
+首个公共 port 测试因类型/实现缺失编译 RED，最小受控进程链路实现后 GREEN。
+随后逐条复现并修正：输出超限未分类、链接读取到外部有效 JSON、非法引用启动后才拒绝、
+二进制被替换后仍执行，以及取消 CLI 后子进程继续写文件。每个问题均经过真实失败回归再转绿；
+硬链接也单独复现了返回成功的 RED，再增加描述符链接计数检查。
+
+新增 13 个顶层 Runner 行为测试，含表驱动子场景。测试使用标准库 Python 3 的外部假 CLI，
+直接观察参数、stdin、工作目录、schema、环境和最终结果，不 mock 自己的组件。
+覆盖非零退出/缺失/非法/引用不符输出、FIFO、链接、两端大小边界、超时、启动后取消、进程组效果、
+输入路径/编码边界、部署配置和能力缺失、二进制变化及重复执行隔离。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）、gofmt、Linux/amd64 编译通过。
+本机真实 0.160.0 的 NewExecRunner 启动预检通过，读取元数据后退出；本轮没有真实模型调用。
+前端和容器探针未改动，沿用已有验证记录。用户于 2026-10-08 审阅本切片并批准提交推送。
+
+当前 adapter 面向 Linux/macOS 的隔离 Worker 内部使用，尚未装配到 HTTP 服务。
+CLI 只读参数、路径检查和进程组并不替代只读挂载、网络/凭据隔离及容器生命周期控制；
+脱离进程组的程序与文件系统检查之间的竞态仍需 Worker 边界收口。
+输入引用与 patch 的事实来源目前由调用方负责，本切片未验证 Git HEAD、changed-line 定位或缺陷正确性。
+服务模型身份/网关、真实 Linux Codex 镜像、真实模型执行及输出质量仍待后续切片验证。
+
+下一步将 Runner 接入 review 应用服务，从同租户的 Task 与 READY Workspace 获取固定输入，
+在执行 I/O 前声明幂等请求，校验后创建 Findings Artifact 并记录结果事件；业务请求仍不能指定
+二进制路径、模型凭据、patch 或安全选项。再实现隔离 Worker 和受控服务身份的真实模型联调。
 
 ## 7. 常用验证命令
 
