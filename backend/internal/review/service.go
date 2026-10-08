@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sync"
 
 	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/repository"
@@ -42,10 +43,15 @@ type Diff struct {
 }
 
 type Service struct {
-	workspaces *workspace.Manager
-	source     repository.DiffReader
-	artifacts  *artifact.Store
-	tasks      *task.Store
+	workspaces      *workspace.Manager
+	source          repository.DiffReader
+	artifacts       *artifact.Store
+	tasks           *task.Store
+	runner          Runner
+	mu              sync.RWMutex
+	nextExecutionID uint64
+	executions      map[executionScope]executionRecord
+	latest          map[string]Execution
 }
 
 func NewService(workspaces *workspace.Manager, source repository.DiffReader, tasks *task.Store) *Service {
@@ -53,7 +59,12 @@ func NewService(workspaces *workspace.Manager, source repository.DiffReader, tas
 }
 
 func NewServiceWithArtifactStore(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store, tasks *task.Store) *Service {
-	return &Service{workspaces: workspaces, source: source, artifacts: artifacts, tasks: tasks}
+	return NewServiceWithRunner(workspaces, source, artifacts, tasks, nil)
+}
+
+func NewServiceWithRunner(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store, tasks *task.Store, runner Runner) *Service {
+	return &Service{workspaces: workspaces, source: source, artifacts: artifacts, tasks: tasks, runner: runner,
+		executions: make(map[executionScope]executionRecord), latest: make(map[string]Execution)}
 }
 
 func (s *Service) Get(ctx context.Context, input GetInput) (Diff, error) {

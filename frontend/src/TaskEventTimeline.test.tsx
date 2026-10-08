@@ -28,6 +28,37 @@ const task: Task = {
 }
 
 describe('TaskEventTimeline', () => {
+  it('shows review execution states, result references and failure codes', async () => {
+    const events = [
+      { eventType: 'review.started', state: 'RUNNING' },
+      { eventType: 'review.succeeded', state: 'SUCCEEDED', artifactId: 'findings-artifact' },
+      { eventType: 'review.failed', state: 'FAILED', errorCode: 'review_findings_invalid' },
+      { eventType: 'review.canceled', state: 'CANCELED', errorCode: 'review_canceled' },
+    ].map(({ eventType, ...review }, index) => ({
+      eventId: `review-event-${index}`,
+      eventType,
+      occurredAt: '2026-10-08T01:00:00Z',
+      payload: {
+        review: {
+          executionId: `review-${index}`,
+          workspaceId: 'workspace-1',
+          workspaceVersion: 3,
+          ...review,
+        },
+      },
+    }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: events }), { status: 200 }),
+    ))
+    render(<TaskEventTimeline task={task} />)
+    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的事件' }))
+    const timeline = await screen.findByRole('list', { name: 'task-1 的事件时间线' })
+    expect(timeline).toHaveTextContent('RUNNING · review-0 · workspace-1')
+    expect(timeline).toHaveTextContent('SUCCEEDED · review-1 · workspace-1 · findings-artifact')
+    expect(timeline).toHaveTextContent('FAILED · review-2 · workspace-1 · review_findings_invalid')
+    expect(timeline).toHaveTextContent('CANCELED · review-3 · workspace-1 · review_canceled')
+  })
+
   it('loads and shows a task event timeline on request', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

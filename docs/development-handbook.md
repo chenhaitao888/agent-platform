@@ -36,17 +36,19 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 当前代码只覆盖健康检查、持有不可变仓库引用的 Task 幂等创建、查询、第一条状态迁移、Task
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
-并具备对应前端闭环。数据库、工作流执行、Codex app-server、Credential Broker、鉴权与其他企业
-Connector 仍未接入。
+并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件。
+默认启动未装配 Review Runner。数据库、工作流执行、隔离模型 Worker、Codex app-server、
+Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-06）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-08）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
 具备开始 M14 第一个开发切片的条件，具体入口与验收见第 28 步，版本策略与 Harness 分工见第 29 步，
 当前预检边界见第 30 步。第 22～30 步已由用户审阅并提交、推送至 `origin/main`，提交为 `04d9b15`。
-第 31 步完成 M14 的 Runner 内部接口与只读进程 adapter，用户于 2026-10-08 审阅并批准本次提交推送。
-HTTP 评审触发、Task 执行投影、Findings Artifact/事件及真实模型身份/隔离 Worker 尚未接入。
+第 31 步的 Runner 内部接口与只读进程 adapter 已由用户审阅，2026-10-08 以 `50025c2` 推送至 `origin/main`。
+第 32 步完成 HTTP 审阅触发、独立执行投影、Findings Artifact/事件与执行前幂等登记，用户已审阅并批准本次提交推送。
+默认 API 启动仍不装配 Runner；真实模型身份、隔离 Worker 和真实模型执行尚未接入。
 
 ## 3. 当前目录与职责
 
@@ -62,7 +64,7 @@ agent-platform/
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
 │       ├── repository/          # 验证接口与 provider 无关的错误分类
-│       ├── review/              # 固定 diff、Findings 契约与 Runner 应用层 port
+│       ├── review/              # 固定 diff、执行幂等/投影、Findings 契约与 Runner port
 │       ├── task/                # Task 模型与内存 Store
 │       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
@@ -2138,6 +2140,87 @@ CLI 只读参数、路径检查和进程组并不替代只读挂载、网络/凭
 在执行 I/O 前声明幂等请求，校验后创建 Findings Artifact 并记录结果事件；业务请求仍不能指定
 二进制路径、模型凭据、patch 或安全选项。再实现隔离 Worker 和受控服务身份的真实模型联调。
 
+### M14 实现（第 32 步）：Task/Workspace 审阅执行与 Findings 归档
+
+- 状态：完成（2026-10-08）。用户批准 push 后，已推送第 31 步为 `50025c2`，再实现本切片。
+- 新增 [执行应用服务](../backend/internal/review/execution.go)、[HTTP 入口](../backend/internal/httpapi/review_execution.go)
+  和 [跨 Git/CLI/HTTP 行为回归](../backend/internal/httpapi/review_execution_test.go)；扩展 Artifact、Task 事件
+  payload 与前端时间线。Java 可类比 Application Service 在调用外部执行器前登记操作表，再保存结果和领域事件。
+
+#### 公共接口与状态
+
+`POST /api/v1/tasks/{id}/review` 只接收 requestId、tenantId、idempotencyKey、expectedWorkspaceVersion。
+未知 JSON 字段被拒绝，不能指定 binary、model、credentials、patch、SHA、sandbox 或本地路径；
+沿用 64 KiB 请求体、256 字节标识符限制与结构化错误。GET 同一路径以 tenantId 查询最近一次执行。
+
+前置检查确认同租户 Task 存在、类型 PR_REVIEW、准入状态 QUEUED，以及存在 READY、有 path 的 Workspace。
+Workspace version 必须匹配，仓库 provider/id 和 base/head 必须与 Task 的固定引用一致。
+路径、引用和 patch 全部由服务端选取，不能从浏览器提交的内容构造 RunInput。
+输入校验与 Runner 返回后的平台 Findings 校验继续执行，成功内容先去重，再以规范 JSON 归档。
+
+审阅执行单独使用 RUNNING / SUCCEEDED / FAILED / CANCELED 投影，包含 executionId、tenant/Task/Workspace、
+Workspace version、base/head、开始/结束时间及成功 Artifact 或稳定失败码。
+当前不扩展 Task 的 CREATED → QUEUED 准入状态机，也未引入持久队列或工作流引擎。
+首次成功 POST 返回 201，成功重放返回 200；Location 指向该 Task 最近执行的 GET，并包含 tenantId。
+最近执行 GET 与 Artifact metadata/content 读取都在 Store 范围内检查 tenant；不存在和其他 tenant 均为 404。
+
+#### 执行前幂等与并发边界
+
+幂等键作用域为 tenant + key，绑定 Task 和 expectedWorkspaceVersion，requestId 不参与操作身份。
+首次调用在 Git diff 与 Runner I/O **之前**，于 Service 锁内登记 RUNNING 并追加 review.started。
+相同键会先查询登记记录，成功返回第一次快照，失败返回第一次安全分类后的错误，
+不重新读取 Git、启动模型、创建 Artifact 或追加事件；改变 Task/version 返回 409 idempotency_conflict。
+
+同一键进行中返回 409 review_in_progress。同一 Task 使用不同键也只能有一个 RUNNING；
+正在执行时被拒绝的新键不会登记，可在终态后再次使用。
+不同 Task（包括不同 tenant 使用相同 key）可以同时执行，Git/Runner I/O 不持有 Service 锁。
+同一 Task 的终态后允许使用新 key 重新审阅，生成新的执行和结果；旧 key 仍重放原结果。
+因此需要区分“重试同一个请求”和“明确开启新的尝试”，新 key 也可能产生新的模型消耗。
+
+#### 结果、失败与事件
+
+成功保存 `PR_REVIEW_FINDINGS / application/json` Artifact，已有 checksum、不可变副本和租户读取规则继续生效。
+其幂等 namespace 由应用层固定为 review-execution，与用户发起的 diff 归档分开；
+避免用户选用类似 `review:review-1` 的归档键阻塞内部 Findings 创建，namespace 不暴露为 HTTP 参数。
+
+成功事件顺序为 review.started → artifact.created → review.succeeded；失败为开始 → review.failed，
+调用方取消为开始 → review.canceled。Review payload 只包含执行/Workspace 坐标、状态、Artifact ID 或失败码。
+同一次尝试的事件使用首个执行请求的 requestId 作为 causationId；重放仅回显当前请求的 X-Request-ID。
+事件与执行返回值中的可变指针都复制，不能通过读取结果修改已有快照。
+前端时间线支持四种 review 事件，显示状态、执行 ID、Workspace ID、成功 Artifact ID 或失败码。
+
+Git 读取阶段和 Runner 阶段都检查调用方 context；取消、超时、非零退出、输出不合法或引用不符均无部分 Findings。
+失败登记保留至进程结束，使用相同 key 不会自动重跑；新 key 可发起新尝试。
+Git/模型内部诊断不进入公开失败正文、执行投影或新接口日志，只记录稳定错误码和业务坐标。
+Runtime 的子进程时限仍由部署配置控制，整个应用操作还没有独立的统一 wall-clock deadline。
+
+#### RED → GREEN 与验证
+
+先写一条贯穿真实 Git、外部 CLI 和真实 HTTP 的成功回归，因缺少公共装配入口编译 RED；
+补齐最小 Task/Workspace → Runner → Artifact/事件链路后 GREEN。
+随后逐条复现并修正：成功重放重新读取已经移动的 worktree、不同 key 并发启动同一 Task、
+用户 diff 归档键阻塞内部 Findings、Git 输入阶段取消被误分类为 diff_unavailable，以及未知运行配置字段被静默接受。
+前端回归先复现 review 事件没有摘要，再补齐类型与展示转为 GREEN。
+
+新增 14 个顶层 HTTP 行为测试（含表驱动子场景），使用真实本地 Git/clone/diff、外部 Python 假 Codex CLI，
+以及一次真实 httptest HTTP 服务。只替代 GitLab 和模型 CLI 等系统外部接缝，不替代平台 Store、Manager、Service 或 Runner。
+覆盖固定输入、Findings 去重与空报告、内容/checksum/tenant 读取、失败与失败重放、新尝试、
+模型取消/超时、Git 输入取消、准入/JSON 边界、默认不装配 Runner、跨 Task/key/tenant 幂等、
+独立 Task 并发及 12 个同时到达的同键请求只执行一次。前端新增一条可见行为回归。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）、gofmt 与 Linux/amd64 编译通过。
+前端 lint、类型检查、9 个文件中的 50 条行为测试及生产构建通过；真实 HTTP/Git/外部 CLI 链路回归通过。
+本轮没有调用真实模型，也没有启用个人登录态或 Skills；容器预检脚本未改动，沿用已有验证记录。
+
+#### 装配边界与下一步
+
+`NewHandlerWithReviewServices` 是可注入部署 Runner 的集成入口。已有构造函数和 cmd/api 默认传入空 Runner，
+满足 Task/Workspace 前置条件后返回 503 review_unavailable，并在 Git/模型 I/O 和执行登记前退出。
+真实模型认证、Linux Codex Worker 镜像、只读挂载、网络/凭据边界与 Worker 生命周期尚未装配到这条链路。
+
+本切片已由用户审阅并批准本次提交推送。下一步接入隔离 Worker，补齐场景服务模型身份/受控配置及实际运行记录，
+再做真实模型只读执行与 Findings 质量验收。Skills 继续复用 Codex 原生机制，但当前没有向临时 HOME
+交付场景 Skill，也不会自动继承本机个人 Skill、MCP 配置或登录文件。审阅触发与 Findings 内容展示的 UI 尚待后续切片。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2167,6 +2250,9 @@ node --run build
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
   它们还不是事务 Outbox，也没有发布到 Event Bus。
+- Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
+  Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
+  默认启动未装配 Runner；只读 Worker、服务模型身份/网关、实际模型输出质量及场景 Skills 交付未接入。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId、挂载或孤儿目录回收。

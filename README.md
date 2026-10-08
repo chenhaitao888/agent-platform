@@ -7,7 +7,7 @@
 - GitLab 仓库/分支/merge-base 只读解析，以及 Workspace 登记、bare clone、detached worktree 和状态查询
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
 - 固定 diff 的幂等 Artifact 归档、元数据查询和租户范围内容读取
-- 只读 Review Runner 内部接口、Codex 进程 adapter、Findings 输出契约和平台校验
+- 只读 Review Runner、Codex 进程 adapter、任务范围 HTTP 触发、执行投影与 Findings Artifact/事件
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
 - Go 接口测试与 React 组件测试
 
@@ -17,10 +17,11 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；第一个实现切片见第 31 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～32 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
-容器隔离探针与只读进程 adapter。Runner 尚未接入 HTTP 触发、Task 执行状态和结果归档；真实模型联调尚未执行。
+容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
+默认 API 启动未装配 Runner，返回 `503 review_unavailable`；隔离 Worker、服务模型身份和真实模型联调尚未接入。
 以下命令检查已安装 CLI 帮助中声明的所需选项，并记录实际版本与 SHA-256，不调用模型：
 
 ```bash
@@ -46,7 +47,7 @@ agent-platform/
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
 │       ├── repository/          # Repository Reference 验证接口与错误分类
-│       ├── review/              # 固定评审输入、Findings 契约与 Runner port
+│       ├── review/              # 固定评审输入、执行幂等/投影、Findings 契约与 Runner port
 │       ├── task/                # Task 模型与内存仓库，类似精简的领域/Repository 层
 │       └── workspace/           # Workspace 登记、准备状态机与路径所有权
 ├── CONTEXT.md                   # 领域统一语言，不包含实现细节
@@ -440,6 +441,43 @@ curl -i \
 Task 只保存在 Go 进程内存中，重启服务后数据会丢失。本阶段也还没有数据库、完整状态机
 或工作流执行。
 
+### 只读审阅与 Findings
+
+后端新增 `POST /api/v1/tasks/{id}/review` 和 `GET /api/v1/tasks/{id}/review?tenantId=...`。
+前者只接受 Task 范围的请求坐标，由应用服务读取同租户 `PR_REVIEW / QUEUED` Task 与 READY
+Workspace 的固定 base/head/path，再读取 Git diff、调用 Runner 并校验 Findings。
+二进制、模型、凭据、patch、SHA 与权限参数不能由请求指定；新增接口拒绝未知 JSON 字段。
+
+```bash
+curl -i \
+  -X POST http://localhost:8080/api/v1/tasks/task-1/review \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requestId":"req-review-01",
+    "idempotencyKey":"review:task-1:attempt-1",
+    "tenantId":"tenant-local",
+    "expectedWorkspaceVersion":3
+  }'
+
+curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
+```
+
+当前 `cmd/api` 使用未装配 Runner 的构造入口，因此以上 POST 在满足 Task/Workspace 前置条件后
+返回 `503 review_unavailable`，不会调用本机个人 Codex。集成入口 `NewHandlerWithReviewServices`
+接受由部署装配的 Runner；测试通过此入口贯穿真实 Git、外部假 CLI 进程和真实 HTTP。
+隔离 Worker 与受控模型身份接齐后才启用真实执行。
+
+已装配 Runner 时，首次成功返回 `201` 与 `SUCCEEDED` 执行投影，其中包含
+`PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
+GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELED` 投影。
+相同租户/key/Task/Workspace version 重放成功返回 `200` 与原快照；失败重放原错误，
+不再读取 Git、调用模型或追加事件。改变 Task/version 返回 `409 idempotency_conflict`。
+同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
+终态后使用新 key 会发起新的审阅尝试，即使前次已成功，也会重新执行。
+
+成功追加 `review.started → artifact.created → review.succeeded`；失败或取消只追加开始与终态事件，
+不会保存部分 Findings。Task 的准入状态仍为 QUEUED，审阅执行投影单独管理；所有记录仍只在单进程内存中。
+
 运行后端测试：
 
 ```bash
@@ -470,7 +508,8 @@ GitLab provider。每次提交都有新的 request ID；同一份未修改的 Ta
 `QUEUED / version 2` 替换旧对象。请求期间按钮会禁用，后端校验错误或网络错误会直接
 显示在对应区域。列表请求晚到时，前端按 Task ID 和 version 合并，不让旧快照覆盖新状态。
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动
-发起额外请求。`QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
+发起额外请求。时间线支持审阅执行状态、执行 ID、Findings Artifact ID 与稳定失败码；尚无审阅触发按钮。
+`QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
 base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和内容读取链接。
@@ -495,7 +534,7 @@ node --run build
 
 - 后端：从 `backend/go.mod` 读取 Go 版本，运行 `go vet` 和 race 测试。
 - Go lint：固定 golangci-lint v2.13.2，使用 `backend/.golangci.yml` 的 `standard` 规则并校验配置。
-- 前端：使用 Node 22 和 `npm ci`，运行 lint、类型检查、31 条现有行为测试及生产构建。
+- 前端：使用 Node 22 和 `npm ci`，运行 lint、类型检查、行为测试及生产构建。
 
 本地 Go lint 使用同一版本，安装方式见 [golangci-lint 官方说明](https://golangci-lint.run/docs/welcome/install/local/)。
 安装 v2.13.2 后运行：
@@ -529,8 +568,8 @@ golangci-lint run ./...
   Go 通过方法集合隐式实现接口，不需要写 `implements`。
 - `workspace.Preparer` 类似 Java 应用层定义的基础设施 port；GitLab adapter 负责取得可信 clone URL，
   `gitworkspace.Preparer` 则像封装好的 `ProcessBuilder`，集中控制参数、环境、目录和失败清理。
-- `review.Service` 类似 Java Application Service：它只接受 task/tenant，从 Workspace Manager 取得
-  可信 path/base/head，再调用 `repository.DiffReader` port；Controller 不允许调用方提交 revision。
+- `review.Service` 类似 Java Application Service：它从 Task/Workspace 取得可信 path/base/head，
+  再调用 DiffReader/Runner port；执行前绑定幂等操作，校验 Findings 后归档并记录结果，Controller 不接受 revision。
 - `artifact.Store` 类似带唯一键约束的内存 Repository。Go `[]byte` 与 Java `byte[]` 一样是可变引用，
   因此 Store 在写入和读取时都复制内容，不能只靠 struct/record 宣称“不可变”。
 - `REGISTERED → PREPARING → READY` 类似带 `@Version` 的实体状态迁移。慢 Git I/O 发生时不会持有

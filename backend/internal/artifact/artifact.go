@@ -11,7 +11,10 @@ import (
 
 type Type string
 
-const TypeRepositoryDiff Type = "REPOSITORY_DIFF"
+const (
+	TypeRepositoryDiff   Type = "REPOSITORY_DIFF"
+	TypePRReviewFindings Type = "PR_REVIEW_FINDINGS"
+)
 
 var ErrIdempotencyConflict = errors.New("idempotency key already used with different Artifact content")
 
@@ -32,9 +35,12 @@ type CreateInput struct {
 	TaskID         string
 	WorkspaceID    string
 	IdempotencyKey string
-	Type           Type
-	MediaType      string
-	Content        []byte
+	// Namespace is chosen by the application, never by an HTTP body. The empty
+	// namespace preserves existing user-requested diff archives.
+	IdempotencyNamespace string
+	Type                 Type
+	MediaType            string
+	Content              []byte
 }
 
 type CreateResult struct {
@@ -48,8 +54,9 @@ type storedArtifact struct {
 }
 
 type idempotencyScope struct {
-	tenantID string
-	key      string
+	tenantID  string
+	key       string
+	namespace string
 }
 
 type creationRecord struct {
@@ -74,7 +81,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}
+	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey, namespace: input.IdempotencyNamespace}
 	if record, ok := s.creates[scope]; ok {
 		stored := s.byID[record.artifactID]
 		if stored.metadata.TaskID != input.TaskID ||

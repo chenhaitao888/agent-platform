@@ -68,4 +68,21 @@ export type TaskEvent = TaskEventEnvelope &
           }
         }
       }
+    | {
+        eventType:
+          | 'review.started'
+          | 'review.succeeded'
+          | 'review.failed'
+          | 'review.canceled'
+        payload: {
+          review: {
+            executionId: string
+            workspaceId: string
+            workspaceVersion: number
+            state: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELED'
+            artifactId?: string
+            errorCode?: string
+          }
+        }
+      }
   )

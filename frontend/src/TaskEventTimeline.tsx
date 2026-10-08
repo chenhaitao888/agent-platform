@@ -32,6 +32,15 @@ function eventSummary(event: TaskEvent): string {
       return `${event.payload.workspace.state} · version ${event.payload.workspace.version} · ${event.payload.workspace.workspaceId}`
     case 'artifact.created':
       return `${event.payload.artifact.artifactId} · ${event.payload.artifact.type} · ${event.payload.artifact.sizeBytes} B`
+    case 'review.started':
+    case 'review.succeeded':
+    case 'review.failed':
+    case 'review.canceled': {
+      const review = event.payload.review
+      return [review.state, review.executionId, review.workspaceId, review.artifactId, review.errorCode]
+        .filter(Boolean)
+        .join(' · ')
+    }
   }
 }
 

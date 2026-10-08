@@ -109,12 +109,23 @@ func NewHandlerWithWorkspaceServices(
 	root string,
 	gitlabToken string,
 ) (http.Handler, error) {
+	return newWorkspaceHandler(verifier, preparer, diffReader, nil, root, gitlabToken)
+}
+
+func NewHandlerWithReviewServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, root, gitlabToken string) (http.Handler, error) {
+	if runner == nil {
+		return nil, errors.New("review runner is required")
+	}
+	return newWorkspaceHandler(verifier, preparer, diffReader, runner, root, gitlabToken)
+}
+
+func newWorkspaceHandler(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, root, gitlabToken string) (http.Handler, error) {
 	tasks := task.NewStore()
 	workspaces, err := workspace.NewManagerWithPreparer(tasks, verifier, preparer, root)
 	if err != nil {
 		return nil, err
 	}
-	return newHandlerWithDiffReader(tasks, workspaces, diffReader, verifier, gitlabToken), nil
+	return newHandlerWithRunner(tasks, workspaces, diffReader, verifier, runner, gitlabToken), nil
 }
 
 func newHandler(tasks *task.Store, workspaces *workspace.Manager, resolver repository.ReferenceResolver, gitlabToken string) http.Handler {
@@ -122,12 +133,16 @@ func newHandler(tasks *task.Store, workspaces *workspace.Manager, resolver repos
 }
 
 func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver, gitlabToken string) http.Handler {
+	return newHandlerWithRunner(tasks, workspaces, diffReader, resolver, nil, gitlabToken)
+}
+
+func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver, runner review.Runner, gitlabToken string) http.Handler {
 	artifacts := artifact.NewStore()
 	h := &handler{
 		tasks:      tasks,
 		resolver:   resolver,
 		workspaces: workspaces,
-		reviews:    review.NewServiceWithArtifactStore(workspaces, diffReader, artifacts, tasks),
+		reviews:    review.NewServiceWithRunner(workspaces, diffReader, artifacts, tasks, runner),
 		artifacts:  artifacts,
 		logSecret:  strings.TrimSpace(gitlabToken),
 	}
@@ -142,6 +157,8 @@ func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, 
 	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace", h.getWorkspace)
 	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace/diff", h.getWorkspaceDiff)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/artifacts/diff", h.archiveWorkspaceDiff)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/review", h.executeReview)
+	mux.HandleFunc("GET /api/v1/tasks/{id}/review", h.getReviewExecution)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.getArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.getArtifactContent)
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)
@@ -706,12 +723,23 @@ func exceedsIdentifierLimit(values ...string) bool {
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request, destination any) bool {
+	return decodeRequestFields(w, r, destination, false)
+}
+
+func decodeStrictRequest(w http.ResponseWriter, r *http.Request, destination any) bool {
+	return decodeRequestFields(w, r, destination, true)
+}
+
+func decodeRequestFields(w http.ResponseWriter, r *http.Request, destination any, strict bool) bool {
 	// MaxBytesReader 限制实际读取量，不依赖客户端可能伪造或省略的 Content-Length。
 	// 所有写接口共用此入口，避免某条路由漏掉限制。
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	// 请求体已经只读解码；关闭错误不替代解码结果或已写出的 HTTP 响应。
 	defer func() { _ = r.Body.Close() }()
 	decoder := json.NewDecoder(r.Body)
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	if err := decoder.Decode(destination); err != nil {
 		writeDecodeError(w, err)
 		return false

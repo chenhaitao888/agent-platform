@@ -60,14 +60,28 @@ const (
 	EventTypeWorkspaceReady             EventType = "workspace.ready"
 	EventTypeWorkspacePreparationFailed EventType = "workspace.preparation_failed"
 	EventTypeArtifactCreated            EventType = "artifact.created"
+	EventTypeReviewStarted              EventType = "review.started"
+	EventTypeReviewSucceeded            EventType = "review.succeeded"
+	EventTypeReviewFailed               EventType = "review.failed"
+	EventTypeReviewCanceled             EventType = "review.canceled"
 )
 
-// EventType 决定下面哪个分支有值；三种 version 分属不同对象，不能混用。
-// Java 可类比由 Task/Workspace/Artifact record 组成的 sealed payload 类型。
+// EventType 决定下面哪个分支有值；version 分属不同对象，不能混用。
+// Java 可类比由 Task/Workspace/Artifact/Review record 组成的 sealed payload 类型。
 type EventPayload struct {
 	Task      *TaskEventPayload      `json:"task,omitempty"`
 	Workspace *WorkspaceEventPayload `json:"workspace,omitempty"`
 	Artifact  *ArtifactEventPayload  `json:"artifact,omitempty"`
+	Review    *ReviewEventPayload    `json:"review,omitempty"`
+}
+
+type ReviewEventPayload struct {
+	ExecutionID      string `json:"executionId"`
+	WorkspaceID      string `json:"workspaceId"`
+	WorkspaceVersion uint64 `json:"workspaceVersion"`
+	State            string `json:"state"`
+	ArtifactID       string `json:"artifactId,omitempty"`
+	ErrorCode        string `json:"errorCode,omitempty"`
 }
 
 type TaskEventPayload struct {
@@ -350,6 +364,10 @@ func (p EventPayload) clone() EventPayload {
 	if p.Artifact != nil {
 		artifactPayload := *p.Artifact
 		cloned.Artifact = &artifactPayload
+	}
+	if p.Review != nil {
+		reviewPayload := *p.Review
+		cloned.Review = &reviewPayload
 	}
 	return cloned
 }
