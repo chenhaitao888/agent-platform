@@ -86,6 +86,18 @@ func TestReviewExecutionArchivesFindingsThroughRealGitCLIAndHTTP(t *testing.T) {
 	requestReviewInputTest(t, client, server.URL+"/api/v1/artifacts/"+metadata.ID+"/content?tenantId=other-tenant", http.MethodGet, "", http.StatusNotFound)
 }
 
+func TestReviewExecutionKeepsRuntimeIdentityInSavedProjection(t *testing.T) {
+	fixture := newReviewExecutionFixture(t, "success", 5*time.Second)
+	response := fixture.post(context.Background(), "identity", "identity", fixture.ready.Version)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("%d %s", response.Code, response.Body.String())
+	}
+	operation := fixture.latest(t)
+	if operation.Runtime == nil || operation.Runtime.Integration != "exec" || operation.Runtime.CodexVersion != "0.160.0" || len(operation.Runtime.BinarySHA256) != 64 || operation.Runtime.Model != "review-fixture" {
+		t.Fatalf("missing verified deployment identity: %#v", operation.Runtime)
+	}
+}
+
 func TestReviewExecutionReplaysBeforeReadingGitOrLaunchingCLI(t *testing.T) {
 	fixture := newReviewExecutionFixture(t, "success", 5*time.Second)
 	first := fixture.post(context.Background(), "review-replay", "req-first", fixture.ready.Version)
@@ -662,6 +674,10 @@ type reviewExecutionFixture struct {
 }
 
 func newReviewExecutionFixture(t *testing.T, mode string, timeout time.Duration) reviewExecutionFixture {
+	return newReviewExecutionFixtureWithRunner(t, mode, timeout, nil)
+}
+
+func newReviewExecutionFixtureWithRunner(t *testing.T, mode string, timeout time.Duration, factory func(string) review.Runner) reviewExecutionFixture {
 	t.Helper()
 	source := t.TempDir()
 	gitForReviewInputTest(t, source, "init", "--initial-branch=master")
@@ -753,9 +769,13 @@ while True:
 			t.Fatal(err)
 		}
 	}
-	runner, err := codex.NewExecRunner(context.Background(), codex.ExecConfig{Binary: binary, WorkspaceRoot: root, Model: "review-fixture", Timeout: timeout})
+	execRunner, err := codex.NewExecRunner(context.Background(), codex.ExecConfig{Binary: binary, WorkspaceRoot: root, Model: "review-fixture", Timeout: timeout})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var runner review.Runner = execRunner
+	if factory != nil {
+		runner = factory(root)
 	}
 	prepare := workspacePreparerFunc(func(ctx context.Context, reference task.RepositoryReference, destination string) error {
 		return preparer.Prepare(ctx, gitworkspace.Input{CloneURL: (&url.URL{Scheme: "file", Path: source}).String(), BaseSHA: reference.BaseSHA, HeadSHA: reference.HeadSHA, Destination: destination})

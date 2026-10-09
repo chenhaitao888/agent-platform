@@ -14,10 +14,10 @@ var (
 )
 
 type RunInput struct {
-	WorktreePath string
-	BaseSHA      string
-	HeadSHA      string
-	Patch        string
+	WorktreePath string `json:"worktreePath"`
+	BaseSHA      string `json:"baseSha"`
+	HeadSHA      string `json:"headSha"`
+	Patch        string `json:"patch"`
 }
 
 const MaxReviewPatchBytes = 1 << 20
@@ -33,4 +33,17 @@ func (input RunInput) Validate() error {
 // binary, model, credentials and permission options are deployment concerns.
 type Runner interface {
 	Run(context.Context, RunInput) (FindingsReport, error)
+}
+
+type RuntimeIdentity struct {
+	Integration  string `json:"integration"`
+	ImageID      string `json:"imageId,omitempty"`
+	CodexVersion string `json:"codexVersion"`
+	BinarySHA256 string `json:"binarySha256"`
+	Model        string `json:"model"`
+}
+
+// RuntimeProfiler exposes verified deployment identity without credentials.
+type RuntimeProfiler interface {
+	RuntimeIdentity() RuntimeIdentity
 }

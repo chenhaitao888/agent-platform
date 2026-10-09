@@ -37,18 +37,20 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件。
-默认启动未装配 Review Runner。数据库、工作流执行、隔离模型 Worker、Codex app-server、
+默认启动未装配 Review Runner；已实现 Docker Worker adapter 与离线执行闭环。数据库、工作流执行、真实模型连接、Codex app-server、
 Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-08）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-09）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
 具备开始 M14 第一个开发切片的条件，具体入口与验收见第 28 步，版本策略与 Harness 分工见第 29 步，
 当前预检边界见第 30 步。第 22～30 步已由用户审阅并提交、推送至 `origin/main`，提交为 `04d9b15`。
 第 31 步的 Runner 内部接口与只读进程 adapter 已由用户审阅，2026-10-08 以 `50025c2` 推送至 `origin/main`。
-第 32 步完成 HTTP 审阅触发、独立执行投影、Findings Artifact/事件与执行前幂等登记，用户已审阅并批准本次提交推送。
-默认 API 启动仍不装配 Runner；真实模型身份、隔离 Worker 和真实模型执行尚未接入。
+第 32 步完成 HTTP 审阅触发、独立执行投影、Findings Artifact/事件与执行前幂等登记，用户审阅后于 2026-10-08
+以 `a90838e` 推送至 `origin/main`。第 33 步完成 Docker 隔离 Worker、Linux 镜像构建、实际身份记录、
+原生 Sandbox 启用门槛及真实 Docker 离线回归，用户于 2026-10-09 审阅并批准本次提交推送。
+默认 API 启动仍不装配 Runner；本机原生 bubblewrap 与 Docker 安全策略不兼容，服务模型身份/网关与真实模型执行待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -57,9 +59,11 @@ agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java main 启动类
 │   ├── cmd/runtimecheck/        # 不调用模型的 Codex 版本与选项预检
+│   ├── cmd/reviewworker/        # Linux 容器内只读 Worker 入口
+│   ├── cmd/workercheck/         # 不调用模型的镜像/原生 Sandbox 启用检查
 │   └── internal/
 │       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
-│       ├── codex/               # CLI 版本/摘要预检与只读 exec 进程 adapter
+│       ├── codex/               # CLI 预检、只读 exec 与 Docker Worker adapter
 │       ├── connector/gitlab/    # GitLab 验证与可信 clone URL adapter
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
@@ -68,7 +72,8 @@ agent-platform/
 │       ├── task/                # Task 模型与内存 Store
 │       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
-├── scripts/                     # 不调用模型的容器隔离预检
+├── scripts/                     # 容器隔离预检及 Linux Worker 镜像构建
+├── worker/Dockerfile            # 显式 Linux 制品与不可变 base 的 Worker 镜像
 ├── CONTEXT.md                   # 领域统一语言
 ├── docs/development-handbook.md # 本手册
 └── README.md                    # 快速启动与使用方式
@@ -2221,6 +2226,118 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）、gofmt 与 Linu
 再做真实模型只读执行与 Findings 质量验收。Skills 继续复用 Codex 原生机制，但当前没有向临时 HOME
 交付场景 Skill，也不会自动继承本机个人 Skill、MCP 配置或登录文件。审阅触发与 Findings 内容展示的 UI 尚待后续切片。
 
+### M14 实现（第 33 步）：Docker 隔离 Worker、镜像与启用门槛
+
+- 状态：完成离线执行切片（2026-10-08），用户于 2026-10-09 审阅并批准本次提交推送。此前已将第 32 步以 `a90838e` 推送。
+- 公共边界：`codex.NewDockerRunner` 实现原有 `review.Runner`，可注入既有 HTTP 装配入口；
+  `cmd/reviewworker` 是 Linux 镜像中的受控入口，`cmd/workercheck` 只执行启动检查。
+- 本轮没有调用真实模型、复制个人登录或加载个人 Skills；默认 API 仍不装配 Runner。
+
+#### 为什么再增加 Docker adapter
+
+第 31 步的进程组可以清理普通子进程，但子进程通过 setsid 离开原进程组后，需要更外层的生命周期边界。
+本步让 Docker daemon 拥有整个 Worker 容器，取消后主动删除容器，清除其所有进程。
+Task、Workspace、Git diff、执行幂等、Findings 和 Artifact 的应用层流程继续复用。
+Java 类比：`review.Runner` 是应用层接口；直接 exec 与 Docker 是两种 adapter；
+容器内 Go Worker 类似一个受控 JVM 作业入口，执行的具体 Harness 仍是原生 Codex CLI。
+
+```text
+HTTP → Review Service → 固定 Git diff → DockerRunner（宿主）
+                                         ↓ stdin JSON
+                                独立 Linux Worker 容器
+                                         ↓
+                                ExecRunner → codex exec
+                                         ↓ 原子读取最终文件并校验
+                                stdout 的受控结果消息
+                                         ↓ 清理容器 + 再校验引用/契约
+                                Service → Findings Artifact/事件
+```
+
+#### 固定部署参数与容器边界
+
+Docker endpoint、镜像、模型名、超时与 UID/GID 由部署配置提供，HTTP 仍只接受 Task 范围的操作坐标。
+只接受显式本机 Unix socket 和不可变镜像 ID / repository digest。先 image inspect 核对本地 Linux 镜像，
+再固定解析出的 Image ID；执行使用 `--pull=never`，不存在的镜像会失败，不自动拉取 latest。
+控制进程为每条 Docker 命令创建临时 HOME/DOCKER_CONFIG，只提供 PATH 与显式 DOCKER_HOST，
+个人 Docker context/config 或环境凭据不进入该命令。Socket 不挂载到 Worker。
+
+| 边界 | 本步实现 |
+| --- | --- |
+| 工作区 | 只挂载当前 `workspace-N`，按原绝对路径 readonly；整个共享 root 不挂载 |
+| 用户 | 非 root；部署 UID/GID 与服务所有者匹配，以读取平台创建的 `0700` 工作区 |
+| 文件系统 | 根只读；`/tmp` 为 64 MiB tmpfs，noexec/nosuid/nodev；HOME/CODEX_HOME 临时创建 |
+| 网络/权限 | network=none、cap-drop=ALL、no-new-privileges，保留 Docker 默认 seccomp |
+| 资源 | 1 CPU、256 MiB 内存、64 PIDs；禁用 daemon 日志，宿主 stdout 另有硬性字节上限 |
+| 生命周期 | 独立随机名称；create → start/attach → rm --force；清理使用独立的 15 秒 context |
+| 输出 | 无宿主可写输出挂载；仅接受 Worker 单条 JSON 消息，引用/Findings 契约再次验证 |
+
+工作区包括 bare repository 和 detached worktree。Git 的 `.git` 指针使用绝对路径，因此只挂载
+当前 Workspace 并保留其原路径，既维持 Git 可读性，也避免交付其他任务目录。
+挂载前复用现有 canonical worktree 校验，并拒绝 CSV 分隔符等会改变 Docker mount 参数解释的路径字符。
+请求 patch 仅进入 stdin JSON，不能增加 Docker 参数、改模型或申请网络权限。
+
+成功、失败、超时和取消均尝试删除当前调用的容器；清理失败会丢弃结果，不发布 Findings。
+启动检查也使用独立容器并执行相同清理。Docker daemon 不可达或宿主进程崩溃时仍可能留下孤儿容器，
+当前只有 label 和独立名称，没有持久调度、后台回收或 reconciliation；不能把有界清理解释为崩溃恢复。
+
+#### 版本、制品与真实启用门槛
+
+构建脚本接受显式 `--codex-version` 与目标架构，从 npm 官方包元数据读取 Linux 制品及 SHA-512 integrity，
+核对内容后提取对应 vendor 目录，交叉编译 Go Worker。Docker build context 仅含 Worker 与 Linux 制品。
+本机 macOS Codex 安装、个人 HOME、配置、Skills 和登录文件均不参与镜像。
+Base 镜像也必须已在本地，并与目标架构一致；构建固定其实际 ID，RUN 步骤禁用网络。
+构建支持当前 Docker 的旧构建器，不依赖 `COPY --chmod` 或新增 buildx 插件。
+
+运行检查实际版本、SHA-256、只读/ephemeral/忽略用户配置与规则等选项及 no-daemon/approval/model 能力，
+不比较某个固定版本号。升级时重新构建、检查和运行回归，更新实际制品记录；测试中的 0.999.0/9.999.0
+可通过相同能力门槛，没有把本次验证的 0.160.0 变成运行时硬依赖。
+
+**额外门槛：在容器中实际用原生 `codex sandbox` 的只读策略运行 `/bin/true`，不调用模型。**
+CLI 仅声明能力并不代表当前内核/容器策略允许其 sandbox 初始化。
+只有成功执行才报告 `sandboxVerified: true`；失败的 Worker 不会构造为可用 Runner，返回
+`incompatible Codex runtime: native read-only sandbox could not start`，探针容器仍会清理。
+
+本机实际构建记录（Linux/arm64）：
+
+- Base：`alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8`。
+- Worker：`sha256:645186d2dd7a5a8d2c97f79942892a3273e0c990dc1958a3ef6d26bba588f3eb`，本地镜像，尚未发布。
+- CLI：0.160.0，Linux binary SHA-256 `50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0`。
+- npm 制品为 `@openai/codex@0.160.0-linux-arm64`，已核对其 registry SHA-512 integrity。
+
+实际元数据检查通过，但 **本机 Docker 的默认策略阻止 bubblewrap 创建命名空间**，
+直接原生 sandbox 检查输出 `No permissions to create a new namespace`，新的启动门槛如实拒绝启用。
+没有自动放宽权限、改 Docker daemon 配置或切换到不受限制的 Codex 模式。
+当前 Alpine 用于离线 Worker 验证；真实部署还需受控 Git/证书等基础工具。
+因此本步完成隔离 adapter 和离线链路，真实 Codex 模型执行仍需先处理 sandbox 兼容性，再接场景服务身份/模型代理。
+
+#### 实际运行身份与验证
+
+Review 执行投影增加可选 `runtime`，来自内置 Runner 的已核验部署信息：integration、实际 CLI 版本、
+binary SHA-256、模型名；Docker 另有 Image ID。身份在执行登记时保存，成功/失败投影及幂等快照沿用该值，
+不保存凭据。模型名目前只是部署选择，不能代表已经发生真实推理。Artifact 的 Findings schema 仍为 1.0。
+
+先写公共 Docker Runner 的成功行为，因接口缺失编译 RED；实现受控 create/start/remove 和结果返回后 GREEN。
+超限输出回归发现匿名嵌入 bytes.Buffer 使 I/O 快捷路径绕过 Write 限长：先得到真实 RED，
+改为非匿名成员后超限结果被拒绝。挂载路径中的 CSV 分隔符也先复现了到达 Docker 的 RED，增加拒绝规则后 GREEN。
+执行身份回归先因缺少字段 RED，补齐保存与投影后 GREEN。
+真实 Docker 联调另发现旧构建器不支持 COPY --chmod，并修正为普通 COPY 与显式 chmod。
+原生 sandbox 的实际失败促成上述启动门槛，避免元数据通过后错误地宣布 Worker 可启用。
+
+普通测试只替代系统外部 Docker CLI/模型 CLI，不替代平台 Store、Manager、Service 或 Runner。
+覆盖安全配置拒绝、固定 Docker 参数、stdin 输入、独立容器、输出超限/非法/引用不符、非零退出、
+Worker 错误分类、取消/超时、清理失败、原生 sandbox 启用门槛、HTTP 实际身份投影及 Worker 请求中的配置覆盖。
+真实 Docker 使用交叉编译的 Go Worker 与外部假模型 CLI，贯穿已有 HTTP/Git/Workspace/Artifact/事件，
+假 CLI 在容器内检查只读 mount、写入失败、非 root、capabilities/no-new-privileges、临时 HOME、
+没有传入凭据/daemon endpoint、没有非 loopback 的 UP 接口及默认路由。
+宿主查询实际进程，确认 setsid 子进程已脱离原进程组，再取消请求；取消和超时后均没有遗留当前调用的容器。
+真实 Linux Codex 镜像也执行了启动门槛，确认当前宿主被拒绝，并确认探针清理完成。
+
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）及 Linux/amd64 编译通过；
+真实 Docker 四个子场景（归档/重放、逃逸子进程取消、超时、真实 CLI 启用门槛）均通过。
+前端未改动，沿用第 32 步的 50 条行为测试与构建验证。
+构建/检查/联调命令见 README 的“隔离 Review Worker”。本切片已由用户审阅并批准本次提交推送。
+按用户要求，本轮完成推送后停止，下一切片明天继续；下一步先处理原生 Sandbox 与 Docker 的兼容性，再接服务模型身份/网关。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2252,10 +2369,11 @@ node --run build
   它们还不是事务 Outbox，也没有发布到 Event Bus。
 - Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
-  默认启动未装配 Runner；只读 Worker、服务模型身份/网关、实际模型输出质量及场景 Skills 交付未接入。
+  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter 与离线联调，当前本机原生 sandbox 启动被拒绝。
+  服务模型身份/网关、真实模型输出质量及场景 Skills 交付未接入；Worker 网络仍固定为 none。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
-  清理 API、runtimeId、挂载或孤儿目录回收。
+  清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。
 - Workspace prepare 当前在一个 HTTP 请求内同步执行；大仓库尚未进入持久化异步 Activity，也没有
   独立的 wall-clock timeout、进度事件或取消后的 reconciliation。
 - GitLab 验证只确认项目和两个 commit 可读取，尚未确认 base/head 祖先关系、Merge Request 归属或

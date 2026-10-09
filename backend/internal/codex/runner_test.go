@@ -89,6 +89,8 @@ elif args == ["exec", "--help"]:
     print(config["execHelp"])
 elif args == ["--help"]:
     print(config["rootHelp"])
+elif "sandbox" in args:
+    if config["mode"] == "sandbox-fail": sys.exit(23)
 else:
     schema = args[args.index("--output-schema") + 1]
     output = args[args.index("--output-last-message") + 1]

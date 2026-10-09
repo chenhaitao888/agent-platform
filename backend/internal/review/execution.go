@@ -47,6 +47,7 @@ type Execution struct {
 	HeadSHA          string             `json:"headSha"`
 	State            ExecutionState     `json:"state"`
 	Artifact         *artifact.Artifact `json:"artifact,omitempty"`
+	Runtime          *RuntimeIdentity   `json:"runtime,omitempty"`
 	ErrorCode        string             `json:"errorCode,omitempty"`
 	StartedAt        time.Time          `json:"startedAt"`
 	CompletedAt      time.Time          `json:"completedAt,omitzero"`
@@ -130,6 +131,10 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput) (ExecuteResul
 	s.nextExecutionID++
 	operation := Execution{ID: fmt.Sprintf("review-%d", s.nextExecutionID), TenantID: current.TenantID, TaskID: current.TaskID, WorkspaceID: current.ID, WorkspaceVersion: current.Version,
 		BaseSHA: current.BaseSHA, HeadSHA: current.HeadSHA, State: ExecutionRunning, StartedAt: time.Now().UTC()}
+	if profiler, ok := s.runner.(RuntimeProfiler); ok {
+		identity := profiler.RuntimeIdentity()
+		operation.Runtime = &identity
+	}
 	s.executions[scope] = executionRecord{taskID: input.TaskID, expectedWorkspaceVersion: input.ExpectedWorkspaceVersion, execution: operation}
 	s.latest[input.TaskID] = operation
 	s.appendReviewEvent(operation, task.EventTypeReviewStarted, input.RequestID, operation.StartedAt)
@@ -149,7 +154,6 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput) (ExecuteResul
 	if err := runInput.Validate(); err != nil {
 		return s.failExecution(scope, operation, input.RequestID, err)
 	}
-	// codex exec
 	report, err := s.runner.Run(ctx, runInput)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return s.failExecution(scope, operation, input.RequestID, ctxErr)
@@ -248,6 +252,10 @@ func (s *Service) appendReviewEvent(operation Execution, eventType task.EventTyp
 }
 
 func (operation Execution) clone() Execution {
+	if operation.Runtime != nil {
+		identity := *operation.Runtime
+		operation.Runtime = &identity
+	}
 	if operation.Artifact != nil {
 		metadata := *operation.Artifact
 		operation.Artifact = &metadata

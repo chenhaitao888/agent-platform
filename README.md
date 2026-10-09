@@ -470,6 +470,8 @@ curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
 已装配 Runner 时，首次成功返回 `201` 与 `SUCCEEDED` 执行投影，其中包含
 `PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
 GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELED` 投影。
+内置 Runner 还会记录 `runtime`：集成方式、实际 Codex 版本/二进制 SHA-256、部署模型名，
+Docker Runner 另记录不可变镜像 ID；这些字段不包含凭据。
 相同租户/key/Task/Workspace version 重放成功返回 `200` 与原快照；失败重放原错误，
 不再读取 Git、调用模型或追加事件。改变 Task/version 返回 `409 idempotency_conflict`。
 同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
@@ -484,6 +486,58 @@ GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELE
 cd backend
 go test ./...
 ```
+
+### 隔离 Review Worker
+
+`codex.NewDockerRunner` 已实现同一个 Review Runner 接口，可注入 `NewHandlerWithReviewServices`。
+每次调用创建独立容器：仅将当前 Workspace 的目录按原绝对路径只读挂载；网络固定为 none，
+根文件系统只读、非 root 用户、删除 capabilities、禁止提权，限制 CPU/内存/PID，临时 HOME 使用 tmpfs。
+Docker socket 留在宿主控制进程，Worker 不继承个人登录、MCP、Skills 或环境凭据。
+输出经过限长与 Findings 引用校验，并在容器清理成功后才交给归档服务。
+
+Worker 镜像通过显式选择的 Linux Codex 发布制品构建，不要求某一个 Codex 版本。
+下面的 `0.160.0` 只是本次验证用的版本；升级时选择新版本，重新构建并通过能力与隔离检查。
+base image 必须是与目标架构一致、已在本地的 Linux 镜像，带 `/bin/sh` 和 `/bin/true`。
+以下 Alpine 仅用于离线联调，真实模型部署还需要受控 Git/证书等工具与模型连接配置。
+
+```bash
+# 在仓库根目录执行；--docker-host 使用实际本机 Docker Unix socket。
+python3 scripts/build-review-worker.py \
+  --codex-version 0.160.0 --arch arm64 \
+  --base-image alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
+  --docker-host unix:///absolute/path/to/docker.sock
+```
+
+脚本核对 npm 制品的 SHA-512 integrity，交叉编译 Linux Worker，仅向 build context 交付 Worker
+与 Linux vendor 制品，输出镜像 ID、base ID、实际 CLI 制品与 SHA-256。可用 `--codex-archive /path/to/codex.tgz`
+复用本地制品，仍核对 registry integrity。运行只接受镜像 ID 或 repository digest，使用 `--pull=never`。
+
+```bash
+cd backend
+go run ./cmd/workercheck \
+  --docker-host unix:///absolute/path/to/docker.sock \
+  --image sha256:<构建输出的镜像ID> \
+  --workspace-root /absolute/path/to/workspaces \
+  --model deployment-review-model
+```
+
+此检查不会调用模型；它在隔离容器中核对实际 CLI 的能力/摘要，并用原生只读 sandbox 运行 `/bin/true`。
+只有实际 sandbox 可以启动才返回 `sandboxVerified: true`。UID/GID 默认使用当前服务用户，必须可读取
+由该用户拥有的 `0700` Workspace；容器禁止 UID 0。
+本机 Docker 的默认安全策略目前阻止 bubblewrap 创建命名空间，原生 Sandbox 检查会拒绝启用真实 Worker。
+目前默认 API 仍返回 `review_unavailable`；Sandbox 兼容性、受控模型代理/服务身份需在下一切片解决。
+
+真实 Docker 回归通过外部假模型 CLI 验证完整 HTTP/Git/Worker/Artifact 链路，无需模型账户：
+
+```bash
+AGENT_PLATFORM_DOCKER_TEST=1 \
+AGENT_PLATFORM_DOCKER_HOST=unix:///absolute/path/to/docker.sock \
+AGENT_PLATFORM_DOCKER_BASE=alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
+go test ./internal/httpapi -run '^TestDockerWorkerIntegration$' -count=1 -v
+```
+
+可额外设置 `AGENT_PLATFORM_CODEX_IMAGE=sha256:<真实Worker镜像ID>` 验证原生 sandbox 启用门槛。
+普通 `go test ./...` 会跳过 Docker 联调；本次真实 Docker 联调已实际执行，未调用模型。
 
 ## 启动前端
 
