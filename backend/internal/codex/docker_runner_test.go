@@ -229,6 +229,21 @@ func TestDockerRunnerRejectsImageWithoutVerifiedNativeSandbox(t *testing.T) {
 func TestDockerRunnerRejectsUnsafeDeploymentAndWorkspaceBeforeDocker(t *testing.T) {
 	fixture := newDockerFixture(t)
 	for _, change := range []func(*codex.DockerConfig){
+		func(c *codex.DockerConfig) {
+			c.Gateway = &codex.GatewayConfig{BaseURL: "http://models.example.test", ServicePrincipal: "review"}
+		},
+		func(c *codex.DockerConfig) {
+			c.Gateway = &codex.GatewayConfig{BaseURL: "https://user:secret@models.example.test", ServicePrincipal: "review"}
+		},
+		func(c *codex.DockerConfig) {
+			c.Gateway = &codex.GatewayConfig{BaseURL: "https://models.example.test?token=secret", ServicePrincipal: "review"}
+		},
+		func(c *codex.DockerConfig) {
+			c.Gateway = &codex.GatewayConfig{BaseURL: "https://models.example.test", ServicePrincipal: "review", CredentialFile: "relative.json"}
+		},
+		func(c *codex.DockerConfig) {
+			c.Gateway = &codex.GatewayConfig{BaseURL: "https://models.example.test", ServicePrincipal: "review", CredentialFile: filepath.Join(c.WorkspaceRoot, "workspace-1", "worktree", "service-key.json")}
+		},
 		func(c *codex.DockerConfig) { c.SeccompPolicy = "unconfined" },
 		func(c *codex.DockerConfig) { c.SeccompPolicy = "/tmp/custom-policy.json" },
 		func(c *codex.DockerConfig) { c.Image = "codex:latest" },
@@ -329,13 +344,14 @@ elif args[0] == "create":
 elif args[0] == "start":
     with open(directory+"/"+args[-1]) as source: created = json.load(source)
     if "--probe" in created:
-        print(json.dumps(dict(sandboxVerified=not os.path.exists(directory+"/unverified-sandbox"),profile=dict(version="0.999.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model"]))))
+        print(json.dumps(dict(gatewaySupported=not os.path.exists(directory+"/no-gateway"),sandboxVerified=not os.path.exists(directory+"/unverified-sandbox"),profile=dict(version="0.999.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model","--config"]))))
     else:
         if os.path.exists(directory+"/mode"):
             with open(directory+"/mode") as source: mode=source.read()
         else: mode="success"
         if mode == "hang": time.sleep(30)
         request=json.loads(body)
+        if "input" in request: request=request["input"]
         if mode == "nonzero": sys.exit(23)
         if mode == "oversize": print("x"*300000)
         elif mode == "invalid": print('{"report":{}}')

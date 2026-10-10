@@ -17,7 +17,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～32 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～35 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -471,7 +471,8 @@ curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
 `PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
 GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELED` 投影。
 内置 Runner 还会记录 `runtime`：集成方式、实际 Codex 版本/二进制 SHA-256、部署模型名，
-Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 SHA-256；这些字段不包含凭据。
+Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 SHA-256；
+配置模型连接时还记录 `gatewayUrl` 与部署 `servicePrincipal`，这些字段不包含凭据。
 相同租户/key/Task/Workspace version 重放成功返回 `200` 与原快照；失败重放原错误，
 不再读取 Git、调用模型或追加事件。改变 Task/version 返回 `409 idempotency_conflict`。
 同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
@@ -531,7 +532,8 @@ go run ./cmd/workercheck \
 策略由部署选择，任务不能提供自定义文件、JSON 或 `unconfined`；不会修改 Docker daemon 或宿主 sysctl。
 它增加了内核命名空间接口的可达范围，需要在目标部署重新验证；内核/LSM 仍可拒绝启动。
 策略来源、参数限制与取舍见 [seccomp 说明](backend/internal/codex/policies/README.md)。
-目前默认 API 仍返回 `review_unavailable`；受控模型代理/服务身份与真实模型执行尚未接入。
+目前默认 API 仍返回 `review_unavailable`；已实现受控 provider 配置与服务凭据交付，
+模型网络出口、企业代理/Broker 与真实模型执行尚未接入。
 
 真实 Docker 回归通过外部假模型 CLI 验证完整 HTTP/Git/Worker/Artifact 链路，无需模型账户：
 
@@ -547,6 +549,50 @@ go test ./internal/httpapi -run '^TestDockerWorkerIntegration$' -count=1 -v
 验证只读文件系统、无网络及 keyctl/AF_ALG/不带新用户命名空间的 unshare/读写 remount 被拒绝；
 启用门槛也必须成功。未设置策略时继续使用 Docker 默认策略，允许启用门槛如实报告宿主不兼容。
 普通 `go test ./...` 会跳过 Docker 联调；本次真实 Docker 联调已实际执行，未调用模型。
+
+### 模型连接与服务凭据
+
+按用户提供的连接信息，联调目标为 `https://api.deepseek.com`，模型可选择 `deepseek-flash` 或
+`deepseek-v4-pro`。DeepSeek 已支持 Codex 使用的 Responses API，格式兼容性见
+[DeepSeek 官方文档](https://api-docs.deepseek.com/guides/responses_api/)；Codex 的 provider/环境凭据参数见
+[OpenAI Docs](https://learn.chatgpt.com/docs/config-file/config-reference)。
+本步使用受控 CLI 参数设置独立的 `agent_gateway` provider，不修改本机 Codex 配置、登录或模型目录。
+
+部署可为 `codex.DockerConfig` 配置以下连接信息；HTTP 请求仍不能覆盖它：
+
+```go
+Gateway: &codex.GatewayConfig{
+    BaseURL:          "https://api.deepseek.com",
+    ServicePrincipal: "pr-review-deepseek",
+    CredentialFile:   "/absolute/path/to/agent-credentials/model.json",
+},
+```
+
+`ServicePrincipal` 是部署登记的主体标签；发行方账户、权限与是否为专用服务 key 需由部署核验，
+标签本身不能证明它们。本轮使用用户指定的 DeepSeek 官方 API，尚未建设架构中的企业模型网关。
+`CredentialFile` 应放在 Workspace root 之外，父目录需已存在；建议目录 `0700`、文件 `0600`。
+文件必须由服务进程 UID 拥有，只接受普通文件、单一硬链接、私有权限和最多 8 KiB。
+下面是文件格式示例，实际 key 只在本地编辑，不进入源码、命令参数或聊天：
+
+```json
+{
+  "servicePrincipal": "pr-review-deepseek",
+  "token": "<在本地填入专用的 DeepSeek API key>"
+}
+```
+
+无过期时间的 API key 可省略 `expiresAt`；短时凭据可增加 RFC3339 UTC 时间，必须覆盖本次执行超时。
+每次新执行重新读取该文件，可用同目录原子替换完成 key 轮换；平台不自动签发、刷新或撤销凭据。
+宿主只经 Worker stdin 传递凭据，Docker 参数、Docker 客户端环境及挂载不含 key；
+Worker 在内存中接收，仅向执行 CLI 提供固定的 `AGENT_PLATFORM_MODEL_TOKEN`。
+CLI stdout/stderr 不归档，包含完整已知 key 的 Findings 文本也会被拒绝。
+这只是完整 key 的输出检查，不能代替代理侧凭据隔离或阻止编码/拆分后的泄露。
+
+可额外给 `workercheck` 提供 `--gateway-base-url https://api.deepseek.com --service-principal pr-review-deepseek`，
+验证原生 CLI 能接受受控 provider 参数。此检查不需要凭据文件，也不验证 key、模型额度或真实推理。
+给上述 Docker 联调命令增加 `AGENT_PLATFORM_GATEWAY_TEST=1` 会使用测试 key，贯穿
+HTTP/Git/Worker/模型替身/Artifact，并验证执行投影中的连接身份。
+Worker 网络仍固定为 none；实际模型访问需在下一切片接好限定模型出口后再启用。
 
 ## 启动前端
 

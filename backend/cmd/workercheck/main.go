@@ -22,7 +22,12 @@ func main() {
 	flag.DurationVar(&config.Timeout, "timeout", time.Minute, "review execution limit")
 	flag.IntVar(&config.UID, "uid", config.UID, "non-root workspace owner UID")
 	flag.IntVar(&config.GID, "gid", config.GID, "workspace owner GID")
+	gatewayURL := flag.String("gateway-base-url", "", "deployment HTTPS Responses API endpoint")
+	principal := flag.String("service-principal", "", "deployment model service identity")
 	flag.Parse()
+	if *gatewayURL != "" || *principal != "" {
+		config.Gateway = &codex.GatewayConfig{BaseURL: *gatewayURL, ServicePrincipal: *principal}
+	}
 	runner, err := codex.NewDockerRunner(context.Background(), config)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)

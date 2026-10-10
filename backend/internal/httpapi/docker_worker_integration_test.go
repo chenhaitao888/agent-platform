@@ -28,6 +28,18 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	base := os.Getenv("AGENT_PLATFORM_DOCKER_BASE")
 	realImage := os.Getenv("AGENT_PLATFORM_CODEX_IMAGE")
 	policy := os.Getenv("AGENT_PLATFORM_SECCOMP_POLICY")
+	var gateway *codex.GatewayConfig
+	if os.Getenv("AGENT_PLATFORM_GATEWAY_TEST") == "1" {
+		credential := filepath.Join(t.TempDir(), "service-credential.json")
+		content, err := json.Marshal(map[string]string{"servicePrincipal": "offline-deepseek-service", "token": "docker-fixture-service-key"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(credential, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		gateway = &codex.GatewayConfig{BaseURL: "https://api.deepseek.com", ServicePrincipal: "offline-deepseek-service", CredentialFile: credential}
+	}
 	if endpoint == "" || base == "" {
 		t.Fatal("provide explicit local Docker endpoint and immutable base")
 	}
@@ -96,7 +108,7 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	newFixture := func(t *testing.T, timeout time.Duration) reviewExecutionFixture {
 		t.Helper()
 		return newReviewExecutionFixtureWithRunner(t, "success", timeout, func(root string) review.Runner {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,6 +127,9 @@ func TestDockerWorkerIntegration(t *testing.T) {
 		}
 		if policy == codex.SeccompCodexBwrap && (operation.Runtime.SeccompPolicy != policy || len(operation.Runtime.SeccompSHA256) != 64) {
 			t.Fatal("saved execution did not identify the actual seccomp policy")
+		}
+		if gateway != nil && (operation.Runtime.GatewayURL != gateway.BaseURL || operation.Runtime.ServicePrincipal != gateway.ServicePrincipal || strings.Contains(response.Body.String(), "docker-fixture-service-key")) {
+			t.Fatal("execution projection did not preserve safe gateway identity")
 		}
 		contentResponse := httptest.NewRecorder()
 		fixture.handler.ServeHTTP(contentResponse, httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/"+operation.Artifact.ID+"/content?tenantId="+fixture.ready.TenantID, nil))
@@ -203,7 +218,7 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	}
 	if realImage != "" {
 		t.Run("real_codex_sandbox_gate_without_inference", func(t *testing.T) {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway})
 			if err != nil {
 				if policy == codex.SeccompCodexBwrap {
 					t.Fatal("reviewed bwrap policy did not enable the real native sandbox: ", err)

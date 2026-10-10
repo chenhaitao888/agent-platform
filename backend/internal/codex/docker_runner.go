@@ -29,15 +29,18 @@ type DockerConfig struct {
 	Timeout                                       time.Duration
 	UID, GID                                      int
 	SeccompPolicy                                 string
+	Gateway                                       *GatewayConfig
 }
 
 type DockerProfile struct {
-	ImageID         string  `json:"imageId"`
-	Architecture    string  `json:"architecture"`
-	CLI             Profile `json:"cli"`
-	SandboxVerified bool    `json:"sandboxVerified"`
-	SeccompPolicy   string  `json:"seccompPolicy"`
-	SeccompSHA256   string  `json:"seccompSha256,omitempty"`
+	ImageID          string  `json:"imageId"`
+	Architecture     string  `json:"architecture"`
+	CLI              Profile `json:"cli"`
+	SandboxVerified  bool    `json:"sandboxVerified"`
+	SeccompPolicy    string  `json:"seccompPolicy"`
+	SeccompSHA256    string  `json:"seccompSha256,omitempty"`
+	GatewayURL       string  `json:"gatewayUrl,omitempty"`
+	ServicePrincipal string  `json:"servicePrincipal,omitempty"`
 }
 
 type DockerRunner struct {
@@ -58,6 +61,10 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	if err != nil {
 		return nil, err
 	}
+	config.Gateway, err = validatedGateway(config.Gateway)
+	if err != nil {
+		return nil, err
+	}
 	if !immutableImage.MatchString(config.Image) || !strings.HasPrefix(config.Endpoint, "unix:///") ||
 		strings.ContainsAny(config.Endpoint, "\r\n\x00") || config.UID <= 0 || config.GID < 0 ||
 		config.Timeout <= 0 || strings.TrimSpace(config.Model) == "" ||
@@ -72,6 +79,9 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	if err != nil || !info.IsDir() {
 		return nil, ErrInvalidRunnerConfig
 	}
+	if _, err := gatewayCredentialLocation(config.Gateway, root); err != nil {
+		return nil, err
+	}
 	binary, err := exec.LookPath(config.Binary)
 	if err != nil {
 		return nil, ErrInvalidRunnerConfig
@@ -82,6 +92,9 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	}
 	config.WorkspaceRoot = root
 	runner := &DockerRunner{config: config, seccomp: seccomp, profile: DockerProfile{SeccompPolicy: policy, SeccompSHA256: policyDigest}}
+	if config.Gateway != nil {
+		runner.profile.GatewayURL, runner.profile.ServicePrincipal = config.Gateway.BaseURL, config.Gateway.ServicePrincipal
+	}
 	startup, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	data, err := runner.command(startup, nil, 64<<10, "image", "inspect", "--", config.Image)
@@ -108,6 +121,9 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 		return nil, fmt.Errorf("%w: native read-only sandbox could not start", ErrIncompatibleRuntime)
 	}
 	if err != nil || message.Profile == nil || message.Report != nil || message.ErrorCode != "" || !message.SandboxVerified || !validWorkerProfile(*message.Profile) {
+		return nil, ErrIncompatibleRuntime
+	}
+	if config.Gateway != nil && !message.GatewaySupported {
 		return nil, ErrIncompatibleRuntime
 	}
 	runner.profile.CLI = *message.Profile
@@ -146,7 +162,7 @@ func (r *DockerRunner) Profile() DockerProfile {
 }
 
 func (r *DockerRunner) RuntimeIdentity() review.RuntimeIdentity {
-	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model, SeccompPolicy: r.profile.SeccompPolicy, SeccompSHA256: r.profile.SeccompSHA256}
+	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model, SeccompPolicy: r.profile.SeccompPolicy, SeccompSHA256: r.profile.SeccompSHA256, GatewayURL: r.profile.GatewayURL, ServicePrincipal: r.profile.ServicePrincipal}
 }
 
 func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.FindingsReport, error) {
@@ -163,7 +179,20 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 	if strings.ContainsAny(worktree, ",\"\r\n") {
 		return review.FindingsReport{}, review.ErrInvalidRunInput
 	}
-	request, err := json.Marshal(input)
+	var payload any = input
+	var credential gatewayCredential
+	if r.config.Gateway != nil {
+		credential, err = r.config.Gateway.credential(r.config.Timeout, r.config.WorkspaceRoot)
+		if err != nil {
+			return review.FindingsReport{}, err
+		}
+		encoded, err := json.Marshal(credential)
+		if err != nil {
+			return review.FindingsReport{}, ErrGatewayCredentialUnavailable
+		}
+		payload = workerGatewayRequest{Input: input, Credential: encoded}
+	}
+	request, err := json.Marshal(payload)
 	if err != nil {
 		return review.FindingsReport{}, review.ErrInvalidRunInput
 	}
@@ -174,7 +203,7 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 		return review.FindingsReport{}, err
 	}
 	message, err := decodeWorkerResponse(data)
-	if err != nil || message.Profile != nil || message.SandboxVerified || (message.Report == nil) == (message.ErrorCode == "") {
+	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || (message.Report == nil) == (message.ErrorCode == "") {
 		return review.FindingsReport{}, review.ErrInvalidFindings
 	}
 	if message.ErrorCode != "" {
@@ -184,6 +213,9 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 	report, err := review.ParseFindings(message.Report, input.BaseSHA, input.HeadSHA)
 	if err != nil {
 		return review.FindingsReport{}, err
+	}
+	if findingsContainCredential(report, credential.Token) {
+		return review.FindingsReport{}, review.ErrInvalidFindings
 	}
 	if err := execution.Err(); err != nil {
 		return review.FindingsReport{}, err
@@ -237,6 +269,9 @@ func (r *DockerRunner) container(ctx context.Context, worktree string, input []b
 		root = r.config.WorkspaceRoot
 	}
 	args = append(args, r.profile.ImageID, "--root", root, "--model", r.config.Model, "--timeout", r.config.Timeout.String())
+	if r.config.Gateway != nil {
+		args = append(args, "--gateway-base-url", r.config.Gateway.BaseURL, "--service-principal", r.config.Gateway.ServicePrincipal)
+	}
 	if probe {
 		args = append(args, "--probe")
 	} else {

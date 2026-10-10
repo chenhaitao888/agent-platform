@@ -36,13 +36,15 @@ type Runner interface {
 }
 
 type RuntimeIdentity struct {
-	Integration   string `json:"integration"`
-	ImageID       string `json:"imageId,omitempty"`
-	CodexVersion  string `json:"codexVersion"`
-	BinarySHA256  string `json:"binarySha256"`
-	Model         string `json:"model"`
-	SeccompPolicy string `json:"seccompPolicy,omitempty"`
-	SeccompSHA256 string `json:"seccompSha256,omitempty"`
+	Integration      string `json:"integration"`
+	ImageID          string `json:"imageId,omitempty"`
+	CodexVersion     string `json:"codexVersion"`
+	BinarySHA256     string `json:"binarySha256"`
+	Model            string `json:"model"`
+	SeccompPolicy    string `json:"seccompPolicy,omitempty"`
+	SeccompSHA256    string `json:"seccompSha256,omitempty"`
+	GatewayURL       string `json:"gatewayUrl,omitempty"`
+	ServicePrincipal string `json:"servicePrincipal,omitempty"`
 }
 
 // RuntimeProfiler exposes verified deployment identity without credentials.

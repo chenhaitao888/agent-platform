@@ -40,7 +40,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 默认启动未装配 Review Runner；已实现 Docker Worker adapter 与离线执行闭环。数据库、工作流执行、真实模型连接、Codex app-server、
 Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-09）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-10）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -50,7 +50,10 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 第 32 步完成 HTTP 审阅触发、独立执行投影、Findings Artifact/事件与执行前幂等登记，用户审阅后于 2026-10-08
 以 `a90838e` 推送至 `origin/main`。第 33 步完成 Docker 隔离 Worker、Linux 镜像构建、实际身份记录、
 原生 Sandbox 启用门槛及真实 Docker 离线回归，用户于 2026-10-09 审阅并批准本次提交推送。
-默认 API 启动仍不装配 Runner；本机原生 bubblewrap 与 Docker 安全策略不兼容，服务模型身份/网关与真实模型执行待后续接入。
+第 34 步解决本机原生 bubblewrap 的 seccomp 兼容性，用户审阅后以 `e17e944` 推送至 `origin/main`。
+第 35 步接入受控 provider 配置与服务凭据交付，支持用户指定的 DeepSeek 静态 API key，完成离线验证。
+用户已审阅并授权提交、推送第 35 步；按用户要求，下一步暂停，恢复后再接限定模型出口与真实模型联调。
+默认 API 启动仍不装配 Runner；模型网络出口、企业代理/Broker 与真实模型执行待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -2403,6 +2406,78 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 �
 命令见 README 的“隔离 Review Worker”。下一切片处理受控模型代理/场景服务身份及 Git/证书等运行工具，
 再接真实模型只读执行与 Findings 质量验收；当前不能用离线 sandbox 成功代替真实模型验收。
 
+### M14 实现（第 35 步）：受控模型连接与服务凭据交付
+
+- 状态：完成离线配置切片（2026-10-10），用户已审阅并授权提交、推送；下一步按用户要求暂停。此前第 34 步已以 `e17e944` 推送。
+- 公共边界：`ExecConfig.Gateway`、`DockerConfig.Gateway` 与 `GatewayConfig`；`workercheck` 增加无凭据的连接配置检查。
+- 用户已给出 `https://api.deepseek.com`、`deepseek-flash` / `deepseek-v4-pro`，并说明已申请无过期时间的 API key。
+  本轮只使用测试 key；真实 key 未读取，未调用真实模型。
+
+#### 为什么把连接配置与任务输入分开
+
+模型选择、provider 地址、认证方式与执行主体属于部署授权；patch、仓库内容及 HTTP 请求不能改变它们。
+Gateway 只接受 HTTPS、无 URL 内置凭据/查询参数、有效主体标签和绝对凭据文件路径。
+Java 类比：`GatewayConfig` 类似部署注入的受控 Bean，Task DTO 不包含它；文件读取发生在每次新执行时，
+不会把第一次读取的 key 永久缓存进 Bean。构造时复制部署参数，外部修改原配置对象不能改变已构造的 Runner。
+
+Adapter 以固定 `--config` 参数选择独立 `agent_gateway` provider，使用 Responses API、关闭 WebSocket，
+认证只读取固定的 `AGENT_PLATFORM_MODEL_TOKEN`。仍采用只读、ephemeral、忽略用户配置与规则和临时 HOME。
+服务配置不写入本机 Codex config.toml，也不导入个人登录、Skills 或 DeepSeek 示例中的完整模型目录/提示词。
+有连接配置时额外预检 CLI 的 `--config` 能力，不按固定版本号判断。
+
+已核对 [DeepSeek 的官方 Responses 说明](https://api-docs.deepseek.com/guides/responses_api/)与
+[Codex 接入说明](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/)：用户给出的两个模型支持该接口，
+无需在平台中另写 Chat Completions 转换或 Agent Loop。
+CLI provider/env_key 参数以 [OpenAI Docs](https://learn.chatgpt.com/docs/config-file/config-reference)为依据。
+本轮按用户指定连接 DeepSeek 官方服务；这不是目标架构中已经建成的企业模型代理。
+
+#### 凭据生命周期与跨进程边界
+
+本地 JSON 文件包含 `servicePrincipal`、`token` 和可选 `expiresAt`。静态 key 可省略期限，
+短时凭据必须在读取/使用检查时覆盖配置的执行时长；平台仍以执行 timeout 限制进程与容器。
+这里只做本地有效期检查，发行方权限、撤销及真实期限仍由发行方决定，不自动签发、刷新或撤销凭据。
+部署主体名称也是标签，不能据此证明 key 属于哪个上游账户或是否为专用服务账号。
+
+| 位置 | 凭据处理 |
+| --- | --- |
+| 控制进程 | 每次执行读取指定文件；普通文件、私有权限、进程 UID 所有、单一硬链接，最多 8 KiB |
+| 文件位置 | 父目录需存在并解析真实路径；拒绝 Workspace root 内的凭据，避免随工作区只读挂载；执行时再次检查 |
+| Docker | 只在 start/attach stdin 中发送；不放入 argv、Docker 客户端环境或 volume；启动探针和清理命令无凭据 |
+| Worker | 由部署参数指定 gateway/主体，stdin 只补输入和凭据；凭据保留在内存，不落 Worker 文件 |
+| Codex CLI | 仅模型执行子进程增加固定模型 token 环境变量；probe/sandbox 启动检查不增加它 |
+| 结果 | `runtime` 仅增加 gatewayUrl/servicePrincipal；已知完整 key 出现在 Findings 解码文本时拒绝结果 |
+
+Worker 探针增加 `gatewaySupported`。请求了连接配置却无法接收凭据的旧 Worker 不会被构造为可用 Runner，
+避免把新信封交给旧镜像误解释。未配置 Gateway 时保持原有输入协议；HTTP 仍不接受部署字段。
+Worker 对新信封严格拒绝未知字段，并核对凭据主体与部署主体；凭据错误只返回稳定错误码，
+应用层沿用现有执行失败、幂等重放与无 Artifact 的行为。
+CLI stdout/stderr 不进入归档；宿主和 Worker 都在解码 Findings 后检查完整 key，覆盖 JSON 转义后的相同文本。
+这个检查不处理编码/拆分等任意泄露方式；模型 key 仍存在于 CLI 环境，尚不能替代代理侧凭据隔离。
+
+#### RED → GREEN 与实际验证
+
+先写公共 Exec Runner 的部署配置/凭据行为，缺少 Gateway 接口时编译 RED；补齐最小控制后 GREEN。
+再写 Docker 凭据传递行为，缺少 Docker Gateway 字段时编译 RED，补齐受控 stdin 信封后 GREEN。
+模型返回包含 JSON 转义的完整 key 时，原实现错误地接受结果，回归 RED；在解码后拒绝含 key 的文本转为 GREEN。
+凭据文件位于工作区时，构造原先错误地允许配置；增加真实路径位置检查后由 RED 转为 GREEN。
+
+公共行为覆盖静态 key/轮换、探针不依赖 key 文件、缺失/过期/有效期不足/主体不符、公开权限、符号/硬链接、
+超限文件、未知字段与换行 token，以及旧 Worker 拒绝、Docker argv/env/mount 排除凭据、Worker 部署覆盖拒绝、
+HTTP 运行配置字段拒绝和完整 key 的输出拒绝。只替代外部模型 CLI/Docker CLI，平台内部组件继续使用真实实现。
+
+本地 Linux/arm64 Worker 重新构建为 `sha256:c61266ebd96b33964b37ce25d40ca32a3e2374f7ec42b400c690e75b61bdddb1`，尚未发布；
+CLI 仍为 0.160.0 / SHA-256 `50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0`，已重新核对 npm integrity。
+真实原生只读 sandbox 接受了上述 provider 参数，启动成功；这不证明模型 key、额度或输出质量。
+真实 Docker 的 HTTP/Git/Worker/模型替身/Artifact 贯穿验证使用静态测试 key，核对保存的连接主体与无 key 的执行投影，
+并覆盖归档/重放、setsid 子进程取消、超时和真实 CLI 启动门槛；容器清理完成。
+启用 Gateway 与不配置 Gateway 两种模式各通过上述 4 个真实 Docker 场景，共 8 个，旧输入协议也已验证。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 编译通过。
+前端未改动，沿用第 32 步的 50 条行为测试和构建记录；按约定忽略已知远端 CI 账单问题。
+
+本地凭据格式、配置和联调开关见 README。“受控 provider 能配置”不等于已开放模型网络。
+下一切片补限定模型出口、Git/证书等运行工具及实际服务凭据联调，再以真实 Findings 做质量验收；
+Worker 目前仍 network=none，默认 API 仍不装配 Runner。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2436,7 +2511,8 @@ node --run build
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
   默认启动未装配 Runner；已实现 Docker 只读 Worker adapter 与离线联调。
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
-  服务模型身份/网关、真实模型输出质量及场景 Skills 交付未接入；Worker 网络仍固定为 none。
+  已接入部署 provider/主体标签与服务凭据交付，但模型网络出口、企业模型代理/Broker、发行方服务身份核验、
+  真实模型输出质量及场景 Skills 交付未接入；Worker 网络仍固定为 none。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。

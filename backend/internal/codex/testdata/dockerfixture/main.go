@@ -25,7 +25,7 @@ func main() {
 		return
 	}
 	if len(args) == 1 && args[0] == "--help" {
-		fmt.Print("Options:\n      --no-daemon\n  -a, --ask-for-approval <POLICY>\n  -m, --model <MODEL>\n")
+		fmt.Print("Options:\n  -c, --config <KEY=VALUE>\n      --no-daemon\n  -a, --ask-for-approval <POLICY>\n  -m, --model <MODEL>\n")
 		return
 	}
 	if len(args) == 2 && args[0] == "exec" && args[1] == "--help" {
@@ -76,6 +76,17 @@ func main() {
 		}
 	}()
 	checkBoundary()
+	for _, arg := range args {
+		if arg == `model_provider="agent_gateway"` {
+			if os.Getenv("AGENT_PLATFORM_MODEL_TOKEN") != "docker-fixture-service-key" {
+				panic("deployment credential did not reach the model CLI")
+			}
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "https://api.deepseek.com") || strings.Contains(joined+input.Patch, "docker-fixture-service-key") {
+				panic("gateway configuration changed or credential entered argv/input")
+			}
+		}
+	}
 	if native := nativeBinary(); native != "" {
 		checkBlockedSyscalls()
 		command := exec.Command(native, "--no-daemon", "--ask-for-approval", "never", "sandbox", "-c", `sandbox_mode="read-only"`, "/opt/codex/codex", "--sandbox-boundary")

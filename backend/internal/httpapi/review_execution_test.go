@@ -236,7 +236,7 @@ func TestReviewExecutionRecordsCancellationDuringGitInput(t *testing.T) {
 
 func TestReviewExecutionRejectsRuntimeFieldsBeforeIO(t *testing.T) {
 	fixture := newReviewExecutionFixture(t, "success", 5*time.Second)
-	for _, field := range []string{"binary", "model", "patch", "headSha", "sandbox", "credentials", "workspacePath"} {
+	for _, field := range []string{"binary", "model", "patch", "headSha", "sandbox", "credentials", "workspacePath", "gateway", "servicePrincipal", "credentialFile"} {
 		t.Run(field, func(t *testing.T) {
 			body := strings.TrimSuffix(fixture.body("invalid-"+field, "req-invalid", fixture.ready.Version), "}") + fmt.Sprintf(`,%q:"untrusted"}`, field)
 			response := httptest.NewRecorder()

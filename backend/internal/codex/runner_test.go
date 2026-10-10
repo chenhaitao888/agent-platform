@@ -28,6 +28,7 @@ const runnerExecHelp = `Options:
 `
 
 const runnerRootHelp = `Options:
+  -c, --config <KEY=VALUE>
       --no-daemon
   -a, --ask-for-approval <POLICY>
   -m, --model <MODEL>
