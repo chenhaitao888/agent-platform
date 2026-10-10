@@ -471,7 +471,7 @@ curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
 `PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
 GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELED` 投影。
 内置 Runner 还会记录 `runtime`：集成方式、实际 Codex 版本/二进制 SHA-256、部署模型名，
-Docker Runner 另记录不可变镜像 ID；这些字段不包含凭据。
+Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 SHA-256；这些字段不包含凭据。
 相同租户/key/Task/Workspace version 重放成功返回 `200` 与原快照；失败重放原错误，
 不再读取 Git、调用模型或追加事件。改变 Task/version 返回 `409 idempotency_conflict`。
 同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
@@ -518,14 +518,20 @@ go run ./cmd/workercheck \
   --docker-host unix:///absolute/path/to/docker.sock \
   --image sha256:<构建输出的镜像ID> \
   --workspace-root /absolute/path/to/workspaces \
-  --model deployment-review-model
+  --model deployment-review-model \
+  --seccomp-policy codex-bwrap
 ```
 
 此检查不会调用模型；它在隔离容器中核对实际 CLI 的能力/摘要，并用原生只读 sandbox 运行 `/bin/true`。
 只有实际 sandbox 可以启动才返回 `sandboxVerified: true`。UID/GID 默认使用当前服务用户，必须可读取
 由该用户拥有的 `0700` Workspace；容器禁止 UID 0。
-本机 Docker 的默认安全策略目前阻止 bubblewrap 创建命名空间，原生 Sandbox 检查会拒绝启用真实 Worker。
-目前默认 API 仍返回 `review_unavailable`；Sandbox 兼容性、受控模型代理/服务身份需在下一切片解决。
+不指定 `--seccomp-policy` 时保留 `docker-default`。本机默认策略仍阻止 bubblewrap 初始化；
+上例明确选择 `codex-bwrap`，为当前 Worker 使用仓库内固定、默认拒绝未知调用的策略，
+允许新用户命名空间及 bubblewrap 所需的有限挂载操作。本机已通过真实原生 sandbox 启动与只读边界验证。
+策略由部署选择，任务不能提供自定义文件、JSON 或 `unconfined`；不会修改 Docker daemon 或宿主 sysctl。
+它增加了内核命名空间接口的可达范围，需要在目标部署重新验证；内核/LSM 仍可拒绝启动。
+策略来源、参数限制与取舍见 [seccomp 说明](backend/internal/codex/policies/README.md)。
+目前默认 API 仍返回 `review_unavailable`；受控模型代理/服务身份与真实模型执行尚未接入。
 
 真实 Docker 回归通过外部假模型 CLI 验证完整 HTTP/Git/Worker/Artifact 链路，无需模型账户：
 
@@ -537,6 +543,9 @@ go test ./internal/httpapi -run '^TestDockerWorkerIntegration$' -count=1 -v
 ```
 
 可额外设置 `AGENT_PLATFORM_CODEX_IMAGE=sha256:<真实Worker镜像ID>` 验证原生 sandbox 启用门槛。
+同时设置 `AGENT_PLATFORM_SECCOMP_POLICY=codex-bwrap` 时，离线模型替身会调用镜像中真实的原生 sandbox，
+验证只读文件系统、无网络及 keyctl/AF_ALG/不带新用户命名空间的 unshare/读写 remount 被拒绝；
+启用门槛也必须成功。未设置策略时继续使用 Docker 默认策略，允许启用门槛如实报告宿主不兼容。
 普通 `go test ./...` 会跳过 Docker 联调；本次真实 Docker 联调已实际执行，未调用模型。
 
 ## 启动前端

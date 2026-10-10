@@ -18,6 +18,7 @@ func main() {
 	flag.StringVar(&config.Image, "image", "", "immutable local Worker image")
 	flag.StringVar(&config.WorkspaceRoot, "workspace-root", "", "existing service workspace root")
 	flag.StringVar(&config.Model, "model", "", "deployment model name (no inference during probe)")
+	flag.StringVar(&config.SeccompPolicy, "seccomp-policy", codex.SeccompDockerDefault, "docker-default or codex-bwrap (reviewed worker-only policy)")
 	flag.DurationVar(&config.Timeout, "timeout", time.Minute, "review execution limit")
 	flag.IntVar(&config.UID, "uid", config.UID, "non-root workspace owner UID")
 	flag.IntVar(&config.GID, "gid", config.GID, "workspace owner GID")

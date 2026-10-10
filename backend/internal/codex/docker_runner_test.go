@@ -2,8 +2,10 @@ package codex_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,57 @@ import (
 	"agent-platform/backend/internal/codex"
 	"agent-platform/backend/internal/review"
 )
+
+func TestDockerRunnerUsesFixedBwrapSeccompForProbeAndReview(t *testing.T) {
+	fixture := newDockerFixture(t)
+	config := fixture.config()
+	config.SeccompPolicy = "codex-bwrap"
+	runner, err := codex.NewDockerRunner(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Run(context.Background(), fixture.input()); err != nil {
+		t.Fatal(err)
+	}
+	commands := fixture.commands(t)
+	var digest string
+	for _, index := range []int{1, 4} {
+		capture := commands[index]
+		if len(capture.Profile) == 0 {
+			t.Fatal("container was not given an enforced seccomp profile")
+		}
+		actual := fmt.Sprintf("%x", sha256.Sum256(capture.Profile))
+		if digest != "" && digest != actual {
+			t.Fatal("preflight and review used different policies")
+		}
+		digest = actual
+		var policy struct {
+			DefaultAction string `json:"defaultAction"`
+		}
+		if err := json.Unmarshal(capture.Profile, &policy); err != nil || policy.DefaultAction != "SCMP_ACT_ERRNO" {
+			t.Fatalf("profile does not deny unknown syscalls: %s", capture.Profile)
+		}
+		for _, arg := range capture.Args {
+			if strings.HasPrefix(arg, "--security-opt=seccomp=") {
+				path := strings.TrimPrefix(arg, "--security-opt=seccomp=")
+				if !filepath.IsAbs(path) || path == "unconfined" {
+					t.Fatalf("unsafe policy argument: %s", arg)
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("temporary policy file was left behind")
+				}
+			}
+		}
+		if !containsArgument(capture.Args, "--cap-drop=ALL") || !containsArgument(capture.Args, "--security-opt=no-new-privileges") {
+			t.Fatal("namespace compatibility widened process privileges")
+		}
+	}
+	profile := runner.Profile()
+	identity := runner.RuntimeIdentity()
+	if profile.SeccompPolicy != "codex-bwrap" || profile.SeccompSHA256 != digest || identity.SeccompSHA256 != digest {
+		t.Fatal("execution identity does not identify the applied seccomp policy")
+	}
+}
 
 func TestDockerRunnerReturnsFindingsAndRemovesItsContainer(t *testing.T) {
 	fixture := newDockerFixture(t)
@@ -34,6 +87,16 @@ func TestDockerRunnerReturnsFindingsAndRemovesItsContainer(t *testing.T) {
 		t.Fatalf("probe and run must each create/start/remove: %#v", commands)
 	}
 	create := commands[4]
+	if runner.Profile().SeccompPolicy != codex.SeccompDockerDefault || runner.Profile().SeccompSHA256 != "" {
+		t.Fatal("default deployment no longer delegates seccomp to Docker")
+	}
+	for _, index := range []int{1, 4} {
+		for _, arg := range commands[index].Args {
+			if strings.HasPrefix(arg, "--security-opt=seccomp=") {
+				t.Fatal("default policy was silently replaced")
+			}
+		}
+	}
 	for _, flag := range []string{"--network=none", "--read-only", "--user=501:20", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pull=never", "--pids-limit=64", "--memory=256m", "--cpus=1"} {
 		if !containsArgument(create.Args, flag) {
 			t.Fatalf("missing boundary %s: %v", flag, create.Args)
@@ -91,12 +154,13 @@ func TestDockerRunnerRejectsFailedOrUntrustedOutputAndStillCleansUp(t *testing.T
 	}
 }
 
-func TestDockerRunnerCancellationAndTimeoutRemoveOwnedContainer(t *testing.T) {
+func TestDockerRunnerCancellationAndTimeoutRemoveOwnedContainerAndPolicy(t *testing.T) {
 	for _, canceled := range []bool{true, false} {
 		t.Run(strconv.FormatBool(canceled), func(t *testing.T) {
 			fixture := newDockerFixture(t)
 			config := fixture.config()
 			config.Timeout = 700 * time.Millisecond
+			config.SeccompPolicy = codex.SeccompCodexBwrap
 			runner, err := codex.NewDockerRunner(context.Background(), config)
 			if err != nil {
 				t.Fatal(err)
@@ -120,6 +184,14 @@ func TestDockerRunnerCancellationAndTimeoutRemoveOwnedContainer(t *testing.T) {
 			commands := fixture.commands(t)
 			if len(commands) != 7 || commands[6].Args[0] != "rm" {
 				t.Fatalf("missing independent cleanup: %#v", commands)
+			}
+			for _, arg := range commands[4].Args {
+				if strings.HasPrefix(arg, "--security-opt=seccomp=") {
+					path := strings.TrimPrefix(arg, "--security-opt=seccomp=")
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatal("canceled/timed out execution left its policy file behind")
+					}
+				}
 			}
 		})
 	}
@@ -157,6 +229,8 @@ func TestDockerRunnerRejectsImageWithoutVerifiedNativeSandbox(t *testing.T) {
 func TestDockerRunnerRejectsUnsafeDeploymentAndWorkspaceBeforeDocker(t *testing.T) {
 	fixture := newDockerFixture(t)
 	for _, change := range []func(*codex.DockerConfig){
+		func(c *codex.DockerConfig) { c.SeccompPolicy = "unconfined" },
+		func(c *codex.DockerConfig) { c.SeccompPolicy = "/tmp/custom-policy.json" },
 		func(c *codex.DockerConfig) { c.Image = "codex:latest" },
 		func(c *codex.DockerConfig) { c.UID = 0 },
 		func(c *codex.DockerConfig) { c.Endpoint = "tcp://remote:2375" },
@@ -211,9 +285,10 @@ func containsArgument(args []string, want string) bool {
 }
 
 type dockerCapture struct {
-	Args  []string          `json:"args"`
-	Env   map[string]string `json:"env"`
-	Stdin string            `json:"stdin"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+	Stdin   string            `json:"stdin"`
+	Profile []byte            `json:"profile"`
 }
 type dockerFixture struct{ directory, binary, root, worktree string }
 
@@ -235,12 +310,16 @@ func newDockerFixture(t *testing.T) dockerFixture {
 	}
 	fixture.worktree = filepath.Join(fixture.root, "workspace-1", "worktree")
 	quoted, _ := json.Marshal(directory)
-	script := "#!" + python + "\n" + `import json, os, sys, time
+	script := "#!" + python + "\n" + `import base64, json, os, sys, time
 directory = ` + string(quoted) + `
 args = sys.argv[1:]
 body = sys.stdin.read()
+profile = None
+for arg in args:
+    if arg.startswith("--security-opt=seccomp="):
+        with open(arg.split("=",2)[2]) as source: profile = source.read()
 with open(directory+"/commands.jsonl","a") as target:
-    target.write(json.dumps(dict(args=args,env=dict(os.environ),stdin=body))+"\n")
+    target.write(json.dumps(dict(args=args,env=dict(os.environ),stdin=body,profile=base64.b64encode(profile.encode()).decode() if profile else None))+"\n")
 if args[0] == "image":
     print(json.dumps([dict(Id="sha256:"+"a"*64,Os="linux",Architecture="arm64")]))
 elif args[0] == "create":

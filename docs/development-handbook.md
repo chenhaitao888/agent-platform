@@ -2338,6 +2338,71 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）及 Linux/amd64 �
 构建/检查/联调命令见 README 的“隔离 Review Worker”。本切片已由用户审阅并批准本次提交推送。
 按用户要求，本轮完成推送后停止，下一切片明天继续；下一步先处理原生 Sandbox 与 Docker 的兼容性，再接服务模型身份/网关。
 
+### M14 实现（第 34 步）：原生 Sandbox 与 Worker seccomp 兼容
+
+- 状态：完成本机离线兼容切片（2026-10-10），用户已审阅并批准本次提交推送。
+- 公共边界：`DockerConfig.SeccompPolicy` 与 `workercheck --seccomp-policy`；仍使用原有 Review Runner 和 HTTP 装配入口。
+- 本轮未调用真实模型；默认 API 仍未装配 Runner，Worker 网络继续固定为 none。
+
+#### 阻塞原因与部署选择
+
+第 33 步的真实失败来自 Docker 默认 seccomp 对命名空间和挂载调用的限制。
+逐项增加带参数限制的临时策略后，真实 Codex 的 bubblewrap 才能完成用户命名空间、挂载传播、
+只读 bind mount 和根目录切换。本步将验证过的调用整理成仓库内固定策略，部署必须明确选择：
+
+| 策略 | 行为 |
+| --- | --- |
+| `docker-default`（默认） | 不传自定义 seccomp，使用 daemon 默认策略；本机仍无法初始化原生 sandbox，启动门槛拒绝启用 |
+| `codex-bwrap` | 使用固定的默认拒绝策略，允许新用户命名空间及 bubblewrap 所需的有限挂载操作；本机原生启动已通过 |
+
+基线完整保留在 `internal/codex/policies`，来自 moby/profiles 的 `seccomp/v0.2.1`，
+附原始 SHA-256、Apache-2.0 license 和来源说明；运行时不下载策略。
+在基线上增加的 namespace clone/unshare 规则要求 CLONE_NEWUSER，普通进程/线程创建保留原规则。
+mount 仅允许已验证的 flags；bind remount 必须包含 MS_RDONLY；umount2 只允许 MNT_DETACH。
+只启用 amd64/arm64 的 64 位 ABI，明确拒绝旧 socketcall，保留 keyctl/BPF/io_uring 等限制。
+外层容器仍非 root、cap-drop=ALL、no-new-privileges，不能在原始命名空间获得挂载权限。
+
+Java 类比：策略相当于部署装配时选定的受控运行配置，属于 adapter 的构造参数；
+Task 请求不能提交策略文件、原始 JSON、`unconfined` 或任意 Docker security option。
+Docker CLI 读取宿主临时策略文件并将内容交给 daemon；文件不挂载到 Worker，探针和执行使用相同内容，
+成功、取消和超时后删除各自的临时文件。部署 Profile 与执行 `runtime` 保存策略名和实际内容 SHA-256，
+默认策略只保存名称，因为其内容由 daemon 管理。本步不改变 Findings 1.0 或事件 2.0 契约。
+
+这个选择增加了嵌套用户/挂载命名空间所能触达的内核接口，不能当作通用默认策略。
+seccomp 能检查调用参数，不能检查 mount 源/目标指针背后的路径字符串；内核的能力与命名空间校验仍是必要边界。
+目标部署需保留更新和启动验证；内核/LSM 仍可能拒绝初始化，失败时继续拒绝构造 Runner。
+本步没有修改宿主 sysctl、Docker daemon、AppArmor/SELinux 或增加 privileged/CAP_SYS_ADMIN。
+
+#### 原生执行证据与回归
+
+本机 Docker 28.3.0 / Linux arm64 的实际记录：
+
+- 重新构建的本地 Worker：`sha256:8aa9e2971346411d3605be1a8a459352b73b7a185f3d58296d6d119504a93638`，尚未发布。
+- Base 沿用第 33 步的 Alpine digest；CLI 为 0.160.0，binary SHA-256 仍为
+  `50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0`，registry SHA-512 integrity 已重新核对。
+- `codex-bwrap` 实际策略 SHA-256：`c731e520256a3bfea369408667316fd6f1b5327773c494da5e1231347a00d72b`。
+- `workercheck` 使用真实 CLI 的原生只读 sandbox 执行 `/bin/true`，返回 `sandboxVerified: true`。
+
+版本号只记录本次制品，不形成运行门槛；后续升级仍以实际 CLI 能力、摘要和 sandbox 启动判断。
+先写公共 Runner 的策略选择与传递行为，缺少配置字段时编译 RED；补齐受控策略与身份记录后 GREEN。
+外部 Docker CLI 替身读取真正传出的策略字节，核对探针/执行的一致性、摘要、默认拒绝、默认策略不被替换、
+非法部署选择不触达 Docker，以及成功/取消/超时后的临时文件清理。
+
+真实 Docker 集成只替代外部模型推理部分：替身调用镜像中实际的原生 Codex sandbox 执行边界检查，
+平台 HTTP、Git、Workspace、Runner、Service、Artifact 与事件均使用真实实现。
+在外层容器和原生 sandbox 内确认 keyctl、AF_ALG、不带新用户命名空间的 unshare、读写 remount 被拒绝，
+并验证非 root、无 capabilities、禁止提权、只读根/工作区、写入失败、无网络/默认路由及临时 HOME。
+IPv6 路由检查识别 Linux 保留的 RTF_REJECT 不可达记录，只将有效的 UP 默认路由判为越界。
+测试镜像删除改为 `--no-prune`，只清理本测试镜像，避免顺带删除无标签的原生父镜像。
+
+两种策略均实际运行四个 Docker 场景：归档/幂等重放、观察 setsid 子进程后取消、超时、真实 CLI 启动门槛；
+`codex-bwrap` 必须原生启动成功，默认策略继续如实报告本机不兼容。容器清理完成，失败未发布 Artifact。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 编译通过。
+前端未改动，沿用第 32 步的 50 条行为测试与构建记录；没有查询已知账单锁定的远端 CI。
+
+命令见 README 的“隔离 Review Worker”。下一切片处理受控模型代理/场景服务身份及 Git/证书等运行工具，
+再接真实模型只读执行与 Findings 质量验收；当前不能用离线 sandbox 成功代替真实模型验收。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2369,7 +2434,8 @@ node --run build
   它们还不是事务 Outbox，也没有发布到 Event Bus。
 - Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
-  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter 与离线联调，当前本机原生 sandbox 启动被拒绝。
+  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter 与离线联调。
+  本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   服务模型身份/网关、真实模型输出质量及场景 Skills 交付未接入；Worker 网络仍固定为 none。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、

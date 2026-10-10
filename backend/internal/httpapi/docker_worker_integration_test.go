@@ -26,6 +26,8 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	}
 	endpoint := os.Getenv("AGENT_PLATFORM_DOCKER_HOST")
 	base := os.Getenv("AGENT_PLATFORM_DOCKER_BASE")
+	realImage := os.Getenv("AGENT_PLATFORM_CODEX_IMAGE")
+	policy := os.Getenv("AGENT_PLATFORM_SECCOMP_POLICY")
 	if endpoint == "" || base == "" {
 		t.Fatal("provide explicit local Docker endpoint and immutable base")
 	}
@@ -66,12 +68,19 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if realImage != "" && policy == codex.SeccompCodexBwrap {
+		// Keep the actual native CLI and its vendor resources. Replace only the
+		// entrypoint symlink with the offline fixture wrapper, which delegates
+		// sandbox commands and boundary checks to /opt/codex/bin/codex.
+		dockerfile = []byte("ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nUSER 0\nCOPY reviewworker /usr/local/bin/reviewworker\nRUN rm /opt/codex/codex\nCOPY codex/bin/codex /opt/codex/codex\nUSER 65534:65534\nWORKDIR /workspaces\nENTRYPOINT [\"/usr/local/bin/reviewworker\"]\n")
+		base = realImage
+	}
 	if err := os.WriteFile(filepath.Join(contextPath, "Dockerfile"), dockerfile, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Resolve the base locally before the builder can attempt any pull.
 	baseID := docker(t, "image", "inspect", "--format", "{{.Id}}", base)
-	if !strings.Contains(base, "@sha256:") {
+	if !strings.Contains(base, "@sha256:") && !strings.HasPrefix(base, "sha256:") {
 		t.Fatal("floating base is forbidden")
 	}
 	imageFile := filepath.Join(contextPath, "image-id")
@@ -81,12 +90,13 @@ func TestDockerWorkerIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	image := strings.TrimSpace(string(imageBytes))
-	t.Cleanup(func() { docker(t, "image", "rm", image) })
+	// Only remove this test's image, without pruning an untagged native base.
+	t.Cleanup(func() { docker(t, "image", "rm", "--no-prune", image) })
 	baseline := docker(t, "ps", "--all", "--filter", "label=agent-platform.owner=review-worker", "--format", "{{.Names}}")
 	newFixture := func(t *testing.T, timeout time.Duration) reviewExecutionFixture {
 		t.Helper()
 		return newReviewExecutionFixtureWithRunner(t, "success", timeout, func(root string) review.Runner {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid()})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,6 +112,9 @@ func TestDockerWorkerIntegration(t *testing.T) {
 		operation := fixture.latest(t)
 		if operation.State != review.ExecutionSucceeded || operation.Artifact == nil || operation.Runtime == nil || operation.Runtime.ImageID != image || operation.Runtime.Integration != "docker-exec" || operation.Runtime.CodexVersion != "9.999.0" {
 			t.Fatalf("missing archived result and image identity: %#v", operation)
+		}
+		if policy == codex.SeccompCodexBwrap && (operation.Runtime.SeccompPolicy != policy || len(operation.Runtime.SeccompSHA256) != 64) {
+			t.Fatal("saved execution did not identify the actual seccomp policy")
 		}
 		contentResponse := httptest.NewRecorder()
 		fixture.handler.ServeHTTP(contentResponse, httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/"+operation.Artifact.ID+"/content?tenantId="+fixture.ready.TenantID, nil))
@@ -188,15 +201,21 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	if remaining := docker(t, "ps", "--all", "--filter", "label=agent-platform.owner=review-worker", "--format", "{{.Names}}"); remaining != baseline {
 		t.Fatalf("owned containers left behind: %s", remaining)
 	}
-	if realImage := os.Getenv("AGENT_PLATFORM_CODEX_IMAGE"); realImage != "" {
+	if realImage != "" {
 		t.Run("real_codex_sandbox_gate_without_inference", func(t *testing.T) {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid()})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy})
 			if err != nil {
+				if policy == codex.SeccompCodexBwrap {
+					t.Fatal("reviewed bwrap policy did not enable the real native sandbox: ", err)
+				}
 				if !errors.Is(err, codex.ErrIncompatibleRuntime) {
 					t.Fatal(err)
 				}
 				t.Log("Current host rejects the native Codex sandbox; real model execution remains disabled.")
 				return
+			}
+			if !runner.Profile().SandboxVerified || (policy == codex.SeccompCodexBwrap && len(runner.Profile().SeccompSHA256) != 64) {
+				t.Fatal("native sandbox/policy identity was not verified")
 			}
 			profile, err := json.Marshal(runner.Profile())
 			if err != nil {

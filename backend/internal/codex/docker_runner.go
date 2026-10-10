@@ -28,6 +28,7 @@ type DockerConfig struct {
 	Binary, Endpoint, Image, WorkspaceRoot, Model string
 	Timeout                                       time.Duration
 	UID, GID                                      int
+	SeccompPolicy                                 string
 }
 
 type DockerProfile struct {
@@ -35,11 +36,14 @@ type DockerProfile struct {
 	Architecture    string  `json:"architecture"`
 	CLI             Profile `json:"cli"`
 	SandboxVerified bool    `json:"sandboxVerified"`
+	SeccompPolicy   string  `json:"seccompPolicy"`
+	SeccompSHA256   string  `json:"seccompSha256,omitempty"`
 }
 
 type DockerRunner struct {
 	config  DockerConfig
 	profile DockerProfile
+	seccomp []byte
 }
 
 var _ review.Runner = (*DockerRunner)(nil)
@@ -48,6 +52,10 @@ var _ review.Runner = (*DockerRunner)(nil)
 // probe under the same container boundaries as review. It never starts inference.
 func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	policy, seccomp, policyDigest, err := deploymentSeccomp(config.SeccompPolicy)
+	if err != nil {
 		return nil, err
 	}
 	if !immutableImage.MatchString(config.Image) || !strings.HasPrefix(config.Endpoint, "unix:///") ||
@@ -73,7 +81,7 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 		return nil, ErrInvalidRunnerConfig
 	}
 	config.WorkspaceRoot = root
-	runner := &DockerRunner{config: config}
+	runner := &DockerRunner{config: config, seccomp: seccomp, profile: DockerProfile{SeccompPolicy: policy, SeccompSHA256: policyDigest}}
 	startup, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	data, err := runner.command(startup, nil, 64<<10, "image", "inspect", "--", config.Image)
@@ -138,7 +146,7 @@ func (r *DockerRunner) Profile() DockerProfile {
 }
 
 func (r *DockerRunner) RuntimeIdentity() review.RuntimeIdentity {
-	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model}
+	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model, SeccompPolicy: r.profile.SeccompPolicy, SeccompSHA256: r.profile.SeccompSHA256}
 }
 
 func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.FindingsReport, error) {
@@ -184,6 +192,18 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 }
 
 func (r *DockerRunner) container(ctx context.Context, worktree string, input []byte, probe bool) (output []byte, resultErr error) {
+	var policyPath string
+	if len(r.seccomp) != 0 {
+		directory, err := os.MkdirTemp("", "agent-platform-seccomp-")
+		if err != nil {
+			return nil, review.ErrExecutionFailed
+		}
+		defer func() { _ = os.RemoveAll(directory) }()
+		policyPath = filepath.Join(directory, "profile.json")
+		if err := os.WriteFile(policyPath, r.seccomp, 0o600); err != nil {
+			return nil, review.ErrExecutionFailed
+		}
+	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, review.ErrExecutionFailed
@@ -208,6 +228,9 @@ func (r *DockerRunner) container(ctx context.Context, worktree string, input []b
 		"--entrypoint=/usr/local/bin/reviewworker", "--env=PATH=/usr/bin:/bin", "--env=HOME=/tmp",
 		"--env=TMPDIR=/tmp", "--env=CODEX_HOME=/tmp/codex"}
 	root := "/workspaces"
+	if policyPath != "" {
+		args = append(args, "--security-opt=seccomp="+policyPath)
+	}
 	if !probe {
 		workspace := filepath.Dir(worktree)
 		args = append(args, "--mount", "type=bind,source="+workspace+",target="+workspace+",readonly", "--workdir", worktree)
