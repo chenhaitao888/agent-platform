@@ -2,8 +2,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +18,14 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	if len(args) == 2 && args[0] == "--relay-tool-boundary" {
+		client := &http.Client{Timeout: 500 * time.Millisecond}
+		if response, err := client.Get(args[1] + "/responses"); err == nil {
+			_ = response.Body.Close()
+			panic("native tool could connect to parent model relay")
+		}
+		return
+	}
 	if len(args) == 1 && args[0] == "--sandbox-boundary" {
 		checkBoundary()
 		checkBlockedSyscalls()
@@ -78,12 +89,17 @@ func main() {
 	checkBoundary()
 	for _, arg := range args {
 		if arg == `model_provider="agent_gateway"` {
-			if os.Getenv("AGENT_PLATFORM_MODEL_TOKEN") != "docker-fixture-service-key" {
-				panic("deployment credential did not reach the model CLI")
-			}
 			joined := strings.Join(args, " ")
-			if !strings.Contains(joined, "https://api.deepseek.com") || strings.Contains(joined+input.Patch, "docker-fixture-service-key") {
+			if strings.Contains(joined+input.Patch, "docker-fixture-service-key") {
 				panic("gateway configuration changed or credential entered argv/input")
+			}
+			if strings.Contains(joined, "http://127.0.0.1:") {
+				if os.Getenv("AGENT_PLATFORM_MODEL_TOKEN") == "docker-fixture-service-key" {
+					panic("upstream key entered Worker")
+				}
+				exerciseModelRelay(args)
+			} else if os.Getenv("AGENT_PLATFORM_MODEL_TOKEN") != "docker-fixture-service-key" || !strings.Contains(joined, "https://api.deepseek.com") {
+				panic("deployment gateway or credential did not reach the model CLI")
 			}
 		}
 	}
@@ -112,6 +128,45 @@ func main() {
 	}
 	if err := os.WriteFile(output, content, 0o600); err != nil {
 		panic(err)
+	}
+}
+
+func exerciseModelRelay(args []string) {
+	var endpoint, model string
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "model_providers.agent_gateway.base_url=") {
+			if json.Unmarshal([]byte(strings.TrimPrefix(arg, "model_providers.agent_gateway.base_url=")), &endpoint) != nil {
+				panic("bad model endpoint")
+			}
+		}
+		if arg == "--model" && i+1 < len(args) {
+			model = args[i+1]
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"model": model, "stream": true, "input": "Docker fixture review"})
+	request, err := http.NewRequest(http.MethodPost, endpoint+"/responses", bytes.NewReader(body))
+	if err != nil {
+		panic(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+os.Getenv("AGENT_PLATFORM_MODEL_TOKEN"))
+	request.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		panic("model relay request failed")
+	}
+	defer func() { _ = response.Body.Close() }()
+	content, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil || response.StatusCode != 200 || !bytes.Contains(content, []byte("[DONE]")) {
+		panic("invalid relay stream")
+	}
+	if native := nativeBinary(); native != "" {
+		// The real sandbox must not share the parent's loopback relay. Use a
+		// child invocation that tries to connect without mounting any socket.
+		command := exec.Command(native, "--no-daemon", "--ask-for-approval", "never", "sandbox", "-c", `sandbox_mode="read-only"`, "/opt/codex/codex", "--relay-tool-boundary", endpoint)
+		if output, err := command.CombinedOutput(); err != nil {
+			panic(fmt.Sprintf("tool model relay boundary: %v %s", err, output))
+		}
 	}
 }
 

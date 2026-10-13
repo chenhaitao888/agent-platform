@@ -236,9 +236,13 @@ func TestReviewExecutionRecordsCancellationDuringGitInput(t *testing.T) {
 
 func TestReviewExecutionRejectsRuntimeFieldsBeforeIO(t *testing.T) {
 	fixture := newReviewExecutionFixture(t, "success", 5*time.Second)
-	for _, field := range []string{"binary", "model", "patch", "headSha", "sandbox", "credentials", "workspacePath", "gateway", "servicePrincipal", "credentialFile"} {
+	for _, field := range []string{"binary", "model", "patch", "headSha", "sandbox", "credentials", "workspacePath", "gateway", "servicePrincipal", "credentialFile", "modelRelay", "modelHTTPClient"} {
 		t.Run(field, func(t *testing.T) {
-			body := strings.TrimSuffix(fixture.body("invalid-"+field, "req-invalid", fixture.ready.Version), "}") + fmt.Sprintf(`,%q:"untrusted"}`, field)
+			value := `"untrusted"`
+			if field == "modelRelay" {
+				value = "true"
+			}
+			body := strings.TrimSuffix(fixture.body("invalid-"+field, "req-invalid", fixture.ready.Version), "}") + fmt.Sprintf(`,%q:%s}`, field, value)
 			response := httptest.NewRecorder()
 			fixture.handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+fixture.ready.TaskID+"/review", strings.NewReader(body)))
 			assertReviewError(t, response, http.StatusBadRequest, "invalid_json")
@@ -685,10 +689,18 @@ func newReviewExecutionFixtureWithRunner(t *testing.T, mode string, timeout time
 	gitForReviewInputTest(t, source, "config", "user.email", "agent-platform@example.invalid")
 	writeReviewInputFixture(t, source, "README.md", "shared base\n")
 	gitForReviewInputTest(t, source, "add", "README.md")
+	if mode == "live-regression" {
+		writeReviewInputFixture(t, source, "divider.py", "def average(total, count):\n    if count == 0:\n        return 0\n    return total / count\n")
+		gitForReviewInputTest(t, source, "add", "divider.py")
+	}
 	gitForReviewInputTest(t, source, "-c", "commit.gpgsign=false", "commit", "-m", "base")
 	gitForReviewInputTest(t, source, "checkout", "-b", "feature")
 	writeReviewInputFixture(t, source, "feature.txt", "feature-only change\n")
 	gitForReviewInputTest(t, source, "add", "feature.txt")
+	if mode == "live-regression" {
+		writeReviewInputFixture(t, source, "divider.py", "def average(total, count):\n    return total / count\n")
+		gitForReviewInputTest(t, source, "add", "divider.py")
+	}
 	gitForReviewInputTest(t, source, "-c", "commit.gpgsign=false", "commit", "-m", "feature")
 	head := gitForReviewInputTest(t, source, "rev-parse", "HEAD")
 	root := t.TempDir()

@@ -123,6 +123,19 @@ else:
     elif config["mode"] == "fifo":
         os.mkfifo(output)
     else:
+        if config["mode"] == "model-relay":
+            import urllib.request, urllib.error
+            endpoint = next(json.loads(arg.split("=",1)[1]) for arg in args if arg.startswith("model_providers.agent_gateway.base_url="))
+            model = args[args.index("--model")+1]
+            token = os.environ["AGENT_PLATFORM_MODEL_TOKEN"]
+            for path, auth, body, status in [("/responses","wrong",dict(model=model),401),("/other",token,dict(model=model),400),("/responses",token,dict(model="wrong"),400)]:
+                request=urllib.request.Request(endpoint+path,data=json.dumps(body).encode(),headers={"Authorization":"Bearer "+auth,"Content-Type":"application/json"})
+                try: urllib.request.urlopen(request,timeout=3); sys.exit(29)
+                except urllib.error.HTTPError as failure:
+                    if failure.code != status: sys.exit(30)
+            request=urllib.request.Request(endpoint+"/responses",data=json.dumps(dict(model=model,stream=True,input="fixture")).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"})
+            with urllib.request.urlopen(request,timeout=3) as response:
+                if b"[DONE]" not in response.read(): sys.exit(31)
         with open(output, "w") as target:
             target.write(config["report"])
         print('{"type":"turn.completed"}')

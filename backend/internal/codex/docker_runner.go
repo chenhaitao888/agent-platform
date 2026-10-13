@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,8 @@ type DockerConfig struct {
 	UID, GID                                      int
 	SeccompPolicy                                 string
 	Gateway                                       *GatewayConfig
+	ModelRelay                                    bool
+	ModelHTTPClient                               *http.Client
 }
 
 type DockerProfile struct {
@@ -41,12 +44,14 @@ type DockerProfile struct {
 	SeccompSHA256    string  `json:"seccompSha256,omitempty"`
 	GatewayURL       string  `json:"gatewayUrl,omitempty"`
 	ServicePrincipal string  `json:"servicePrincipal,omitempty"`
+	ModelTransport   string  `json:"modelTransport,omitempty"`
 }
 
 type DockerRunner struct {
-	config  DockerConfig
-	profile DockerProfile
-	seccomp []byte
+	config      DockerConfig
+	profile     DockerProfile
+	seccomp     []byte
+	modelClient *http.Client
 }
 
 var _ review.Runner = (*DockerRunner)(nil)
@@ -64,6 +69,16 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	config.Gateway, err = validatedGateway(config.Gateway)
 	if err != nil {
 		return nil, err
+	}
+	if (config.ModelRelay && config.Gateway == nil) || (!config.ModelRelay && config.ModelHTTPClient != nil) {
+		return nil, ErrInvalidRunnerConfig
+	}
+	var modelClient *http.Client
+	if config.ModelRelay {
+		modelClient, err = modelHTTPClient(config.ModelHTTPClient, config.Timeout)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !immutableImage.MatchString(config.Image) || !strings.HasPrefix(config.Endpoint, "unix:///") ||
 		strings.ContainsAny(config.Endpoint, "\r\n\x00") || config.UID <= 0 || config.GID < 0 ||
@@ -92,6 +107,10 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	}
 	config.WorkspaceRoot = root
 	runner := &DockerRunner{config: config, seccomp: seccomp, profile: DockerProfile{SeccompPolicy: policy, SeccompSHA256: policyDigest}}
+	if config.ModelRelay {
+		runner.modelClient = modelClient
+		runner.profile.ModelTransport = "stdio"
+	}
 	if config.Gateway != nil {
 		runner.profile.GatewayURL, runner.profile.ServicePrincipal = config.Gateway.BaseURL, config.Gateway.ServicePrincipal
 	}
@@ -124,6 +143,9 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 		return nil, ErrIncompatibleRuntime
 	}
 	if config.Gateway != nil && !message.GatewaySupported {
+		return nil, ErrIncompatibleRuntime
+	}
+	if config.ModelRelay && !message.ModelRelaySupported {
 		return nil, ErrIncompatibleRuntime
 	}
 	runner.profile.CLI = *message.Profile
@@ -162,7 +184,7 @@ func (r *DockerRunner) Profile() DockerProfile {
 }
 
 func (r *DockerRunner) RuntimeIdentity() review.RuntimeIdentity {
-	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model, SeccompPolicy: r.profile.SeccompPolicy, SeccompSHA256: r.profile.SeccompSHA256, GatewayURL: r.profile.GatewayURL, ServicePrincipal: r.profile.ServicePrincipal}
+	return review.RuntimeIdentity{Integration: "docker-exec", ImageID: r.profile.ImageID, CodexVersion: r.profile.CLI.Version, BinarySHA256: r.profile.CLI.BinarySHA256, Model: r.config.Model, SeccompPolicy: r.profile.SeccompPolicy, SeccompSHA256: r.profile.SeccompSHA256, GatewayURL: r.profile.GatewayURL, ServicePrincipal: r.profile.ServicePrincipal, ModelTransport: r.profile.ModelTransport}
 }
 
 func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.FindingsReport, error) {
@@ -186,7 +208,15 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 		if err != nil {
 			return review.FindingsReport{}, err
 		}
-		encoded, err := json.Marshal(credential)
+		workerCredential := credential
+		if r.config.ModelRelay {
+			var nonce [32]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return review.FindingsReport{}, review.ErrExecutionFailed
+			}
+			workerCredential = gatewayCredential{ServicePrincipal: credential.ServicePrincipal, Token: fmt.Sprintf("%x", nonce)}
+		}
+		encoded, err := json.Marshal(workerCredential)
 		if err != nil {
 			return review.FindingsReport{}, ErrGatewayCredentialUnavailable
 		}
@@ -198,12 +228,12 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 	}
 	execution, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
-	data, err := r.container(execution, worktree, request, false)
+	data, err := r.containerWithCredential(execution, worktree, request, false, credential)
 	if err != nil {
 		return review.FindingsReport{}, err
 	}
 	message, err := decodeWorkerResponse(data)
-	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || (message.Report == nil) == (message.ErrorCode == "") {
+	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported || (message.Report == nil) == (message.ErrorCode == "") {
 		return review.FindingsReport{}, review.ErrInvalidFindings
 	}
 	if message.ErrorCode != "" {
@@ -224,6 +254,10 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 }
 
 func (r *DockerRunner) container(ctx context.Context, worktree string, input []byte, probe bool) (output []byte, resultErr error) {
+	return r.containerWithCredential(ctx, worktree, input, probe, gatewayCredential{})
+}
+
+func (r *DockerRunner) containerWithCredential(ctx context.Context, worktree string, input []byte, probe bool, credential gatewayCredential) (output []byte, resultErr error) {
 	var policyPath string
 	if len(r.seccomp) != 0 {
 		directory, err := os.MkdirTemp("", "agent-platform-seccomp-")
@@ -272,6 +306,9 @@ func (r *DockerRunner) container(ctx context.Context, worktree string, input []b
 	if r.config.Gateway != nil {
 		args = append(args, "--gateway-base-url", r.config.Gateway.BaseURL, "--service-principal", r.config.Gateway.ServicePrincipal)
 	}
+	if r.config.ModelRelay {
+		args = append(args, "--model-relay")
+	}
 	if probe {
 		args = append(args, "--probe")
 	} else {
@@ -279,6 +316,9 @@ func (r *DockerRunner) container(ctx context.Context, worktree string, input []b
 	}
 	if _, err := r.command(ctx, nil, 4096, args...); err != nil {
 		return nil, err
+	}
+	if r.config.ModelRelay && !probe {
+		return r.relayCommand(ctx, input, credential, "start", "--attach", "--interactive", name)
 	}
 	return r.command(ctx, input, review.MaxFindingsBytes+8192, "start", "--attach", "--interactive", name)
 }

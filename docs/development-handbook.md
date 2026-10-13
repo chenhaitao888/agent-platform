@@ -37,10 +37,10 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件。
-默认启动未装配 Review Runner；已实现 Docker Worker adapter 与离线执行闭环。数据库、工作流执行、真实模型连接、Codex app-server、
+默认启动未装配 Review Runner；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-10）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-11）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -51,9 +51,9 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 以 `a90838e` 推送至 `origin/main`。第 33 步完成 Docker 隔离 Worker、Linux 镜像构建、实际身份记录、
 原生 Sandbox 启用门槛及真实 Docker 离线回归，用户于 2026-10-09 审阅并批准本次提交推送。
 第 34 步解决本机原生 bubblewrap 的 seccomp 兼容性，用户审阅后以 `e17e944` 推送至 `origin/main`。
-第 35 步接入受控 provider 配置与服务凭据交付，支持用户指定的 DeepSeek 静态 API key，完成离线验证。
-用户已审阅并授权提交、推送第 35 步；按用户要求，下一步暂停，恢复后再接限定模型出口与真实模型联调。
-默认 API 启动仍不装配 Runner；模型网络出口、企业代理/Broker 与真实模型执行待后续接入。
+第 35 步接入受控 provider 配置与服务凭据交付，用户审阅后以 `915cf7a` 推送至 `origin/main`，10 月 10 日暂停。
+10 月 11 日按用户指示恢复：第 36 步完成 stdio 受控模型出口、运行工具镜像及真实 DeepSeek Flash 联调，用户于 10 月 13 日审阅并批准本次提交推送。
+默认 API 启动仍不装配 Runner；下一步接部署装配与端到端验收，企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -2408,7 +2408,7 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 �
 
 ### M14 实现（第 35 步）：受控模型连接与服务凭据交付
 
-- 状态：完成离线配置切片（2026-10-10），用户已审阅并授权提交、推送；下一步按用户要求暂停。此前第 34 步已以 `e17e944` 推送。
+- 状态：完成离线配置切片（2026-10-10），用户审阅后以 `915cf7a` 推送；当日暂停，10 月 11 日恢复进入第 36 步。此前第 34 步已以 `e17e944` 推送。
 - 公共边界：`ExecConfig.Gateway`、`DockerConfig.Gateway` 与 `GatewayConfig`；`workercheck` 增加无凭据的连接配置检查。
 - 用户已给出 `https://api.deepseek.com`、`deepseek-flash` / `deepseek-v4-pro`，并说明已申请无过期时间的 API key。
   本轮只使用测试 key；真实 key 未读取，未调用真实模型。
@@ -2478,6 +2478,75 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 �
 下一切片补限定模型出口、Git/证书等运行工具及实际服务凭据联调，再以真实 Findings 做质量验收；
 Worker 目前仍 network=none，默认 API 仍不装配 Runner。
 
+### M14 实现（第 36 步）：受控模型出口与真实 DeepSeek 联调
+
+- 状态：完成（2026-10-11），用户于 2026-10-13 审阅并批准本次提交推送。
+- 公共边界：部署 `DockerConfig.ModelRelay` / `ModelHTTPClient`、`ServeModelRelayWorker` 和 CLI `--model-relay`。
+- 用户提供本地凭据文件路径；经授权将文件权限从 `0644` 收紧为 `0600`，只在执行时读取，key 未输出或写入源码。
+- 已真实调用用户指定的 `deepseek-flash`；`deepseek-v4-pro` 可通过联调参数选择，本轮未实际调用。
+
+#### 让模型联网而保持工具隔离
+
+Docker Worker 继续使用 `network=none`、只读挂载、非 root、cap-drop、no-new-privileges 和固定 seccomp。
+Worker 内只为 CLI 父进程监听随机的 `127.0.0.1` 端口；每次执行使用 32 字节随机临时令牌。
+API key 留在控制进程，只由宿主为固定 HTTPS 模型请求增加 Authorization；不会交付给 Worker 或工具环境。
+CLI 使用的 loopback provider 地址是 Worker 内部生成值，Task、stdin 信封和公共 Gateway 配置均不能指定它。
+
+```mermaid
+flowchart LR
+  CLI[Codex exec 父进程] -->|loopback + 临时令牌| W[Worker 模型转发]
+  W -->|Docker attach 帧| H[宿主控制进程]
+  H -->|HTTPS + 服务 API key| M[固定 DeepSeek endpoint]
+  CLI --> S[原生只读工具 sandbox]
+```
+
+Java 类比：Worker 的 loopback 接口类似只服务本次调用的本地 Servlet，Docker attach 类似双向 RPC 通道，
+宿主只执行固定的 HTTP client 请求；Codex Harness 继续负责模型循环、上下文和工具调用。
+原生只读工具 sandbox 使用独立网络 namespace，真实测试证明工具连不到 CLI 父进程的 loopback 端口；
+容器内也没有外网接口、可用默认路由、宿主 socket 或持久个人配置。
+这一隔离依赖原生 sandbox 与可信 Worker/CLI；它不是宿主级恶意二进制防护或完整企业 Credential Broker。
+
+#### 请求、流与资源边界
+
+宿主和 Worker 都只接受 `POST /responses`、部署模型以及合法单个 JSON object，拒绝重复顶层字段。
+宿主将路径附加到固定 HTTPS base URL；不接收请求中的 URL/Authorization，也不跟随重定向。
+标准 Transport 的部署 CA 可保留，但 TLS 校验必须开启，不能注入自定义 TLS dialer；不使用个人代理和 cookie。
+HTTP client/Transport 复制后使用，不改变调用方对象。TLS 与响应头有有限时长，执行 context 约束整个会话。
+
+stdin 首帧交付固定输入和临时令牌；后续帧只携带 API 请求正文、成功响应头、16 KiB 数据块和最终 Findings。
+SSE 块立即转发并 flush，不等待完整推理结束。未知字段/帧、超限或截断流会失败并清理，不归档部分结果。
+单请求 8 MiB、单响应 32 MiB、每执行最多 64 个请求/256 MiB 正文总量；所有上限由宿主再次执行。
+只转发成功的 SSE/JSON；错误正文、重定向及其他上游响应头不进入 Worker 或 Artifact。
+目前不开放模型列表、服务端 compact 等路径，超出当前小样例的长上下文兼容性仍需后续验证。
+
+`runtime.modelTransport=stdio` 保存实际选择；新 Worker 探针声明 `modelRelaySupported`，旧镜像不支持时拒绝启动。
+不选择 ModelRelay 时保留第 35 步协议和无网络执行；HTTP 请求不能启用转发或改连接配置。
+
+#### RED → GREEN 与验证证据
+
+首条公共 Docker Runner 行为测试因缺少配置/传输字段编译 RED，加入宿主转发与协议后 GREEN。
+关闭 TLS 校验的部署最初错误地被接受，回归 RED；复制并验证标准 Transport 后 GREEN。
+重复 `model` 字段最初到达上游，回归 RED；逐字段校验顶层 object 的唯一键后 GREEN。
+Docker 客户端的逃逸子进程持有 stdout 时，原实现等待管道 EOF 超过取消期限，回归 RED；
+取消时主动关闭宿主的 stdin/stdout 描述符，停止阻塞读写，再等待客户端并独立清理容器后 GREEN。
+另覆盖认证拒绝、路径/方法/模型/未知字段拒绝、8 MiB 请求边界、32 MiB 响应边界、非 API 内容、
+上游重定向/错误不泄露、首块在 EOF 前到达、流中取消、旧 Worker 拒绝及最后容器清理。
+只替代外部 Docker/模型 CLI/HTTPS endpoint；Worker、Runner、HTTP、Git 和 Artifact 使用真实实现。
+
+工具基础镜像 `sha256:67c05b636618c174fa6dea712f5bac7422df7f8aaf07319a0b042cae61e94271`
+包含 Git 2.49.1、Bash 5.2.37 和 CA；通过独立构建安装，Worker builder 继续 `--network=none`。
+最终 Linux/arm64 Worker 为 `sha256:a30e40dcfecbd189d3310d0135c455c38c6d8dda10229a34b68aa20e1d8fc7cb`，未发布；
+CLI 0.160.0 / SHA-256 `50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0`，仍按能力而非固定版本启用。
+上述工具在非 root、只读、无网络容器内实际运行成功；软件更新后需重新构建和记录镜像 ID。
+
+真实 Docker 的归档/重放、setsid 子进程取消、超时和原生 sandbox 探针 4 个场景通过，
+模型替身改用真实 HTTPS 流，另通过原生工具无法访问 loopback relay 的验证。
+真实 Flash 联调仅使用临时合成仓库，删除平均值函数的零值检查；模型产出 1 条 Findings、识别除零问题，
+平台通过 schema/commit 校验后归档，重放返回 200 且结果相同。最终镜像联调用时 12.47 秒。
+这证明本条链路和一个基本质量样例，不能代表整体审阅质量，也不证明服务标签对应的上游账户权限。
+Go 全套普通/race、vet、lint（0 issues）、Linux/amd64 编译通过；流中取消/响应边界新增回归另以 race 运行通过。
+前端未改动；凭据格式和显式联调开关见 README。下一步装配 API 部署入口，再补扩大质量样例与失败路径验收。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2509,10 +2578,10 @@ node --run build
   它们还不是事务 Outbox，也没有发布到 Event Bus。
 - Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
-  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter 与离线联调。
+  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter、受控模型转发与真实 Flash 联调。
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
-  已接入部署 provider/主体标签与服务凭据交付，但模型网络出口、企业模型代理/Broker、发行方服务身份核验、
-  真实模型输出质量及场景 Skills 交付未接入；Worker 网络仍固定为 none。
+  已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
+  完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。

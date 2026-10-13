@@ -17,11 +17,11 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～35 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～36 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
-默认 API 启动未装配 Runner，返回 `503 review_unavailable`；隔离 Worker、服务模型身份和真实模型联调尚未接入。
+默认 API 启动未装配 Runner，返回 `503 review_unavailable`；隔离 Worker、受控模型转发与 DeepSeek 真实模型联调已通过。
 以下命令检查已安装 CLI 帮助中声明的所需选项，并记录实际版本与 SHA-256，不调用模型：
 
 ```bash
@@ -473,6 +473,7 @@ GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELE
 内置 Runner 还会记录 `runtime`：集成方式、实际 Codex 版本/二进制 SHA-256、部署模型名，
 Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 SHA-256；
 配置模型连接时还记录 `gatewayUrl` 与部署 `servicePrincipal`，这些字段不包含凭据。
+启用受控模型转发时，`modelTransport` 为 `stdio`。
 相同租户/key/Task/Workspace version 重放成功返回 `200` 与原快照；失败重放原错误，
 不再读取 Git、调用模型或追加事件。改变 Task/version 返回 `409 idempotency_conflict`。
 同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
@@ -499,7 +500,8 @@ Docker socket 留在宿主控制进程，Worker 不继承个人登录、MCP、Sk
 Worker 镜像通过显式选择的 Linux Codex 发布制品构建，不要求某一个 Codex 版本。
 下面的 `0.160.0` 只是本次验证用的版本；升级时选择新版本，重新构建并通过能力与隔离检查。
 base image 必须是与目标架构一致、已在本地的 Linux 镜像，带 `/bin/sh` 和 `/bin/true`。
-以下 Alpine 仅用于离线联调，真实模型部署还需要受控 Git/证书等工具与模型连接配置。
+以下 Alpine 可用于离线联调；真实审阅可先用 `worker/runtime-base.Dockerfile` 准备 Git、Bash 和 CA 证书。
+工具安装只发生在基础镜像构建时，Worker 构建和执行仍禁止外网。
 
 ```bash
 # 在仓库根目录执行；--docker-host 使用实际本机 Docker Unix socket。
@@ -533,7 +535,7 @@ go run ./cmd/workercheck \
 它增加了内核命名空间接口的可达范围，需要在目标部署重新验证；内核/LSM 仍可拒绝启动。
 策略来源、参数限制与取舍见 [seccomp 说明](backend/internal/codex/policies/README.md)。
 目前默认 API 仍返回 `review_unavailable`；已实现受控 provider 配置与服务凭据交付，
-模型网络出口、企业代理/Broker 与真实模型执行尚未接入。
+受控模型出口及 DeepSeek 真实模型执行已验证；API 部署装配、企业代理/Broker 与完整质量验收待后续接入。
 
 真实 Docker 回归通过外部假模型 CLI 验证完整 HTTP/Git/Worker/Artifact 链路，无需模型账户：
 
@@ -561,6 +563,7 @@ go test ./internal/httpapi -run '^TestDockerWorkerIntegration$' -count=1 -v
 部署可为 `codex.DockerConfig` 配置以下连接信息；HTTP 请求仍不能覆盖它：
 
 ```go
+ModelRelay: true,
 Gateway: &codex.GatewayConfig{
     BaseURL:          "https://api.deepseek.com",
     ServicePrincipal: "pr-review-deepseek",
@@ -583,16 +586,62 @@ Gateway: &codex.GatewayConfig{
 
 无过期时间的 API key 可省略 `expiresAt`；短时凭据可增加 RFC3339 UTC 时间，必须覆盖本次执行超时。
 每次新执行重新读取该文件，可用同目录原子替换完成 key 轮换；平台不自动签发、刷新或撤销凭据。
-宿主只经 Worker stdin 传递凭据，Docker 参数、Docker 客户端环境及挂载不含 key；
-Worker 在内存中接收，仅向执行 CLI 提供固定的 `AGENT_PLATFORM_MODEL_TOKEN`。
+启用 `ModelRelay` 时，上游 key 只在宿主 HTTPS 请求的 Authorization 中使用。
+Worker stdin 接收每次执行随机生成的临时令牌，仅供 CLI 连接本容器内的模型转发端口；
+Docker 参数、Docker 客户端环境及挂载不含 key。未启用转发时保留第 35 步的直接凭据协议，Worker 仍无外网。
 CLI stdout/stderr 不归档，包含完整已知 key 的 Findings 文本也会被拒绝。
-这只是完整 key 的输出检查，不能代替代理侧凭据隔离或阻止编码/拆分后的泄露。
+这只是完整 key 的输出检查，不能阻止编码/拆分后的泄露；模型输出仍需按平台契约验证。
 
 可额外给 `workercheck` 提供 `--gateway-base-url https://api.deepseek.com --service-principal pr-review-deepseek`，
 验证原生 CLI 能接受受控 provider 参数。此检查不需要凭据文件，也不验证 key、模型额度或真实推理。
 给上述 Docker 联调命令增加 `AGENT_PLATFORM_GATEWAY_TEST=1` 会使用测试 key，贯穿
 HTTP/Git/Worker/模型替身/Artifact，并验证执行投影中的连接身份。
-Worker 网络仍固定为 none；实际模型访问需在下一切片接好限定模型出口后再启用。
+给 Docker 联调命令增加 `AGENT_PLATFORM_MODEL_RELAY_TEST=1` 可验证真实 HTTPS 模型替身和 stdio 转发；
+带原生 CLI 的测试还验证工具子进程无法连接父进程的模型转发端口。
+
+### 受控模型出口与真实联调
+
+Worker 保持 `network=none`，只在本容器的 `127.0.0.1` 上为 CLI 提供临时认证端口。
+HTTP 请求经 Docker attach 的 stdin/stdout 帧送回宿主；宿主只允许 `POST /responses`，
+固定部署模型、固定 HTTPS base URL，不接受请求覆盖目标地址或认证信息，不跟随重定向。
+模型的 SSE/JSON 响应按块传回，Codex 继续负责模型循环和工具调用。
+隔离网络的依据见 [Docker none 驱动文档](https://docs.docker.com/engine/network/drivers/none/)，
+接口范围见 [Codex Gateway 兼容说明](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility)。
+
+上游 TLS 必须通过验证；不读取个人/系统代理环境或 cookie。部署需要自定义 CA 时，可通过
+`ModelHTTPClient` 的标准 `http.Transport` 提供信任根；转发会复制 Transport，并固定代理、TLS、超时和重定向策略。
+单次请求最多 8 MiB，单次响应最多 32 MiB；每次审阅最多 64 次模型请求、请求/响应正文共 256 MiB，
+且受执行超时约束。只接受 SSE 或 JSON 成功响应；上游错误正文、额外响应头与诊断不进入 Worker/Artifact。
+目前只支持 `/responses`，其他端点（包括模型列表、服务端 compact）会被拒绝。
+
+准备工具基础镜像后，将构建输出的不可变 ID 交给上述 Worker builder：
+
+```bash
+docker --host unix:///absolute/path/to/docker.sock build --pull=false \
+  --build-arg BASE_IMAGE=alpine@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
+  --iidfile /tmp/agent-runtime-base-id \
+  -f worker/runtime-base.Dockerfile worker
+# 再运行 build-review-worker.py，--base-image 使用该文件中的 sha256:...。
+```
+
+运行基础镜像构建会从 Alpine 签名软件仓库安装工具，实际版本以构建结果为准；固定输出镜像 ID，
+升级工具后重新构建并验证。模型 HTTPS 连接由宿主完成，使用宿主的 CA 信任；镜像内证书用于运行工具。
+
+真实 DeepSeek 测试需明确启用，它会使用本地凭据调用模型，仅发送临时生成的合成代码：
+
+```bash
+cd backend
+AGENT_PLATFORM_DEEPSEEK_LIVE_TEST=1 \
+AGENT_PLATFORM_MODEL_CREDENTIAL_FILE=/absolute/path/to/agent-credentials/model.json \
+AGENT_PLATFORM_CODEX_IMAGE=sha256:<真实Worker镜像ID> \
+AGENT_PLATFORM_DOCKER_HOST=unix:///absolute/path/to/docker.sock \
+go test ./internal/httpapi -run '^TestDeepSeekWorkerLiveIntegration$' -count=1 -v
+```
+
+默认测试模型是 `deepseek-flash`，可通过 `AGENT_PLATFORM_DEEPSEEK_MODEL=deepseek-v4-pro` 选择用户指定的另一模型。
+本轮实际验证了 Flash：固定 diff → 原生只读 Codex → 模型 → Findings Artifact → 幂等重放，
+并检测出合成代码中的除零回归。这是一个联通和基本质量样例，尚不能代表真实仓库的整体审阅质量；
+默认 API 仍需下一步的部署装配才能启用审阅。
 
 ## 启动前端
 

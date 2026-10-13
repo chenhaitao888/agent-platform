@@ -24,8 +24,8 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?", args.codex_version):
         parser.error("supply an explicit published Codex version")
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:\-]*@sha256:[0-9a-f]{64}", args.base_image):
-        parser.error("base image must use a repository digest")
+    if not re.fullmatch(r"(?:sha256:[0-9a-f]{64}|[a-zA-Z0-9][a-zA-Z0-9._/:\-]*@sha256:[0-9a-f]{64})", args.base_image):
+        parser.error("base image must use a repository digest or immutable local image ID")
     if not args.docker_host.startswith("unix:///"):
         parser.error("supply the service's local Docker Unix socket")
     repo = Path(__file__).resolve().parents[1]

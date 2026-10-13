@@ -325,10 +325,14 @@ func newDockerFixture(t *testing.T) dockerFixture {
 	}
 	fixture.worktree = filepath.Join(fixture.root, "workspace-1", "worktree")
 	quoted, _ := json.Marshal(directory)
-	script := "#!" + python + "\n" + `import base64, json, os, sys, time
+	script := "#!" + python + "\n" + `import base64, json, os, subprocess, sys, time
 directory = ` + string(quoted) + `
 args = sys.argv[1:]
-body = sys.stdin.read()
+relay = False
+if args[0] == "start":
+    with open(directory+"/"+args[-1]) as source: created = json.load(source)
+    relay = "--model-relay" in created and "--probe" not in created
+body = sys.stdin.readline() if relay else sys.stdin.read()
 profile = None
 for arg in args:
     if arg.startswith("--security-opt=seccomp="):
@@ -344,14 +348,40 @@ elif args[0] == "create":
 elif args[0] == "start":
     with open(directory+"/"+args[-1]) as source: created = json.load(source)
     if "--probe" in created:
-        print(json.dumps(dict(gatewaySupported=not os.path.exists(directory+"/no-gateway"),sandboxVerified=not os.path.exists(directory+"/unverified-sandbox"),profile=dict(version="0.999.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model","--config"]))))
+        print(json.dumps(dict(modelRelaySupported=not os.path.exists(directory+"/no-relay"),gatewaySupported=not os.path.exists(directory+"/no-gateway"),sandboxVerified=not os.path.exists(directory+"/unverified-sandbox"),profile=dict(version="0.999.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model","--config"]))))
     else:
         if os.path.exists(directory+"/mode"):
             with open(directory+"/mode") as source: mode=source.read()
         else: mode="success"
+        if mode == "pipe-child":
+            child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"],stdin=subprocess.DEVNULL,stdout=sys.stdout,stderr=subprocess.DEVNULL,start_new_session=True)
+            with open(directory+"/pipe-child-pid","w") as marker: marker.write(str(child.pid))
+            time.sleep(30)
         if mode == "hang": time.sleep(30)
         request=json.loads(body)
         if "input" in request: request=request["input"]
+        if relay:
+            model = created[created.index("--model")+1]
+            frame = dict(type="request",request=dict(method="POST",path="/responses",body=base64.b64encode(json.dumps(dict(model=model,input="review fixture",stream=True),separators=(",",":")).encode()).decode()))
+            if mode == "bad-path": frame["request"]["path"]="https://attacker.example.test/responses"
+            if mode == "bad-model": frame["request"]["body"]=base64.b64encode(b'{"model":"unapproved-model"}').decode()
+            if mode == "bad-method": frame["request"]["method"]="CONNECT"
+            if mode == "unknown-field": frame["request"]["authorization"]="attacker"
+            if mode == "duplicate-model": frame["request"]["body"]=base64.b64encode(('{"model":"unapproved-model","model":"'+model+'"}').encode()).decode()
+            if mode == "oversize-request": frame["request"]["body"]=base64.b64encode(b'x'*((8<<20)+1)).decode()
+            print(json.dumps(frame),flush=True)
+            chunks=[]
+            while True:
+                line=sys.stdin.readline()
+                if not line: sys.exit(25)
+                response=json.loads(line)
+                if response["type"] == "chunk": chunks.append(base64.b64decode(response["data"]))
+                if response["type"] == "chunk":
+                    with open(directory+"/first-model-chunk","w") as marker: marker.write("streamed")
+                if response["type"] == "end": break
+            if b"[DONE]" not in b"".join(chunks): sys.exit(26)
+            print(json.dumps(dict(type="result",result=dict(report=dict(schemaVersion="1.0",baseSha=request["baseSha"],headSha=request["headSha"],findings=[])))),flush=True)
+            sys.exit(0)
         if mode == "nonzero": sys.exit(23)
         if mode == "oversize": print("x"*300000)
         elif mode == "invalid": print('{"report":{}}')

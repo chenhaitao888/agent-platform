@@ -14,11 +14,12 @@ import (
 )
 
 type workerResponse struct {
-	Profile          *Profile        `json:"profile,omitempty"`
-	Report           json.RawMessage `json:"report,omitempty"`
-	ErrorCode        string          `json:"errorCode,omitempty"`
-	SandboxVerified  bool            `json:"sandboxVerified,omitempty"`
-	GatewaySupported bool            `json:"gatewaySupported,omitempty"`
+	Profile             *Profile        `json:"profile,omitempty"`
+	Report              json.RawMessage `json:"report,omitempty"`
+	ErrorCode           string          `json:"errorCode,omitempty"`
+	SandboxVerified     bool            `json:"sandboxVerified,omitempty"`
+	GatewaySupported    bool            `json:"gatewaySupported,omitempty"`
+	ModelRelaySupported bool            `json:"modelRelaySupported,omitempty"`
 }
 
 // This envelope is used only by deployment-selected gateway Workers. HTTP
@@ -89,6 +90,7 @@ func ServeWorker(ctx context.Context, config ExecConfig, probe bool, input io.Re
 			message.Profile = &profile
 			message.SandboxVerified = true
 			message.GatewaySupported = true
+			message.ModelRelaySupported = true
 		}
 	} else {
 		report, runErr := runner.Run(ctx, request)

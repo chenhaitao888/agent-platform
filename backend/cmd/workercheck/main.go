@@ -24,6 +24,7 @@ func main() {
 	flag.IntVar(&config.GID, "gid", config.GID, "workspace owner GID")
 	gatewayURL := flag.String("gateway-base-url", "", "deployment HTTPS Responses API endpoint")
 	principal := flag.String("service-principal", "", "deployment model service identity")
+	flag.BoolVar(&config.ModelRelay, "model-relay", false, "require controlled stdio model transport (no inference)")
 	flag.Parse()
 	if *gatewayURL != "" || *principal != "" {
 		config.Gateway = &codex.GatewayConfig{BaseURL: *gatewayURL, ServicePrincipal: *principal}

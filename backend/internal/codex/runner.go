@@ -26,15 +26,17 @@ type ExecConfig struct {
 	Timeout              time.Duration
 	Gateway              *GatewayConfig
 	gatewayCredential    *gatewayCredential
+	modelBaseURL         string
 }
 
 type ExecRunner struct {
-	profile    Profile
-	root       string
-	model      string
-	timeout    time.Duration
-	gateway    *GatewayConfig
-	credential *gatewayCredential
+	profile      Profile
+	root         string
+	model        string
+	timeout      time.Duration
+	gateway      *GatewayConfig
+	credential   *gatewayCredential
+	modelBaseURL string
 }
 
 var _ review.Runner = (*ExecRunner)(nil)
@@ -87,7 +89,7 @@ func NewExecRunner(ctx context.Context, config ExecConfig) (*ExecRunner, error) 
 		}
 		profile.RequiredFlags = append(profile.RequiredFlags, flag)
 	}
-	return &ExecRunner{profile: profile, root: root, model: config.Model, timeout: config.Timeout, gateway: gateway, credential: config.gatewayCredential}, nil
+	return &ExecRunner{profile: profile, root: root, model: config.Model, timeout: config.Timeout, gateway: gateway, credential: config.gatewayCredential, modelBaseURL: config.modelBaseURL}, nil
 }
 
 // Profile returns a copy of the identity verified for this runner's deployment.
@@ -161,7 +163,13 @@ func (r *ExecRunner) Run(ctx context.Context, input review.RunInput) (review.Fin
 	execution, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	args := []string{"--no-daemon", "--ask-for-approval", "never", "--model", r.model}
-	args = append(args, r.gateway.arguments()...)
+	provider := r.gateway
+	if r.modelBaseURL != "" && provider != nil {
+		copy := *provider
+		copy.BaseURL = r.modelBaseURL
+		provider = &copy
+	}
+	args = append(args, provider.arguments()...)
 	args = append(args, "exec",
 		"--sandbox", "read-only", "--ephemeral", "--ignore-user-config", "--ignore-rules",
 		"--output-schema", schema, "--output-last-message", output, "--json", "-",

@@ -45,6 +45,7 @@ type RuntimeIdentity struct {
 	SeccompSHA256    string `json:"seccompSha256,omitempty"`
 	GatewayURL       string `json:"gatewayUrl,omitempty"`
 	ServicePrincipal string `json:"servicePrincipal,omitempty"`
+	ModelTransport   string `json:"modelTransport,omitempty"`
 }
 
 // RuntimeProfiler exposes verified deployment identity without credentials.

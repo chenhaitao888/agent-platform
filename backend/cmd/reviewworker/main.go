@@ -19,6 +19,7 @@ func main() {
 	probe := flag.Bool("probe", false, "inspect capabilities without inference")
 	gatewayURL := flag.String("gateway-base-url", "", "deployment HTTPS Responses API endpoint")
 	principal := flag.String("service-principal", "", "deployment model service identity")
+	modelRelay := flag.Bool("model-relay", false, "relay model requests over the controlled execution channel")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		os.Exit(2)
@@ -28,6 +29,15 @@ func main() {
 	config := codex.ExecConfig{Binary: "/opt/codex/codex", ExpectedBinarySHA256: *digest, WorkspaceRoot: *root, Model: *model, Timeout: *timeout}
 	if *gatewayURL != "" || *principal != "" {
 		config.Gateway = &codex.GatewayConfig{BaseURL: *gatewayURL, ServicePrincipal: *principal}
+	}
+	if *modelRelay {
+		if config.Gateway == nil {
+			os.Exit(2)
+		}
+		if err := codex.ServeModelRelayWorker(ctx, config, *probe, os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
 	}
 	if err := codex.ServeWorker(ctx, config, *probe, os.Stdin, os.Stdout); err != nil {
 		os.Exit(1)

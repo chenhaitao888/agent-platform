@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +30,9 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	realImage := os.Getenv("AGENT_PLATFORM_CODEX_IMAGE")
 	policy := os.Getenv("AGENT_PLATFORM_SECCOMP_POLICY")
 	var gateway *codex.GatewayConfig
-	if os.Getenv("AGENT_PLATFORM_GATEWAY_TEST") == "1" {
+	modelRelay := os.Getenv("AGENT_PLATFORM_MODEL_RELAY_TEST") == "1"
+	var modelClient *http.Client
+	if os.Getenv("AGENT_PLATFORM_GATEWAY_TEST") == "1" || modelRelay {
 		credential := filepath.Join(t.TempDir(), "service-credential.json")
 		content, err := json.Marshal(map[string]string{"servicePrincipal": "offline-deepseek-service", "token": "docker-fixture-service-key"})
 		if err != nil {
@@ -39,6 +42,20 @@ func TestDockerWorkerIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		gateway = &codex.GatewayConfig{BaseURL: "https://api.deepseek.com", ServicePrincipal: "offline-deepseek-service", CredentialFile: credential}
+		if modelRelay {
+			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.RequestURI() != "/v1/responses" || r.Header.Get("Authorization") != "Bearer docker-fixture-service-key" {
+					t.Error("relay lost controlled endpoint or host service credential")
+				}
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: first\n\n")
+				w.(http.Flusher).Flush()
+				_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			}))
+			t.Cleanup(upstream.Close)
+			gateway.BaseURL, modelClient = upstream.URL+"/v1", upstream.Client()
+		}
 	}
 	if endpoint == "" || base == "" {
 		t.Fatal("provide explicit local Docker endpoint and immutable base")
@@ -108,7 +125,7 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	newFixture := func(t *testing.T, timeout time.Duration) reviewExecutionFixture {
 		t.Helper()
 		return newReviewExecutionFixtureWithRunner(t, "success", timeout, func(root string) review.Runner {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-fixture", Timeout: timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway, ModelRelay: modelRelay, ModelHTTPClient: modelClient})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,6 +147,9 @@ func TestDockerWorkerIntegration(t *testing.T) {
 		}
 		if gateway != nil && (operation.Runtime.GatewayURL != gateway.BaseURL || operation.Runtime.ServicePrincipal != gateway.ServicePrincipal || strings.Contains(response.Body.String(), "docker-fixture-service-key")) {
 			t.Fatal("execution projection did not preserve safe gateway identity")
+		}
+		if modelRelay && operation.Runtime.ModelTransport != "stdio" {
+			t.Fatal("relay transport missing from saved runtime")
 		}
 		contentResponse := httptest.NewRecorder()
 		fixture.handler.ServeHTTP(contentResponse, httptest.NewRequest(http.MethodGet, "/api/v1/artifacts/"+operation.Artifact.ID+"/content?tenantId="+fixture.ready.TenantID, nil))
@@ -218,7 +238,7 @@ func TestDockerWorkerIntegration(t *testing.T) {
 	}
 	if realImage != "" {
 		t.Run("real_codex_sandbox_gate_without_inference", func(t *testing.T) {
-			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway})
+			runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: realImage, WorkspaceRoot: t.TempDir(), Model: "probe-only", Timeout: time.Minute, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway, ModelRelay: modelRelay, ModelHTTPClient: modelClient})
 			if err != nil {
 				if policy == codex.SeccompCodexBwrap {
 					t.Fatal("reviewed bwrap policy did not enable the real native sandbox: ", err)
