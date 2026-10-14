@@ -17,11 +17,11 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～36 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～37 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
-默认 API 启动未装配 Runner，返回 `503 review_unavailable`；隔离 Worker、受控模型转发与 DeepSeek 真实模型联调已通过。
+API 默认不启用 Review；完整部署配置可显式启用 Docker Worker 与受控模型转发。DeepSeek 真实模型联调已通过。
 以下命令检查已安装 CLI 帮助中声明的所需选项，并记录实际版本与 SHA-256，不调用模型：
 
 ```bash
@@ -78,6 +78,51 @@ export AGENT_PLATFORM_WORKSPACE_ROOT='/var/lib/agent-platform/workspaces'
 以 `0700` 创建不存在的目录。当前 token 只属于控制平面及其受控 Git 子进程，不会写入 clone URL、
 命令参数、Workspace、Runtime 或 Codex shell；后续仍要接入 Credential Broker。
 
+GitLab 使用企业私有 CA 时，可额外配置 `AGENT_PLATFORM_GITLAB_CA_FILE=/absolute/path/to/gitlab-ca.pem`。
+同一文件用于 GitLab HTTPS client 和受控 clone/fetch 的 `GIT_SSL_CAINFO`；不关闭 TLS 验证。
+CA 文件必须为绝对路径、普通 PEM 文件且不超过 1 MiB。可用 `AGENT_PLATFORM_GIT_BINARY` 选择部署 Git 二进制，默认 `git`。
+
+### 启用 API 审阅执行
+
+在上述 GitLab/Workspace 配置完整后，额外设置以下变量：
+
+```bash
+export AGENT_PLATFORM_REVIEW_ENABLED=true
+export AGENT_PLATFORM_API_ADDR='127.0.0.1:8080'
+export AGENT_PLATFORM_DOCKER_HOST='unix:///absolute/path/to/docker.sock'
+export AGENT_PLATFORM_REVIEW_WORKER_IMAGE='sha256:<已构建并验证的Worker镜像ID>'
+export AGENT_PLATFORM_REVIEW_MODEL='deepseek-flash'
+export AGENT_PLATFORM_MODEL_BASE_URL='https://api.deepseek.com'
+export AGENT_PLATFORM_MODEL_SERVICE_PRINCIPAL='pr-review-deepseek'
+export AGENT_PLATFORM_MODEL_CREDENTIAL_FILE='/absolute/path/to/agent-credentials/model.json'
+export AGENT_PLATFORM_REVIEW_SECCOMP_POLICY='codex-bwrap'
+```
+
+凭据文件格式见后文“模型连接与服务凭据”。API 启动只预检本地不可变镜像、原生 sandbox 和 stdio 转发能力；
+不会读取模型 key 或调用模型。只有通过启动预检后才监听 HTTP，不回退到个人 Codex。
+首次实际审阅时读取凭据，缺失/失效时返回执行失败且不归档 Findings；启动成功不代表上游账户/额度已验证。
+
+| 可选变量 | 默认值与用途 |
+| --- | --- |
+| `AGENT_PLATFORM_API_ADDR` | Review 开启时默认 `127.0.0.1:8080`；当前只接受 loopback IP，`127.0.0.1:0` 可分配临时端口 |
+| `AGENT_PLATFORM_DOCKER_BINARY` | `docker`，部署选定的客户端二进制 |
+| `AGENT_PLATFORM_REVIEW_TIMEOUT` | `90s`，接受 `1s`～`2m`，覆盖 Review 的 Git 输入读取、模型执行和结果提交前检查 |
+| `AGENT_PLATFORM_REVIEW_SECCOMP_POLICY` | `docker-default`；本机需明确选择已验证的 `codex-bwrap` |
+| `AGENT_PLATFORM_MODEL_CA_FILE` | 可选部署 PEM CA 文件，用于模型 HTTPS；不读取个人代理或关闭 TLS 验证 |
+
+Worker 使用 API 服务进程的 UID/GID，API 需以非 root 服务用户运行并拥有私有 Workspace 与凭据。
+本切片用于本机试点；扩展监听范围需后续身份认证与租户授权。配置仅由部署读取并在启动时固定，任务请求不能覆盖。
+`REVIEW_ENABLED` 只接受 `true`/`false`；没有开启却提供审阅字段、字段不完整、可变镜像或不兼容 Worker 都会拒绝启动。
+
+```bash
+cd backend
+go build -o /tmp/agent-platform-api ./cmd/api
+/tmp/agent-platform-api
+```
+
+进程会记录实际监听地址及是否开启 Review，不输出 token。`/healthz` 是进程健康检查，仍需创建 Task、
+准入 QUEUED、准备 READY Workspace 后再调用下文的 Review 接口。
+
 ```bash
 cd backend
 go run ./cmd/api
@@ -101,7 +146,8 @@ GitLab project ID（如 `42`），或 `namespace/project` 路径（如 `platform
 路径只接受 ASCII 字母、数字、`.`、`_`、`-` 和分隔用的 `/`，不接受空路径段、`.` 段或连续的
 `..`。填写原始路径，不要预先 URL 编码。格式或长度不合规返回 `400 validation_error`。
 服务设置读请求 15 秒、写超时 5 分钟、空闲连接 60 秒；
-收到 SIGINT/SIGTERM 后停止接收新连接，最多等待 60 秒让在途请求完成。
+收到 SIGINT/SIGTERM 后停止接收新连接；默认等待 60 秒，Review 开启时等待
+`max(60s, REVIEW_TIMEOUT + 30s)`，给执行超时和 Worker 清理留出时间。
 当前 Workspace Prepare 仍在单个 HTTP 请求中同步 clone，大仓库可能碰到写超时或超过停机宽限；
 改为异步 Activity 后需要重新收紧和校准这些时限。
 
@@ -462,10 +508,9 @@ curl -i \
 curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
 ```
 
-当前 `cmd/api` 使用未装配 Runner 的构造入口，因此以上 POST 在满足 Task/Workspace 前置条件后
-返回 `503 review_unavailable`，不会调用本机个人 Codex。集成入口 `NewHandlerWithReviewServices`
-接受由部署装配的 Runner；测试通过此入口贯穿真实 Git、外部假 CLI 进程和真实 HTTP。
-隔离 Worker 与受控模型身份接齐后才启用真实执行。
+未启用 Review 时，以上 POST 在满足 Task/Workspace 前置条件后返回 `503 review_unavailable`。
+按启动说明显式启用后，`cmd/api` 装配 Docker Runner，并通过固定模型出口执行；
+集成入口 `NewHandlerWithReviewServices` 也可用于嵌入部署。
 
 已装配 Runner 时，首次成功返回 `201` 与 `SUCCEEDED` 执行投影，其中包含
 `PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
@@ -535,7 +580,7 @@ go run ./cmd/workercheck \
 它增加了内核命名空间接口的可达范围，需要在目标部署重新验证；内核/LSM 仍可拒绝启动。
 策略来源、参数限制与取舍见 [seccomp 说明](backend/internal/codex/policies/README.md)。
 目前默认 API 仍返回 `review_unavailable`；已实现受控 provider 配置与服务凭据交付，
-受控模型出口及 DeepSeek 真实模型执行已验证；API 部署装配、企业代理/Broker 与完整质量验收待后续接入。
+受控模型出口、API 部署装配及 DeepSeek 真实模型执行已验证；企业代理/Broker 与完整质量验收待后续接入。
 
 真实 Docker 回归通过外部假模型 CLI 验证完整 HTTP/Git/Worker/Artifact 链路，无需模型账户：
 
@@ -641,7 +686,21 @@ go test ./internal/httpapi -run '^TestDeepSeekWorkerLiveIntegration$' -count=1 -
 默认测试模型是 `deepseek-flash`，可通过 `AGENT_PLATFORM_DEEPSEEK_MODEL=deepseek-v4-pro` 选择用户指定的另一模型。
 本轮实际验证了 Flash：固定 diff → 原生只读 Codex → 模型 → Findings Artifact → 幂等重放，
 并检测出合成代码中的除零回归。这是一个联通和基本质量样例，尚不能代表真实仓库的整体审阅质量；
-默认 API 仍需下一步的部署装配才能启用审阅。
+API 可按启动说明显式启用审阅；真实 GitLab 服务身份/仓库联调与整体质量验收仍待后续进行。
+
+API 可执行文件与真实 Docker 的离线联调仅使用受控 HTTPS GitLab/模型接口、临时 Git 仓库和测试凭据：
+
+```bash
+cd backend
+AGENT_PLATFORM_API_DOCKER_TEST=1 \
+AGENT_PLATFORM_DOCKER_HOST=unix:///absolute/path/to/docker.sock \
+AGENT_PLATFORM_CODEX_IMAGE=sha256:<带原生Codex的Worker镜像ID> \
+go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -v
+```
+
+这条测试实际启动编译后的 API，执行 Task → HTTPS clone → READY Workspace → 原生隔离 Worker →
+模型 HTTPS 流 → Findings Artifact → 重放，并验证 SIGINT 时在途审阅按预算失败、响应送达和容器清理。
+普通测试还覆盖默认关闭、部署拒绝、无凭据启动/执行失败、TLS 信任与不兼容镜像；真实 Docker 测试需显式启用。
 
 ## 启动前端
 

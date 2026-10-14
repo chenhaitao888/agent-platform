@@ -29,9 +29,19 @@ type Input struct {
 type Preparer struct {
 	gitBinary string
 	root      string
+	caFile    string
 }
 
 func NewPreparer(gitBinary, root string) (*Preparer, error) {
+	return NewPreparerWithCAFile(gitBinary, root, "")
+}
+
+// NewPreparerWithCAFile selects deployment TLS trust for clone/fetch only.
+// It never accepts a CA path from repository content or task requests.
+func NewPreparerWithCAFile(gitBinary, root, caFile string) (*Preparer, error) {
+	if caFile != "" && !filepath.IsAbs(caFile) {
+		return nil, errors.New("git CA file must be an absolute path")
+	}
 	if !filepath.IsAbs(root) || filepath.Clean(root) == string(filepath.Separator) {
 		return nil, errors.New("workspace root must be an absolute non-root path")
 	}
@@ -39,7 +49,7 @@ func NewPreparer(gitBinary, root string) (*Preparer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find Git executable: %w", err)
 	}
-	return &Preparer{gitBinary: resolved, root: filepath.Clean(root)}, nil
+	return &Preparer{gitBinary: resolved, root: filepath.Clean(root), caFile: caFile}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, input Input) error {
@@ -72,6 +82,9 @@ func (p *Preparer) Prepare(ctx context.Context, input Input) error {
 		return fmt.Errorf("%w: create credential helper: %v", ErrGitOperation, err)
 	}
 	credentialEnvironment := gitEnvironment(askPassPath, input.Credentials)
+	if p.caFile != "" {
+		credentialEnvironment = append(credentialEnvironment, "GIT_SSL_CAINFO="+p.caFile)
+	}
 	repositoryDir := filepath.Join(workspaceDir, "repository.git")
 
 	// clone URL 和目录是 argv，但 token 不是；Git 需要认证时会执行 GIT_ASKPASS 指向的脚本，

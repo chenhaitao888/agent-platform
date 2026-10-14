@@ -37,10 +37,10 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件。
-默认启动未装配 Review Runner；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
+API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-11）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-14）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -52,8 +52,9 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 原生 Sandbox 启用门槛及真实 Docker 离线回归，用户于 2026-10-09 审阅并批准本次提交推送。
 第 34 步解决本机原生 bubblewrap 的 seccomp 兼容性，用户审阅后以 `e17e944` 推送至 `origin/main`。
 第 35 步接入受控 provider 配置与服务凭据交付，用户审阅后以 `915cf7a` 推送至 `origin/main`，10 月 10 日暂停。
-10 月 11 日按用户指示恢复：第 36 步完成 stdio 受控模型出口、运行工具镜像及真实 DeepSeek Flash 联调，用户于 10 月 13 日审阅并批准本次提交推送。
-默认 API 启动仍不装配 Runner；下一步接部署装配与端到端验收，企业代理/Broker 和场景 Skills 仍待后续接入。
+第 36 步完成 stdio 受控模型出口、运行工具镜像及真实 DeepSeek Flash 联调，用户审阅后于 10 月 13 日以 `7ddaf7d` 推送至 `origin/main`。
+第 37 步完成 API 部署装配、显式启用、HTTPS GitLab 信任与真实 API/Docker 贯穿验证，用户于 10 月 14 日审阅并批准本次提交推送。
+用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -65,6 +66,7 @@ agent-platform/
 │   ├── cmd/reviewworker/        # Linux 容器内只读 Worker 入口
 │   ├── cmd/workercheck/         # 不调用模型的镜像/原生 Sandbox 启用检查
 │   └── internal/
+│       ├── apiapp/              # 部署环境解析与真实 API/Runner 装配
 │       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
 │       ├── codex/               # CLI 预检、只读 exec 与 Docker Worker adapter
 │       ├── connector/gitlab/    # GitLab 验证与可信 clone URL adapter
@@ -2480,7 +2482,7 @@ Worker 目前仍 network=none，默认 API 仍不装配 Runner。
 
 ### M14 实现（第 36 步）：受控模型出口与真实 DeepSeek 联调
 
-- 状态：完成（2026-10-11），用户于 2026-10-13 审阅并批准本次提交推送。
+- 状态：完成（2026-10-11），用户审阅后于 2026-10-13 以 `7ddaf7d` 提交并推送至 `origin/main`。
 - 公共边界：部署 `DockerConfig.ModelRelay` / `ModelHTTPClient`、`ServeModelRelayWorker` 和 CLI `--model-relay`。
 - 用户提供本地凭据文件路径；经授权将文件权限从 `0644` 收紧为 `0600`，只在执行时读取，key 未输出或写入源码。
 - 已真实调用用户指定的 `deepseek-flash`；`deepseek-v4-pro` 可通过联调参数选择，本轮未实际调用。
@@ -2547,6 +2549,64 @@ CLI 0.160.0 / SHA-256 `50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff01
 Go 全套普通/race、vet、lint（0 issues）、Linux/amd64 编译通过；流中取消/响应边界新增回归另以 race 运行通过。
 前端未改动；凭据格式和显式联调开关见 README。下一步装配 API 部署入口，再补扩大质量样例与失败路径验收。
 
+### M14 实现（第 37 步）：API 部署装配与受控接口贯穿验证
+
+- 状态：完成（2026-10-13），用户于 2026-10-14 审阅并批准本次提交推送。
+- 公共入口：`apiapp.FromEnvironment` 与实际 `cmd/api` 可执行文件；新的部署变量见 README。
+- 用户本轮选择“先用受控接口验证”。只使用测试 GitLab/模型服务、临时仓库及测试凭据，未读取真实 key 或调用收费模型。
+
+#### 从部署到服务
+
+`apiapp` 集中解析部署环境，构造真实 GitLab adapter、Git preparer/diff reader、Docker Runner 和 HTTP Handler。
+Java 类比：它相当于应用启动时的 `@Configuration` 工厂；请求 DTO 仍只携带 Task/Workspace 坐标。
+`cmd/api` 在装配/预检全部成功后才监听，实际监听地址与 Review 启用状态进入启动日志，服务 token 不进入日志。
+SIGINT/SIGTERM 同时可打断启动预检；监听后的信号用于停止接收连接并等待在途请求，避免立即取消模型执行。
+
+`AGENT_PLATFORM_REVIEW_ENABLED` 默认关闭，只接受 `true`/`false`。没有显式开启却提供 Review 字段、
+GitLab/Workspace 或模型配置不完整、非法地址/超时/镜像/策略、Worker 不支持 stdio 转发，均拒绝启动。
+不回退到个人 Codex，不接受个人 auth 文件或 Task 的部署参数。启用时总使用 `ModelRelay=true`，上游 key 留在宿主。
+Worker 使用 API 服务 UID/GID，需要非 root 服务用户；镜像依旧不可变、`pull=never`，按实际能力而非固定 CLI 版本启用。
+
+本切片的 Review 入口限于 loopback IP，默认 `127.0.0.1:8080`；可用 `127.0.0.1:0` 为联调分配临时端口。
+没有启用 Review 时保留原来的 Workspace 功能，准备成功后 Review 仍为 503。未配置 GitLab 时健康检查可用，仓库准入仍失败关闭。
+启动预检不会读取模型凭据或验证上游额度；缺失凭据可启动，但首次执行失败、无 Artifact，并按原契约重放失败。
+配置在启动时读取并固定，后续环境变更不改已经构造的 Runner；凭据文件仍在每次新执行时读取，按第 35/36 步轮换。
+
+#### HTTPS 信任与执行预算
+
+可选 `AGENT_PLATFORM_GITLAB_CA_FILE` 同时用于 Go HTTPS client 的信任根与 Git clone/fetch 的 `GIT_SSL_CAINFO`。
+证书只由部署选择，文件必须是绝对路径、普通 PEM 文件，最多 1 MiB；读取非阻塞且限长，不关闭 TLS 校验。
+Git 全局/system config 仍禁用，CA 不加入后续本地 Git 子进程的凭据环境，token 仍通过短暂 askpass 交付。
+模型 HTTPS 可另外指定 `AGENT_PLATFORM_MODEL_CA_FILE`，经过受控模型 Transport 的复制/验证，继续排除个人代理和 cookie。
+
+Review 部署预算默认 90 秒，接受 1 秒至 2 分钟。HTTP 装配层把同一个 context deadline 交给
+固定 diff 读取、Docker 执行及结果提交前检查；Docker 的独立清理 context 继续保留。
+停机宽限为 `max(60s, REVIEW_TIMEOUT + 30s)`，给执行结束与容器删除留出时间；写超时仍为 5 分钟。
+Workspace prepare 的大仓库同步 clone 仍可能超过停机宽限，持久调度与启动恢复尚待后续实现。
+
+#### RED → GREEN 与验证
+
+首条 API 部署公共测试因缺少应用装配入口编译 RED，加入配置工厂后 GREEN。
+GitLab HTTPS 的受控接口最初因 CA 不受信返回 503，回归 RED；按部署 PEM 配置信任后 Task 创建 GREEN。
+真实 HTTPS clone 最初因 Git 未获得同一 CA 返回 503，回归 RED；只对 clone/fetch 增加部署 CA 后，
+从 Task 到 READY Workspace、固定 diff、模型转发、Findings Artifact 与重放的公共路线 GREEN。
+测试只替换外部 GitLab HTTP、模型 HTTP 和 Docker/inference CLI；平台内部 Handler、Store、Git adapter、
+Runner、Workspace 与 Review service 均使用真实实现，没有内部替身或新 Agent Loop。
+
+普通测试覆盖默认关闭与显式配置、部分配置拒绝、loopback 监听限制、超时范围、不可变镜像/固定策略，
+私有 CA、旧 Worker 拒绝、启动不读 key/执行缺失凭据失败、失败重放、成功重放不调用模型、启动后配置冻结，
+以及预算终止后不产生 Artifact。编译后的 API 也实际通过健康检查、HTTPS clone、Review、Artifact 读取与 SIGINT 退出。
+
+真实 Docker 联调使用第 36 步的本地原生镜像 `sha256:a30e40dcfecbd189d3310d0135c455c38c6d8dda10229a34b68aa20e1d8fc7cb`
+为基础，仅替换推理入口为外部模型替身，保留真实 native sandbox 和 Worker。实际 API 可执行文件通过：
+
+- `archive_and_replay`：HTTPS GitLab/智能 HTTP clone → READY Workspace → 原生只读工具边界 → HTTPS 模型流 → Artifact/重放；模型调用只有 1 次。
+- `shutdown_during_model_request`：模型请求进行中发送 SIGINT，按 1 秒部署预算返回 504，API 正常退出，所属 Worker 容器全部清理。
+
+这两个跨进程场景实际执行通过（6.02 秒）；未发布镜像、未修改 Docker daemon 或宿主全局信任。
+Go 全套普通/race、vet、lint（0 issues）与 Linux/amd64 编译通过；前端未改动，不重复测试。
+下一步扩大审阅质量/失败场景验收并接真实企业 GitLab，之后再交付面向用户的前端审阅触发。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2578,7 +2638,7 @@ node --run build
   它们还不是事务 Outbox，也没有发布到 Event Bus。
 - Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
-  默认启动未装配 Runner；已实现 Docker 只读 Worker adapter、受控模型转发与真实 Flash 联调。
+  API 已具备显式部署装配，默认关闭 Review，本切片开启时只接受 loopback 监听；已实现 Docker 只读 Worker、受控转发与真实 Flash 联调。
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
