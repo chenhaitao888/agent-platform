@@ -14,13 +14,14 @@ import (
 var ErrInvalidEvaluation = errors.New("invalid evaluation input")
 
 type Capture struct {
-	SchemaVersion string                 `json:"schemaVersion"`
-	SuiteSHA256   string                 `json:"suiteSha256"`
-	Evidence      string                 `json:"evidence"`
-	StartedAt     time.Time              `json:"startedAt"`
-	CaseTimeoutMS int64                  `json:"caseTimeoutMs"`
-	Runtime       review.RuntimeIdentity `json:"runtime"`
-	Results       []Result               `json:"results"`
+	SchemaVersion   string                 `json:"schemaVersion"`
+	SuiteSHA256     string                 `json:"suiteSha256"`
+	Evidence        string                 `json:"evidence"`
+	StartedAt       time.Time              `json:"startedAt"`
+	CaseTimeoutMS   int64                  `json:"caseTimeoutMs"`
+	Runtime         review.RuntimeIdentity `json:"runtime"`
+	EvaluatorSHA256 string                 `json:"evaluatorSha256,omitempty"`
+	Results         []Result               `json:"results"`
 }
 
 type Result struct {
@@ -31,12 +32,14 @@ type Result struct {
 	State       string                 `json:"state"`
 	DurationMS  int64                  `json:"durationMs"`
 	Report      *review.FindingsReport `json:"report"`
+	Usage       *review.ModelUsage     `json:"usage,omitempty"`
 }
 
 type Adjudications struct {
 	SchemaVersion string     `json:"schemaVersion"`
 	CaptureSHA256 string     `json:"captureSha256"`
 	Reviewer      string     `json:"reviewer"`
+	ReviewerKind  string     `json:"reviewerKind,omitempty"`
 	Decisions     []Decision `json:"decisions"`
 }
 
@@ -88,11 +91,17 @@ type Report struct {
 	AdjudicationsSHA256 string                 `json:"adjudicationsSha256,omitempty"`
 	Evidence            string                 `json:"evidence"`
 	Runtime             review.RuntimeIdentity `json:"runtime"`
+	EvaluatorSHA256     string                 `json:"evaluatorSha256,omitempty"`
+	ScorerSHA256        string                 `json:"scorerSha256,omitempty"`
+	AdjudicationKind    string                 `json:"adjudicationKind"`
+	Usage               *review.ModelUsage     `json:"usage"`
 	Summary             Metrics                `json:"summary"`
 	Categories          map[string]Metrics     `json:"categories"`
 	Cases               []CaseScore            `json:"cases"`
 	TokenUsage          *int64                 `json:"tokenUsage"`
 	CostUSD             *float64               `json:"costUsd"`
+	EstimatedCostUSD    *float64               `json:"estimatedCostUsd"`
+	Pricing             *Pricing               `json:"pricing,omitempty"`
 	SafetyAssessment    string                 `json:"safetyAssessment"`
 }
 
@@ -107,6 +116,10 @@ func CaptureSHA256(c Capture) string {
 }
 
 func Score(capture Capture, labels *Adjudications) (Report, error) {
+	return ScoreWithPricing(capture, labels, nil)
+}
+
+func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) (Report, error) {
 	suite := DefaultSuite()
 	if err := validateCapture(capture, suite); err != nil {
 		return Report{}, err
@@ -116,7 +129,13 @@ func Score(capture Capture, labels *Adjudications) (Report, error) {
 		return Report{}, err
 	}
 	report := Report{SchemaVersion: "1.0", SuiteSHA256: capture.SuiteSHA256, CaptureSHA256: CaptureSHA256(capture), Evidence: capture.Evidence, Runtime: capture.Runtime, Categories: map[string]Metrics{}, SafetyAssessment: "not_evaluated"}
+	report.EvaluatorSHA256 = capture.EvaluatorSHA256
+	report.AdjudicationKind = "pending"
 	if labels != nil {
+		report.AdjudicationKind = labels.ReviewerKind
+		if report.AdjudicationKind == "" {
+			report.AdjudicationKind = "unspecified"
+		}
 		data, _ := json.Marshal(labels)
 		report.AdjudicationsSHA256 = digest(data)
 	}
@@ -173,10 +192,16 @@ func Score(capture Capture, labels *Adjudications) (Report, error) {
 		finalize(&m, categoryDurations[category])
 		report.Categories[category] = m
 	}
+	if err := scoreUsage(&report, capture, pricing); err != nil {
+		return Report{}, err
+	}
 	return report, nil
 }
 
 func validateCapture(c Capture, suite Suite) error {
+	if c.EvaluatorSHA256 != "" && !validHex(c.EvaluatorSHA256, 64) {
+		return ErrInvalidEvaluation
+	}
 	if c.SchemaVersion != "1.0" || c.SuiteSHA256 != SuiteSHA256() || (c.Evidence != "controlled" && c.Evidence != "deployment") || c.StartedAt.IsZero() || c.CaseTimeoutMS < 1 || c.CaseTimeoutMS > 120000 || len(c.Results) != len(suite.Cases) || c.Runtime.Model == "" || c.Runtime.CodexVersion == "" || !validHex(c.Runtime.BinarySHA256, 64) {
 		return ErrInvalidEvaluation
 	}
@@ -206,7 +231,7 @@ func validateCapture(c Capture, suite Suite) error {
 		}
 		// Preparation can be canceled before either commit or the patch exists.
 		// Preserve this as a timeout/cancellation without inventing input pins.
-		requirePins := r.State == "succeeded" || r.State == "invalid_output" || r.State == "execution_failed"
+		requirePins := r.State == "succeeded" || r.State == "invalid_output" || r.State == "execution_failed" || r.Usage != nil
 		if (requirePins || r.BaseSHA != "") && !validHex(r.BaseSHA, 40) {
 			return ErrInvalidEvaluation
 		}
@@ -229,6 +254,9 @@ func validateDecisions(capture Capture, suite Suite, labels *Adjudications) (map
 		return indexed, nil
 	}
 	if labels.SchemaVersion != "1.0" || labels.CaptureSHA256 != CaptureSHA256(capture) || strings.TrimSpace(labels.Reviewer) == "" || len(labels.Reviewer) > 256 {
+		return nil, ErrInvalidEvaluation
+	}
+	if labels.ReviewerKind != "" && labels.ReviewerKind != "human" && labels.ReviewerKind != "assistant" {
 		return nil, ErrInvalidEvaluation
 	}
 	for _, decision := range labels.Decisions {

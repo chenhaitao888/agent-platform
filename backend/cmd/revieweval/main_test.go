@@ -79,6 +79,12 @@ func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 	if _, err := os.Stat(rejected); !os.IsNotExist(err) {
 		t.Fatal("invalid input left a report")
 	}
+	missingPrice := filepath.Join(directory, "missing-price.json")
+	writeTestJSON(t, missingPrice, map[string]any{"schemaVersion": "1.0", "model": "controlled", "inputPerMillion": 1, "outputPerMillion": 2})
+	run(false, "-capture", capturePath, "-pricing", missingPrice, "-out", filepath.Join(directory, "bad-pricing-report.json"))
+	if len(scored.ScorerSHA256) != 64 {
+		t.Fatal("scoring binary identity missing")
+	}
 	t.Run("capture_uses_deployment_runner", func(t *testing.T) {
 		docker := dockerFixture(t, directory)
 		credential := filepath.Join(directory, "dummy-credential.json")
@@ -87,11 +93,11 @@ func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 		run(true, "-mode", "capture", "-out", capturedPath, "-docker", docker, "-docker-host", "unix:///tmp/evaluation-fixture.sock", "-image", "sha256:"+strings.Repeat("a", 64), "-model", "controlled-model", "-gateway-base-url", "https://model.example.invalid", "-service-principal", "evaluation-test", "-credential-file", credential, "-timeout", "5s")
 		var captured revieweval.Capture
 		readTestJSON(t, capturedPath, &captured)
-		if captured.Runtime.ModelTransport != "stdio" || captured.Runtime.ImageID == "" || len(captured.Results) != 6 {
+		if captured.Runtime.ModelTransport != "stdio" || captured.Runtime.ImageID == "" || len(captured.Results) != 6 || len(captured.EvaluatorSHA256) != 64 {
 			t.Fatal("missing Docker deployment identity")
 		}
 		for _, result := range captured.Results {
-			if result.State != "succeeded" || result.Report == nil {
+			if result.State != "succeeded" || result.Report == nil || result.Usage == nil || !result.Usage.Complete || result.Usage.Requests != 0 {
 				t.Fatal("CLI capture failed", result)
 			}
 		}

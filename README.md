@@ -17,7 +17,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～38 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～39 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -707,7 +707,7 @@ go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -
 第 38 步增加独立的 `revieweval` 命令，使用仓库内的
 [6 个合成样例](backend/internal/revieweval/suite.json)：除零、租户过滤、边界错误、安全重构，
 以及诱导漏报和诱导误报的两类提示注入。共有 4 个预植问题，其中 3 个为 HIGH/CRITICAL。
-这是评测流程的起始集；本轮使用受控外部接口验证，尚未形成真实模型质量基线。
+这是评测流程的起始集。第 38 步通过受控验证；第 39 步完成一次真实 Flash 采集，仍待人工复核，尚未形成正式质量基线。
 
 只导出样例，不调用模型：
 
@@ -782,8 +782,38 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 旧捕获不能套用修改后的样例集，旧标注不能套用不同的捕获。`deployment` 表示通过部署 Runner 采集，
 `controlled` 表示受控验证来源；这些标签和摘要用于可追溯性，不是外部身份或运行真实性的签名证明。
 输出均以 `0600` 新建且拒绝覆盖，建议连同原始捕获、标注及当前评测程序的提交版本一起保留。
-尚未接入 token 用量/账单遥测，`tokenUsage`、`costUsd` 为 `null`；工具越权与跨租户运行安全仍为
-`safetyAssessment=not_evaluated`。提示注入样例只评判 Findings 行为，不能据此宣称完整安全验收通过。
+`capture` 现在通过宿主 HTTPS 转发采集每例 `usage`，记录请求数、取得 usage 的请求数、输入/输出及缓存 token。
+旧捕获或不支持计量的 Runner 仍可评分，用量保持未知；任一实际执行缺少完整计量时，报告的 `tokenUsage` 为 `null`，
+`usage` 中已观测的计数只作为下界。失败审阅已经消耗的用量也保留。原任务 HTTP 接口暂不保存这些计量。
+采集和评分 CLI 分别记录 `evaluatorSha256` / `scorerSha256`，标识实际执行文件。
+
+费用估算需要显式的价格 JSON，并匹配捕获中的模型和网关。价格文件包含 `schemaVersion: "1.0"`、`model`、
+`gatewayUrl`、`currency: "USD"`、`sourceUrl`、`asOf`（YYYY-MM-DD）、`ratePeriod`，以及每百万 tokens 的
+`inputPerMillion`（未缓存输入）、`cachedInputPerMillion`、`outputPerMillion` 三项单价；缺项/null 不作为免费。
+费率适用时段由操作者明确选择，命令不会按当前网页价格或本地时区自动推断。
+
+```bash
+/tmp/agent-platform-revieweval -capture /tmp/review-capture.json \
+  -adjudications /tmp/review-adjudications.json -pricing /tmp/review-pricing.json \
+  -out /tmp/review-priced.json
+```
+
+仅当所有实际执行的 usage 和缓存明细完整时，才生成 `estimatedCostUsd`；`costUsd` 始终为 `null`，
+表示尚未对账。这些字段是 API 计量和声明费率下的估算，不能代替供应商账单。
+标注可以增加 `reviewerKind: "human" | "assistant"`，报告用 `adjudicationKind` 保留来源；旧标注显示 `unspecified`，
+助手草稿不升级为人工验收，来源字段本身也不是身份认证。
+工具越权与跨租户运行安全仍为 `safetyAssessment=not_evaluated`；提示注入样例只评判 Findings 行为。
+
+2026-10-15 的 [真实捕获](docs/evaluations/2026-10-15-flash/capture.json)、
+[助手标注草稿](docs/evaluations/2026-10-15-flash/adjudications.draft.json)、
+[评分草稿](docs/evaluations/2026-10-15-flash/report.draft.json)、
+[价格快照](docs/evaluations/2026-10-15-flash/pricing.json) 和
+[证据清单](docs/evaluations/2026-10-15-flash/manifest.json) 已保存，完整保留一次运行的全部 6 例。
+5 例成功、1 例 `invalid_output`；助手建议命中 4 个预植问题，额外一条 README 注入风险提示未被当前问题集收录，
+保留 pending，总体 precision/recall 为 null。失败结果的原始内容未保留，尚不能判断具体的拒收原因。
+18 次请求累计 180,487 tokens，74.874 秒；按快照中的低峰费率估算约 $0.00518901，待实际账单核对。
+接口字段和费率依据核对当日的 [DeepSeek Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)
+与 [价格表](https://api-docs.deepseek.com/quick_start/pricing/)。这 6 例仍不足以支持生产质量或安全结论。
 
 普通离线验证（无真实凭据/模型调用）：
 

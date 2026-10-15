@@ -134,7 +134,7 @@ func validModelRequest(request *modelRelayRequest, model string) bool {
 	return err == nil && closing == json.Delim('}') && decoder.Decode(new(any)) == io.EOF && matched
 }
 
-func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRelayRequest, credential gatewayCredential, encoder *json.Encoder, remaining int64) (int64, error) {
+func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRelayRequest, credential gatewayCredential, encoder *json.Encoder, remaining int64, usage *usageAccumulator) (int64, error) {
 	if !validModelRequest(request, r.config.Model) || credential.validate(r.config.Gateway.ServicePrincipal, 0) != nil {
 		return 0, review.ErrInvalidFindings
 	}
@@ -150,6 +150,9 @@ func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRela
 	upstream.Header.Set("Authorization", "Bearer "+credential.Token)
 	upstream.Header.Set("Content-Type", "application/json")
 	upstream.Header.Set("Accept", "text/event-stream, application/json")
+	if usage != nil {
+		usage.usage.Requests++
+	}
 	response, err := r.modelClient.Do(upstream)
 	if err != nil {
 		return 0, review.ErrExecutionFailed
@@ -168,6 +171,9 @@ func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRela
 		return 0, review.ErrExecutionFailed
 	}
 	reader := io.LimitReader(response.Body, limit+1)
+	observer := usage.observe(contentType)
+	cleanEOF := false
+	defer func() { observer.finish(cleanEOF) }()
 	buffer := make([]byte, modelChunkBytes)
 	var total int64
 	for {
@@ -179,7 +185,9 @@ func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRela
 		if count != 0 && encoder.Encode(modelRelayFrame{Type: "chunk", Data: buffer[:count]}) != nil {
 			return total, review.ErrExecutionFailed
 		}
+		observer.write(buffer[:count])
 		if readErr == io.EOF {
+			cleanEOF = true
 			break
 		}
 		if readErr != nil {
@@ -192,7 +200,7 @@ func (r *DockerRunner) relayModelRequest(ctx context.Context, request *modelRela
 	return total, nil
 }
 
-func (r *DockerRunner) relayCommand(ctx context.Context, input []byte, credential gatewayCredential, args ...string) ([]byte, error) {
+func (r *DockerRunner) relayCommand(ctx context.Context, input []byte, credential gatewayCredential, usage *usageAccumulator, args ...string) ([]byte, error) {
 	home, err := os.MkdirTemp("", "agent-platform-docker-client-")
 	if err != nil {
 		return nil, review.ErrExecutionFailed
@@ -230,7 +238,7 @@ func (r *DockerRunner) relayCommand(ctx context.Context, input []byte, credentia
 			_ = command.Wait()
 		}
 	}()
-	result, relayErr := r.exchangeModelFrames(ctx, stdin, stdout, input, credential)
+	result, relayErr := r.exchangeModelFrames(ctx, stdin, stdout, input, credential, usage)
 	if relayErr == nil {
 		_ = stdin.Close()
 		err = command.Wait()
@@ -245,7 +253,7 @@ func (r *DockerRunner) relayCommand(ctx context.Context, input []byte, credentia
 	return result, relayErr
 }
 
-func (r *DockerRunner) exchangeModelFrames(ctx context.Context, input io.Writer, output io.Reader, initial []byte, credential gatewayCredential) ([]byte, error) {
+func (r *DockerRunner) exchangeModelFrames(ctx context.Context, input io.Writer, output io.Reader, initial []byte, credential gatewayCredential, usage *usageAccumulator) ([]byte, error) {
 	encoder := json.NewEncoder(input)
 	if encoder.Encode(json.RawMessage(initial)) != nil {
 		return nil, review.ErrExecutionFailed
@@ -266,7 +274,7 @@ func (r *DockerRunner) exchangeModelFrames(ctx context.Context, input io.Writer,
 			if frame.Request != nil {
 				transferred += int64(len(frame.Request.Body))
 			}
-			count, err := r.relayModelRequest(ctx, frame.Request, credential, encoder, maxExecutionModelBytes-transferred)
+			count, err := r.relayModelRequest(ctx, frame.Request, credential, encoder, maxExecutionModelBytes-transferred, usage)
 			transferred += count
 			if err != nil {
 				return nil, err

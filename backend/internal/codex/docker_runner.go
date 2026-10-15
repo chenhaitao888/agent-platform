@@ -188,6 +188,21 @@ func (r *DockerRunner) RuntimeIdentity() review.RuntimeIdentity {
 }
 
 func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.FindingsReport, error) {
+	return r.run(ctx, input, nil)
+}
+
+func (r *DockerRunner) RunWithUsage(ctx context.Context, input review.RunInput) (review.FindingsReport, *review.ModelUsage, error) {
+	if !r.config.ModelRelay {
+		report, err := r.Run(ctx, input)
+		return report, nil, err
+	}
+	accumulator := newUsageAccumulator()
+	report, err := r.run(ctx, input, accumulator)
+	accumulator.usage.Complete = accumulator.usage.Complete && accumulator.usage.Requests == accumulator.usage.MeasuredRequests
+	return report, &accumulator.usage, err
+}
+
+func (r *DockerRunner) run(ctx context.Context, input review.RunInput, usage *usageAccumulator) (review.FindingsReport, error) {
 	if err := ctx.Err(); err != nil {
 		return review.FindingsReport{}, err
 	}
@@ -228,7 +243,7 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 	}
 	execution, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
-	data, err := r.containerWithCredential(execution, worktree, request, false, credential)
+	data, err := r.containerWithCredential(execution, worktree, request, false, credential, usage)
 	if err != nil {
 		return review.FindingsReport{}, err
 	}
@@ -254,10 +269,10 @@ func (r *DockerRunner) Run(ctx context.Context, input review.RunInput) (review.F
 }
 
 func (r *DockerRunner) container(ctx context.Context, worktree string, input []byte, probe bool) (output []byte, resultErr error) {
-	return r.containerWithCredential(ctx, worktree, input, probe, gatewayCredential{})
+	return r.containerWithCredential(ctx, worktree, input, probe, gatewayCredential{}, nil)
 }
 
-func (r *DockerRunner) containerWithCredential(ctx context.Context, worktree string, input []byte, probe bool, credential gatewayCredential) (output []byte, resultErr error) {
+func (r *DockerRunner) containerWithCredential(ctx context.Context, worktree string, input []byte, probe bool, credential gatewayCredential, usage *usageAccumulator) (output []byte, resultErr error) {
 	var policyPath string
 	if len(r.seccomp) != 0 {
 		directory, err := os.MkdirTemp("", "agent-platform-seccomp-")
@@ -318,7 +333,7 @@ func (r *DockerRunner) containerWithCredential(ctx context.Context, worktree str
 		return nil, err
 	}
 	if r.config.ModelRelay && !probe {
-		return r.relayCommand(ctx, input, credential, "start", "--attach", "--interactive", name)
+		return r.relayCommand(ctx, input, credential, usage, "start", "--attach", "--interactive", name)
 	}
 	return r.command(ctx, input, review.MaxFindingsBytes+8192, "start", "--attach", "--interactive", name)
 }

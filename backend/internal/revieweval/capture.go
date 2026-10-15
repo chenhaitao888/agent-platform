@@ -73,7 +73,13 @@ func Record(ctx context.Context, runner ProfiledRunner, config Config) (Capture,
 				}
 			} else {
 				result.PatchSHA256 = digest([]byte(input.Patch))
-				report, runErr := runner.Run(caseCtx, input)
+				var report review.FindingsReport
+				var runErr error
+				if metered, ok := runner.(review.MeteredRunner); ok {
+					report, result.Usage, runErr = metered.RunWithUsage(caseCtx, input)
+				} else {
+					report, runErr = runner.Run(caseCtx, input)
+				}
 				if ctxErr := caseCtx.Err(); ctxErr != nil {
 					runErr = ctxErr
 				}

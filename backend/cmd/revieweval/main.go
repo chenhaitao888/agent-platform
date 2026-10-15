@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,6 +35,7 @@ func run(ctx context.Context, args []string) error {
 	out := flags.String("out", "", "new JSON output file (0600, never overwritten)")
 	capturePath := flags.String("capture", "", "capture file to score")
 	labelsPath := flags.String("adjudications", "", "optional human labels bound to the capture SHA-256")
+	pricingPath := flags.String("pricing", "", "optional explicit USD rate snapshot (offline scoring only)")
 	git := flags.String("git", "git", "Git executable for synthetic snapshots")
 	config := codex.DockerConfig{UID: os.Getuid(), GID: os.Getgid(), ModelRelay: true}
 	flags.StringVar(&config.Binary, "docker", "docker", "Docker client binary")
@@ -80,7 +82,19 @@ func run(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-		output, err = revieweval.Score(capture, labels)
+		var pricing *revieweval.Pricing
+		if *pricingPath != "" {
+			pricing = &revieweval.Pricing{}
+			if err := readJSON(*pricingPath, pricing); err != nil {
+				return err
+			}
+		}
+		var report revieweval.Report
+		report, err = revieweval.ScoreWithPricing(capture, labels, pricing)
+		if err == nil {
+			report.ScorerSHA256, err = evaluatorSHA256()
+		}
+		output = report
 	case "capture":
 		if config.Timeout < time.Second || config.Timeout > 2*time.Minute {
 			return errors.New("evaluation case timeout must be 1s to 2m")
@@ -96,7 +110,15 @@ func run(ctx context.Context, args []string) error {
 		if createErr != nil {
 			return errors.New("evaluation Worker preflight failed")
 		}
-		output, err = revieweval.Record(ctx, runner, revieweval.Config{WorkspaceRoot: root, GitBinary: *git, Timeout: config.Timeout, Evidence: "deployment"})
+		var captured revieweval.Capture
+		// Hash before inference so identity errors cannot discard a paid run.
+		digest, hashErr := evaluatorSHA256()
+		if hashErr != nil {
+			return errors.New("cannot identify evaluation executable")
+		}
+		captured, err = revieweval.Record(ctx, runner, revieweval.Config{WorkspaceRoot: root, GitBinary: *git, Timeout: config.Timeout, Evidence: "deployment"})
+		captured.EvaluatorSHA256 = digest
+		output = captured
 	}
 	if err != nil {
 		return err
@@ -111,6 +133,23 @@ func run(ctx context.Context, args []string) error {
 	}
 	complete = true
 	return nil
+}
+
+func evaluatorSHA256() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func readJSON(path string, target any) error {

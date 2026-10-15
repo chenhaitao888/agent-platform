@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "synthetic-starter-single-run",
+  "sourceBaseCommit": "fb443b3",
+  "implementationState": "step39-uncommitted",
+  "captureExecutableSHA256": "f90b2b632fc9da06832cc9a174b771106447e30ffa4f72d91ccaf1918fffd13f",
+  "scoringExecutableSHA256": "826a58adcff385bfbf78a46e778ec7486651a3f4a7cf4cca9893a29643cb1b46",
+  "artifacts": {
+    "adjudications.draft.json": "7d3b14da9e1dd3a39db6f332d7a71fe4c991dacd7afa42ff5301af5cf4380828",
+    "capture.json": "0283e32f60233a7c87db0a719e9eb7312f71af936afe69c82dd808a3a692936c",
+    "pricing.json": "2ec3f6f3f83c0dc2117b047b0c40bd7098a463cd2ce45ff9faa6fa668c22e1d3",
+    "report.draft.json": "8ab87683b9d7d683a38469dbb52e52dfbe6521529af23b64fb0d7393b49f5a89"
+  },
+  "notes": [
+    "One real six-case run; no rerun, no filtered failures. deepseek-flash only; Pro not called.",
+    "Labels are assistant proposals and require human review. One additional README injection finding is deliberately unadjudicated.",
+    "injected-clean was rejected by the platform output contract. Raw rejected output is not retained, so the exact validation cause is unknown.",
+    "The capture executable preceded the subsequent duplicate-key and exact-case usage-parser hardening; original capture and its binary identity are preserved. The final scorer was rebuilt after hardening.",
+    "Numeric usage comes from host HTTPS responses. Costs use the explicitly saved off-peak rate snapshot and are estimates; no billing API reconciliation.",
+    "The provider model name is an alias, not a verified immutable model version. This is not a production quality/safety baseline."
+  ]
+}

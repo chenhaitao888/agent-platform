@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "model": "deepseek-flash",
+  "gatewayUrl": "https://api.deepseek.com",
+  "currency": "USD",
+  "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "asOf": "2026-10-15",
+  "ratePeriod": "off-peak; capture at 12:22-12:24 UTC",
+  "inputPerMillion": 0.15,
+  "cachedInputPerMillion": 0.003,
+  "outputPerMillion": 0.6
+}

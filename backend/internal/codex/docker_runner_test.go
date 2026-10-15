@@ -369,17 +369,18 @@ elif args[0] == "start":
             if mode == "unknown-field": frame["request"]["authorization"]="attacker"
             if mode == "duplicate-model": frame["request"]["body"]=base64.b64encode(('{"model":"unapproved-model","model":"'+model+'"}').encode()).decode()
             if mode == "oversize-request": frame["request"]["body"]=base64.b64encode(b'x'*((8<<20)+1)).decode()
-            print(json.dumps(frame),flush=True)
-            chunks=[]
-            while True:
-                line=sys.stdin.readline()
-                if not line: sys.exit(25)
-                response=json.loads(line)
-                if response["type"] == "chunk": chunks.append(base64.b64decode(response["data"]))
-                if response["type"] == "chunk":
-                    with open(directory+"/first-model-chunk","w") as marker: marker.write("streamed")
-                if response["type"] == "end": break
-            if b"[DONE]" not in b"".join(chunks): sys.exit(26)
+            for round in range(2 if mode == "usage-multiple" else 1):
+                print(json.dumps(frame),flush=True)
+                chunks=[]
+                while True:
+                    line=sys.stdin.readline()
+                    if not line: sys.exit(25)
+                    response=json.loads(line)
+                    if response["type"] == "chunk": chunks.append(base64.b64decode(response["data"]))
+                    if response["type"] == "chunk":
+                        with open(directory+"/first-model-chunk","w") as marker: marker.write("streamed")
+                    if response["type"] == "end": break
+                if mode not in ("usage", "usage-multiple") and b"[DONE]" not in b"".join(chunks): sys.exit(26)
             print(json.dumps(dict(type="result",result=dict(report=dict(schemaVersion="1.0",baseSha=request["baseSha"],headSha=request["headSha"],findings=[])))),flush=True)
             sys.exit(0)
         if mode == "nonzero": sys.exit(23)

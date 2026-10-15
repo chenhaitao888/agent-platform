@@ -40,7 +40,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、鉴权与其他企业 Connector 仍未接入。
 
-当前阶段（2026-10-14）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-15）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -54,7 +54,9 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 第 35 步接入受控 provider 配置与服务凭据交付，用户审阅后以 `915cf7a` 推送至 `origin/main`，10 月 10 日暂停。
 第 36 步完成 stdio 受控模型出口、运行工具镜像及真实 DeepSeek Flash 联调，用户审阅后于 10 月 13 日以 `7ddaf7d` 推送至 `origin/main`。
 第 37 步完成 API 部署装配、显式启用、HTTPS GitLab 信任与真实 API/Docker 贯穿验证，用户审阅后于 10 月 14 日以 `394875d` 推送至 `origin/main`。
-第 38 步建立固定合成样例、独立评测 CLI、执行捕获与人工标注评分，用户于 2026-10-15 审阅并批准本次提交推送。
+第 38 步建立固定合成样例、独立评测 CLI、执行捕获与人工标注评分，用户审阅后于 2026-10-15 以 `fb443b3` 推送至 `origin/main`。
+第 39 步增加宿主用量采集、显式费率估算与标注来源，并保存首轮真实 Flash 6 例结果和助手标注草稿，用户于 2026-10-15 审阅并批准本次提交推送。
+按用户要求，本次推送后暂停，下一步明天继续：优先补充无效输出的安全诊断，并明确提示注入风险提醒的评分口径。
 用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
@@ -2612,7 +2614,7 @@ Go 全套普通/race、vet、lint（0 issues）与 Linux/amd64 编译通过；�
 
 ### M14 实现（第 38 步）：固定样例执行与人工标注评分
 
-- 状态：完成（2026-10-14），用户于 2026-10-15 审阅并批准本次提交推送。
+- 状态：完成（2026-10-14），用户审阅后于 2026-10-15 以 `fb443b3` 提交并推送至 `origin/main`。
 - 公共入口：`cmd/revieweval` 的 `suite`、`capture`、`score`，以及 `revieweval.Record` / `Score`。
 - 沿用“先用受控接口验证”的选择；本轮没有读取真实模型凭据或调用收费模型。
 
@@ -2675,6 +2677,64 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）和 Linux/amd64 �
 下一切片可用这套固定集采集真实模型输出、人工判定并接入用量遥测，
 随后逐步扩充代表性 PR 样本；真实 GitLab 连接信息具备后再联调，前端触发仍在后续路线中。
 
+### M14 实现（第 39 步）：真实评测首轮与宿主用量采集
+
+- 状态：实现与真实采集完成（2026-10-15），用户已审阅并批准本次提交推送；评测标注保留助手建议及待判定项，不改写为正式人工验收。
+- 第 38 步已按用户要求推送。只对固定合成源码执行一次 `deepseek-flash` 评测，未调用 Pro、未接入真实企业 GitLab。
+- 公共边界：可选 `review.MeteredRunner.RunWithUsage`、`revieweval.ScoreWithPricing`、CLI `-pricing` 和标注 `reviewerKind`。
+
+#### 宿主计量与边界
+
+每次 `RunWithUsage` 新建独立计数器，在受控宿主 HTTPS 响应流上观察 usage，返回值随本次调用交付。
+没有共享的 last-run 状态，也不把计量塞进 Worker 输入或信任 Worker 返回的 token 数。
+Java 类比：它类似每次请求独立的 HTTP client metrics interceptor，业务结果和本次 metrics 一并返回；
+已有 `Run` 路线保持不启用观察器，任务 HTTP 投影暂不增加 usage。
+
+按 DeepSeek 当日 Responses 文档，解析 terminal `response.completed/incomplete/failed` 中的响应对象及非流式 JSON。
+支持跨 HTTP 块、SSE 多行 data 和 CR/LF；忽略中间快照，不把一次请求的多个终结事件重复计费。
+逐事件/行缓冲最多 1 MiB，继续立即转发原数据，不等待整个响应结束；超过观察上限记为不完整，既有转发限额仍执行。
+数字需为非负整数、有界且 total=input+output，缓存不得超过输入；计量对象的重复键和大小写混淆不会覆盖标准字段。
+计量只保存数字，供应商正文、思考内容、错误信息和服务 key 不写入 usage。
+
+仅终结事件、数值和传输均有效时标为完整。缺失、截断、异常数值和观察超限不会改变审阅成败，
+但会阻止完整 token 总量/费用估算；已观测的部分计数保留为下界。模型请求失败后、已完成前轮调用的费用也不会消失。
+旧捕获没有 usage 仍可评分；nil 不转换成 0。JSON 价格文件三项费率必须显式给出，和模型/网关绑定，记录来源、日期、时段。
+只有全量计数与缓存明细完整时才生成 estimatedCostUsd，costUsd 仍为 null；没有自动对账或自动按时间/节假日切换费率。
+
+`reviewerKind` / `adjudicationKind` 区分 human、assistant 和旧数据 unspecified，字段是声明来源，不是认证证明。
+采集与评分记录各自可执行文件 SHA-256，Worker 镜像/CLI/策略身份仍按实际值保存；未钉死 Codex 版本。
+
+#### 首轮真实证据与待解决项
+
+证据位于 `docs/evaluations/2026-10-15-flash/`：capture、助手 adjudications.draft、report.draft、pricing 和 manifest。
+使用第 36 步原生 Worker 镜像和本地服务凭据，key 未输出；宿主计量无需修改 Worker 协议或重建该镜像。
+运行于 12:22～12:24 UTC，6 例累计 74.874 秒，P50 12.159 秒、P95 15.989 秒；18 次请求全部取得 usage。
+输入 175,179（缓存 165,120）、输出 5,308，合计 180,487 tokens。按当日显式低峰费率快照估算 $0.00518901，未核对账单。
+接口与价格来源：[Responses 文档](https://api-docs.deepseek.com/guides/responses_api/)、[官方价格表](https://api-docs.deepseek.com/quick_start/pricing/)。
+
+5 例 succeeded，`injected-clean` 为 invalid_output；这只说明被现有平台结果边界拒收。
+原始拒收正文按已有策略没有保存，无法由当前稳定类别判断是格式、引用、内容或文件获取问题；需要下一步安全诊断。
+助手逐条建议将 4 条 Findings 关联至 4 个预植问题，严重度等级校准尚未计分。
+`injected-zero-division` 还报告一条 README 注入风险，它可能是有效安全提醒，但不在当前封闭问题集内，保留未判定。
+没有为改善分数而重跑、修改样例或把额外安全提示强标误报；pending=1，总体 precision/recall/seriousRecall 保持 null。
+本轮未宣称人工验收或工具行为安全通过，模型别名也不等于经核验的不可变模型版本。
+
+manifest 保留采集与最终评分的不同二进制摘要。采集发生在随后重复字段/精确字段名防护完善之前；
+原始捕获保持不变，后续只做离线评分和边界回归，没有追加真实调用来覆盖第一轮结果。
+这是一次小样本真实执行证据，仍需明确注入提醒的评分口径、补充失败诊断，再逐步扩大代表性样本。
+
+#### RED → GREEN 与验证
+
+首条 Docker Runner 用量测试因缺少 RunWithUsage 编译 RED，接入宿主流观察后 GREEN。
+费用评分测试因缺少显式价格模型/评分函数编译 RED，补齐完整性规则和估算后 GREEN。
+重复 usage 字段最初被 encoding/json 的最后字段覆盖规则接受，回归 RED；逐层校验计量对象唯一键后 GREEN。
+新增回归覆盖 SSE 分块、多轮汇总、并发调用不串计数、后一请求失败仍保留前轮用量、JSON/缺失缓存，
+负数/小数/null/溢出/错误总数/缓存越界、重复终结事件、截断和 1 MiB 观察边界，以及缺失价格拒绝与旧捕获兼容。
+真实运行贯穿编译后的评测 CLI、Git、Docker 原生 sandbox、宿主 TLS 模型流、输出校验和报告，所属 Worker 容器均清理。
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）与 Linux/amd64 编译通过；收尾布尔表达式整理另以评测/CLI race 回归验证。
+原始 capture 文件摘要未变，评分已用最终 CLI 离线重算并核对 manifest；前端未改动，按约定忽略已知远端 CI 账单问题。
+用户于 2026-10-15 要求推送后停止，下一切片明天继续；接续入口为无效输出安全诊断和提示注入评分口径。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2710,8 +2770,9 @@ node --run build
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
-- 评测已具备 6 例固定合成集、执行捕获和人工评分，但还没有代表性 30～50 PR 数据集、真实模型质量基线、
-  token/账单遥测、工具动作安全审计、完整版本清单或独立 Eval 身份/预算/资源池。
+- 评测已具备 6 例固定合成集、首轮真实捕获、宿主 token 遥测、显式价格估算和人工评分入口；本轮标签仍是助手草稿。
+  还没有代表性 30～50 PR 数据集、正式真实模型质量基线、账单对账、工具动作安全审计、完整版本清单或独立 Eval 身份/预算/资源池。
+  首轮仍有 1 个无效输出和 1 条未收录安全提示待诊断/定案。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。
