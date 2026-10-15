@@ -53,7 +53,8 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 第 34 步解决本机原生 bubblewrap 的 seccomp 兼容性，用户审阅后以 `e17e944` 推送至 `origin/main`。
 第 35 步接入受控 provider 配置与服务凭据交付，用户审阅后以 `915cf7a` 推送至 `origin/main`，10 月 10 日暂停。
 第 36 步完成 stdio 受控模型出口、运行工具镜像及真实 DeepSeek Flash 联调，用户审阅后于 10 月 13 日以 `7ddaf7d` 推送至 `origin/main`。
-第 37 步完成 API 部署装配、显式启用、HTTPS GitLab 信任与真实 API/Docker 贯穿验证，用户于 10 月 14 日审阅并批准本次提交推送。
+第 37 步完成 API 部署装配、显式启用、HTTPS GitLab 信任与真实 API/Docker 贯穿验证，用户审阅后于 10 月 14 日以 `394875d` 推送至 `origin/main`。
+第 38 步建立固定合成样例、独立评测 CLI、执行捕获与人工标注评分，用户于 2026-10-15 审阅并批准本次提交推送。
 用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
@@ -65,6 +66,7 @@ agent-platform/
 │   ├── cmd/runtimecheck/        # 不调用模型的 Codex 版本与选项预检
 │   ├── cmd/reviewworker/        # Linux 容器内只读 Worker 入口
 │   ├── cmd/workercheck/         # 不调用模型的镜像/原生 Sandbox 启用检查
+│   ├── cmd/revieweval/          # 合成样例捕获与离线人工标注评分
 │   └── internal/
 │       ├── apiapp/              # 部署环境解析与真实 API/Runner 装配
 │       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
@@ -74,6 +76,7 @@ agent-platform/
 │       ├── httpapi/             # HTTP 路由和 JSON 适配，类似 Controller 层
 │       ├── repository/          # 验证接口与 provider 无关的错误分类
 │       ├── review/              # 固定 diff、执行幂等/投影、Findings 契约与 Runner port
+│       ├── revieweval/          # 固定合成集、执行证据和质量/失败统计
 │       ├── task/                # Task 模型与内存 Store
 │       └── workspace/           # Workspace 登记、准备状态机与 Manager
 ├── frontend/src/                # React 页面、Task UI 和组件测试
@@ -2551,7 +2554,7 @@ Go 全套普通/race、vet、lint（0 issues）、Linux/amd64 编译通过；流
 
 ### M14 实现（第 37 步）：API 部署装配与受控接口贯穿验证
 
-- 状态：完成（2026-10-13），用户于 2026-10-14 审阅并批准本次提交推送。
+- 状态：完成（2026-10-13），用户审阅后于 2026-10-14 以 `394875d` 提交并推送至 `origin/main`。
 - 公共入口：`apiapp.FromEnvironment` 与实际 `cmd/api` 可执行文件；新的部署变量见 README。
 - 用户本轮选择“先用受控接口验证”。只使用测试 GitLab/模型服务、临时仓库及测试凭据，未读取真实 key 或调用收费模型。
 
@@ -2607,6 +2610,71 @@ Runner、Workspace 与 Review service 均使用真实实现，没有内部替身
 Go 全套普通/race、vet、lint（0 issues）与 Linux/amd64 编译通过；前端未改动，不重复测试。
 下一步扩大审阅质量/失败场景验收并接真实企业 GitLab，之后再交付面向用户的前端审阅触发。
 
+### M14 实现（第 38 步）：固定样例执行与人工标注评分
+
+- 状态：完成（2026-10-14），用户于 2026-10-15 审阅并批准本次提交推送。
+- 公共入口：`cmd/revieweval` 的 `suite`、`capture`、`score`，以及 `revieweval.Record` / `Score`。
+- 沿用“先用受控接口验证”的选择；本轮没有读取真实模型凭据或调用收费模型。
+
+#### 样例和执行证据
+
+内嵌 6 个合成 PR：除零、缺失租户过滤、上界错误、安全重构、诱导漏报的注入、诱导误报的注入。
+共 4 个预植问题，3 个 HIGH/CRITICAL；每个问题记录固定路径/行号、严重度与行为依据。
+独立 Python 执行校验了 base/head 的实际行为差异，确认预植问题可复现、两个 clean 样例的目标行为一致。
+这仍是一个小起始集，不是架构要求的 30～50 个代表性 PR 或生产验收结论。
+
+`Record` 使用真正的 Git 创建固定作者、时间、SHA-1 格式的两次提交和 detached HEAD，复用真实 DiffReader。
+Git 不读取个人配置或模板、不执行 hooks；只物化内嵌源码，问题标签不会送给模型。
+CLI `capture` 创建私有临时目录，预检不可变 Docker Worker，并强制使用既有模型 stdio 转发。
+采集记录样例集 SHA-256、每例 base/head 与 patch 摘要、实际 Runner 身份和耗时，保留完整合法 Findings。
+模型循环仍由 Codex Harness 负责，没有另建 Agent Loop，也没有引入工作流引擎。
+
+每个样例的新 context 覆盖 Git 准备和执行；某例超时后继续下一例，父 context 取消后保留已完成记录，
+尚未启动的样例记为 skipped。失败输出只有稳定类别，无原始进程诊断或上游 key。
+输出文件以 0600、独占新建，拒绝覆盖旧证据；正常退出/信号取消清理本次临时工作区。
+命令退出成功表示捕获写入完成，需读取状态判断运行结果；强制 kill 的恢复和独立 Eval 资源池仍未实现。
+
+Java 类比：`Record` 类似顺序运行参数化集成用例的 Test Runner，`Score` 是纯评分服务；
+标注文件类似带来源摘要的人工验收记录，CLI 是一个独立的批处理启动类。它不经过 Task/Artifact 的内存 Store。
+
+#### 判定和统计口径
+
+文件/行号只帮助人定位，不自动代表语义正确。每条 Findings 按索引人工关联 ground truth issue，
+或明确标为误报，并记录 reviewer/reason；标注绑定完整捕获的规范 JSON SHA-256。
+拒绝过期摘要、不存在的 issue/索引、重复判定、缺失/重复样例、不合法 Findings 和成功/失败状态矛盾。
+单个问题重复上报只计一个 TP，其余计 FP；成功空结果与执行失败保持不同状态，预植问题都不会从召回分母消失。
+待标注 Findings 保留 pending，相关 FN 尚不定案，总体 precision/recall 不产生最终值。
+
+输出总体和 correctness / authorization / boundary / clean / prompt_injection 分组统计，含严重问题召回，
+比例分母与 Wilson 95% 区间。由于样例小且存在相关性，区间只描述当前计数，不声称覆盖生产总体。
+延迟为 Git 准备至 Runner 返回（包括独立清理）的时间，统计成功和失败执行；skipped 不参与分位数。
+tokenUsage/costUsd 尚不可观测，明确为 null。提示注入只验 Findings 行为，未采集工具动作审计，
+`safetyAssessment=not_evaluated`；租户过滤代码样例也不代表平台跨租户隔离已验收。
+
+当前数据集是封闭问题集；若发现遗漏的真实问题，需修订数据集并重新采集，不能为保持分数而标误报。
+`deployment` / `controlled` 是采集来源说明，摘要不是防伪签名。升级应保存评测程序提交版本和各份原始证据，
+完整 prompt/context/部署策略版本清单、真实模型使用量、质量门槛和自动基线对比仍留待后续。
+
+#### RED → GREEN 与验证
+
+首条评分行为测试因缺少评测模块编译 RED，加入人工判定和统计后 GREEN。
+新增执行入口测试因缺少 `Record` 编译 RED；接入真实 Git / Codex adapter 后，通过固定提交与独立超时验证。
+后续发现将 skipped 的零耗时计入分位数会把“只执行一例、跳过五例”的 P50 错报为 0，
+公共报告回归先 RED，排除未执行样例并增加 durationSamples 后 GREEN。
+收尾检查又验证了 Git 准备阶段的超时：原实现记为 preparation_failed，回归 RED；
+改为保留 timeout/canceled 并允许尚未生成的输入摘要为空后 GREEN，避免把准备超时漏出超时统计。
+
+验证包括：两次生成相同 base/head/patch、标签不进源码、单例超时不污染下一例、取消不启动新例、
+非法 JSON/错误引用/非零退出失败且无结果、陈旧标注拒绝、同问题重复命中、误报/漏报、分组和无分母 null。
+实际编译的评测 CLI 通过导出样例、捕获、待判定报告、人工评分、0600 权限、拒绝覆盖与清理工作区验证。
+仅替代外部推理 CLI 或 Docker/Worker 传输；Go 评测、Git、DiffReader、Exec/Docker Runner 和 JSON 校验都是真实实现。
+这证明评测流程的行为，不证明真实模型在上述 6 例上的表现；未重跑已有原生 Docker/模型 HTTPS 隔离链路。
+
+Go 全套普通/race 测试、vet、golangci-lint（0 issues）和 Linux/amd64 编译均通过，格式及 diff 检查通过。
+前端未改动，不重复测试；按约定忽略已知远端 CI 账单问题。
+下一切片可用这套固定集采集真实模型输出、人工判定并接入用量遥测，
+随后逐步扩充代表性 PR 样本；真实 GitLab 连接信息具备后再联调，前端触发仍在后续路线中。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2642,6 +2710,8 @@ node --run build
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
+- 评测已具备 6 例固定合成集、执行捕获和人工评分，但还没有代表性 30～50 PR 数据集、真实模型质量基线、
+  token/账单遥测、工具动作安全审计、完整版本清单或独立 Eval 身份/预算/资源池。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。

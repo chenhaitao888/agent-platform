@@ -17,7 +17,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～37 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～38 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -701,6 +701,96 @@ go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -
 这条测试实际启动编译后的 API，执行 Task → HTTPS clone → READY Workspace → 原生隔离 Worker →
 模型 HTTPS 流 → Findings Artifact → 重放，并验证 SIGINT 时在途审阅按预算失败、响应送达和容器清理。
 普通测试还覆盖默认关闭、部署拒绝、无凭据启动/执行失败、TLS 信任与不兼容镜像；真实 Docker 测试需显式启用。
+
+### 固定样例评测与人工判定
+
+第 38 步增加独立的 `revieweval` 命令，使用仓库内的
+[6 个合成样例](backend/internal/revieweval/suite.json)：除零、租户过滤、边界错误、安全重构，
+以及诱导漏报和诱导误报的两类提示注入。共有 4 个预植问题，其中 3 个为 HIGH/CRITICAL。
+这是评测流程的起始集；本轮使用受控外部接口验证，尚未形成真实模型质量基线。
+
+只导出样例，不调用模型：
+
+```bash
+cd backend
+go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
+/tmp/agent-platform-revieweval -mode suite -out /tmp/review-suite.json
+```
+
+以下 `capture` 会逐个执行全部 6 个样例并调用配置的模型，使用既有 Docker 隔离和 stdio 出口。
+只发送临时合成仓库的代码；标注答案留在评测进程，不进入 worktree 或 prompt。
+先按前文配置镜像、模型、网关、服务主体和凭据文件，然后显式运行：
+
+```bash
+/tmp/agent-platform-revieweval -mode capture \
+  -docker-host "$AGENT_PLATFORM_DOCKER_HOST" \
+  -image "$AGENT_PLATFORM_REVIEW_WORKER_IMAGE" \
+  -model "$AGENT_PLATFORM_REVIEW_MODEL" \
+  -seccomp-policy "$AGENT_PLATFORM_REVIEW_SECCOMP_POLICY" \
+  -gateway-base-url "$AGENT_PLATFORM_MODEL_BASE_URL" \
+  -service-principal "$AGENT_PLATFORM_MODEL_SERVICE_PRINCIPAL" \
+  -credential-file "$AGENT_PLATFORM_MODEL_CREDENTIAL_FILE" \
+  -timeout 90s -out /tmp/review-capture.json
+```
+
+每个样例有独立的 1 秒～2 分钟预算，涵盖 Git 准备、diff 与推理；Docker 清理保留原有独立时限。
+一个样例超时仍执行后续样例；Ctrl-C 会保留已完成结果并把剩余样例记为 `skipped`。
+临时目录由命令创建并在正常返回/信号取消后清理；强制杀进程仍需后续孤儿目录恢复机制。
+命令退出 0 表示证据文件写入成功，**不代表样例执行成功或质量通过**；应查看每条 `state` 和评分报告。
+此命令使用系统 CA，暂不提供 API 部署入口的私有 CA 配置。
+
+先离线汇总，得到绑定本次捕获的 `captureSha256` 和待判定数量：
+
+```bash
+/tmp/agent-platform-revieweval -capture /tmp/review-capture.json -out /tmp/review-pending.json
+```
+
+结合样例中的 `issues[].rationale`、base/head 源码和捕获的 Findings，人工建立标注文件：
+
+```json
+{
+  "schemaVersion": "1.0",
+  "captureSha256": "从本次 pending 报告复制的完整 SHA-256",
+  "reviewer": "reviewer-name",
+  "decisions": [
+    {
+      "caseId": "zero-division",
+      "findingIndex": 0,
+      "issueId": "zero-count",
+      "reason": "描述与删除零值保护导致的异常一致。"
+    }
+  ]
+}
+```
+
+`findingIndex` 从 0 开始；确认误报时将 `issueId` 设为空字符串，并写明理由。每条 Findings 都需要判定，
+可以分批补齐；重复命中同一个 issue 只计一个 TP，其余计 FP。未标注时总体 precision/recall 为 `null`，
+不会按关键词或行号自动认定命中。这个封闭合成集只统计登记的问题；若人工发现遗漏的有效问题，
+应先修订数据集并重新捕获，不能把已知有效问题硬标成误报。
+
+```bash
+/tmp/agent-platform-revieweval -capture /tmp/review-capture.json \
+  -adjudications /tmp/review-adjudications.json -out /tmp/review-scored.json
+```
+
+报告包含 TP/FP/FN、严重问题召回、执行状态、分场景统计、分母及 Wilson 95% 区间，以及包含失败样例的
+总时长和 P50/P95。召回分母保留全部预植问题，失败/跳过不会被当成无问题的成功；未判定样例的 FN 暂不定案。
+未启动的 `skipped` 不参与延迟分位数；`durationSamples=0` 时延迟数值没有观测意义。
+无分母的比例为 `null`；这些小规模且有相关性的样例不能用来推断生产总体质量。
+
+捕获包含样例集摘要、实际 base/head、patch 摘要和 Runner 的 CLI/模型/镜像/策略身份；
+旧捕获不能套用修改后的样例集，旧标注不能套用不同的捕获。`deployment` 表示通过部署 Runner 采集，
+`controlled` 表示受控验证来源；这些标签和摘要用于可追溯性，不是外部身份或运行真实性的签名证明。
+输出均以 `0600` 新建且拒绝覆盖，建议连同原始捕获、标注及当前评测程序的提交版本一起保留。
+尚未接入 token 用量/账单遥测，`tokenUsage`、`costUsd` 为 `null`；工具越权与跨租户运行安全仍为
+`safetyAssessment=not_evaluated`。提示注入样例只评判 Findings 行为，不能据此宣称完整安全验收通过。
+
+普通离线验证（无真实凭据/模型调用）：
+
+```bash
+cd backend
+go test ./cmd/revieweval ./internal/revieweval -count=1
+```
 
 ## 启动前端
 
