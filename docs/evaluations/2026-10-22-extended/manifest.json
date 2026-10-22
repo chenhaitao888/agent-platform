@@ -1,0 +1,54 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "step43-single-extended-suite-live-run",
+  "sourceBaseCommit": "e0347f0611122493eaaea8fb5f10f4a1ea1bdb9c",
+  "implementationState": "step43-evidence-only-uncommitted",
+  "planFileSHA256": "076ec1954b7e8ca62140d2fc94b953802bb4de3c256b7c3810f5b60fe141a723",
+  "captureFileSHA256": "3c686e613787c08f4f85e8b1a3663ab4515f73fe1ee1d6575d14abc556aad0fe",
+  "captureCanonicalSHA256": "7d2b44ac82b6f3f22d49d59eadeec206bc295f9d715e35737f360f687283146d",
+  "captureExecutableSHA256": "4b3874a5876de08e16ec1873a785512543bafd8530313d95dea47d63e50ab2a9",
+  "scoringExecutableSHA256": "4b3874a5876de08e16ec1873a785512543bafd8530313d95dea47d63e50ab2a9",
+  "captureStartedAt": "2026-10-22T06:34:52.831788Z",
+  "captureOutputWrittenAt": "2026-10-22T06:38:48.473907+00:00",
+  "runtime": {
+    "integration": "docker-exec",
+    "imageId": "sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8",
+    "codexVersion": "0.160.0",
+    "binarySha256": "50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0",
+    "model": "deepseek-flash",
+    "seccompPolicy": "codex-bwrap",
+    "seccompSha256": "c731e520256a3bfea369408667316fd6f1b5327773c494da5e1231347a00d72b",
+    "gatewayUrl": "https://api.deepseek.com",
+    "servicePrincipal": "pr-review-deepseek",
+    "modelTransport": "stdio"
+  },
+  "artifacts": {
+    "adjudications.draft.json": "ccbe95db2c4a0fdd95f7580acec1b988de66aee2e4f2c24c473848dc024bbbb7",
+    "capture.json": "3c686e613787c08f4f85e8b1a3663ab4515f73fe1ee1d6575d14abc556aad0fe",
+    "comparison.json": "3b54bae1c8e7d787dd41c8aba4a15947c7b795755a5cfe485747c5c202aaaffa",
+    "plan.json": "076ec1954b7e8ca62140d2fc94b953802bb4de3c256b7c3810f5b60fe141a723",
+    "pricing.json": "d2d59147666f7a9c2a1278a33e08ce62323729fe6c46fd9a41e1c8a38a791641",
+    "provider-observation.json": "96dc1d99f04fd3ca84d9dc7f8021c8169f2e76b1429bbff997d873880f66c075",
+    "report.draft.json": "cb8ea5eae6dada7856fdf1f4ce62e814772357966030410baaf4be8e26a08282"
+  },
+  "validation": {
+    "goTest": "go test ./cmd/revieweval ./internal/revieweval -count=1 passed",
+    "offlineScoreReplay": "Same executable, capture, assistant decisions and pricing produced byte-identical report",
+    "historicalJSONFilesUnchanged": 16,
+    "allSharedSixBaseHeadPatchPinsMatchHistory": true,
+    "acceptedOutputs": 12,
+    "adjudicatedFindings": 10,
+    "usageAndCostArithmeticVerified": true,
+    "testWorkerContainersRemaining": 0
+  },
+  "notes": [
+    "Plan and rubric were written before the single twelve-case run. No reruns, filtered failures, changed suite or Pro call.",
+    "Nine issue matches and one prompt-injection advisory are assistant proposals requiring human review. Both clean controls have empty Findings. No formal quality acceptance.",
+    "Serious recall 8/8 describes matching issues whose ground truth is HIGH/CRITICAL. Four exact severity disagreements are retained in comparison.json, including three CRITICAL-to-HIGH disagreements.",
+    "No invalid_output occurred; controlled rejection tests remain the evidence for diagnostics, and the original Oct 15 failure cause remains unknown.",
+    "Pricing uses the preselected weekday peak assumption for the observed interval. The estimate is not an invoice, and the observed model documentation is not runtime immutable-version verification.",
+    "Provider key remained in the private host credential file; evidence contains no raw credential or rejected output. Only fixed synthetic worktrees were sent through the deployment runner.",
+    "Production code, tenant authentication, loopback binding and Workspace Prepare are unchanged. New evidence and documentation await review.",
+    "Local hashes and filesystem times support traceability, not third-party signature or independent time attestation."
+  ]
+}

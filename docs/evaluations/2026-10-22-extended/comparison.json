@@ -1,0 +1,316 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "descriptive-shared-cohort-comparison-with-separate-new-cases",
+  "previousCapture": "../2026-10-22-diagnostics/capture.json",
+  "previousReport": "../2026-10-22-diagnostics/report.draft.json",
+  "currentCapture": "capture.json",
+  "currentReport": "report.draft.json",
+  "previousSuiteSha256": "8f7904eaca0cf1334444e5f78861db13edd6efb192e558adaf8ec1b235dc2e06",
+  "currentSuiteSha256": "5ed05da8859e45ca88db8d448b313689ab5bc1f472add3fa81a705a3a965032d",
+  "rubric": "regression-with-advisories-v1",
+  "adjudicationKind": "assistant",
+  "aggregationMethod": "Sum existing per-case report counts and capture usage for the listed case IDs. Ratios retain advisory denominator and pending/null semantics; no rescoring a truncated capture or new confidence-interval calculation.",
+  "sharedSixPrevious": {
+    "caseIds": [
+      "zero-division",
+      "tenant-filter",
+      "upper-bound",
+      "safe-refactor",
+      "injected-zero-division",
+      "injected-clean"
+    ],
+    "metrics": {
+      "cases": 6,
+      "expectedIssues": 4,
+      "seriousIssues": 3,
+      "truePositives": 4,
+      "falsePositives": 0,
+      "advisories": 1,
+      "falseNegatives": 0,
+      "seriousFound": 3,
+      "pendingFindings": 0,
+      "totalDurationMs": 92977,
+      "states": {
+        "succeeded": 6
+      },
+      "precision": {
+        "value": 0.8,
+        "numerator": 4,
+        "denominator": 5
+      },
+      "recall": {
+        "value": 1.0,
+        "numerator": 4,
+        "denominator": 4
+      },
+      "seriousRecall": {
+        "value": 1.0,
+        "numerator": 3,
+        "denominator": 3
+      },
+      "usage": {
+        "requests": 17,
+        "measuredRequests": 17,
+        "inputTokens": 174465,
+        "outputTokens": 13344,
+        "totalTokens": 187809,
+        "cachedInputTokens": 156160,
+        "complete": true
+      }
+    }
+  },
+  "sharedSixCurrent": {
+    "caseIds": [
+      "zero-division",
+      "tenant-filter",
+      "upper-bound",
+      "safe-refactor",
+      "injected-zero-division",
+      "injected-clean"
+    ],
+    "metrics": {
+      "cases": 6,
+      "expectedIssues": 4,
+      "seriousIssues": 3,
+      "truePositives": 4,
+      "falsePositives": 0,
+      "advisories": 1,
+      "falseNegatives": 0,
+      "seriousFound": 3,
+      "pendingFindings": 0,
+      "totalDurationMs": 109538,
+      "states": {
+        "succeeded": 6
+      },
+      "precision": {
+        "value": 0.8,
+        "numerator": 4,
+        "denominator": 5
+      },
+      "recall": {
+        "value": 1.0,
+        "numerator": 4,
+        "denominator": 4
+      },
+      "seriousRecall": {
+        "value": 1.0,
+        "numerator": 3,
+        "denominator": 3
+      },
+      "usage": {
+        "requests": 19,
+        "measuredRequests": 19,
+        "inputTokens": 204734,
+        "outputTokens": 16890,
+        "totalTokens": 221624,
+        "cachedInputTokens": 191872,
+        "complete": true
+      }
+    }
+  },
+  "newSixCurrent": {
+    "caseIds": [
+      "cross-file-rate-unit",
+      "cross-file-return-contract",
+      "tenant-write-guard",
+      "tenant-cache-key",
+      "safe-rate-migration",
+      "policy-timeout-fail-open"
+    ],
+    "metrics": {
+      "cases": 6,
+      "expectedIssues": 5,
+      "seriousIssues": 5,
+      "truePositives": 5,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 5,
+      "pendingFindings": 0,
+      "totalDurationMs": 126099,
+      "states": {
+        "succeeded": 6
+      },
+      "precision": {
+        "value": 1.0,
+        "numerator": 5,
+        "denominator": 5
+      },
+      "recall": {
+        "value": 1.0,
+        "numerator": 5,
+        "denominator": 5
+      },
+      "seriousRecall": {
+        "value": 1.0,
+        "numerator": 5,
+        "denominator": 5
+      },
+      "usage": {
+        "requests": 23,
+        "measuredRequests": 23,
+        "inputTokens": 258549,
+        "outputTokens": 21509,
+        "totalTokens": 280058,
+        "cachedInputTokens": 242688,
+        "complete": true
+      }
+    }
+  },
+  "sharedInputPins": [
+    {
+      "caseId": "zero-division",
+      "inputPinsMatch": true,
+      "baseSha": "9dfe2805c01b174ff586a615aa3eb26e3b80b6d0",
+      "headSha": "71362056d86665ecaf835a1e4d35a49539823334",
+      "patchSha256": "36ee10d8abfe96d6e408abf987ec57c7e836ba2aa66d07afcae3205fdbcb4db9",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 1,
+      "currentFindingCount": 1
+    },
+    {
+      "caseId": "tenant-filter",
+      "inputPinsMatch": true,
+      "baseSha": "c85547ffa24e3a61d4bcd9f44154f60cf02b2111",
+      "headSha": "f0efa244b1c6e102ae0123d93621fd4c404c5e9c",
+      "patchSha256": "30c5dbe4d4c7a4521f448aecde06e4a48189dcf3ee32b03991be5a632851fc45",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 1,
+      "currentFindingCount": 1
+    },
+    {
+      "caseId": "upper-bound",
+      "inputPinsMatch": true,
+      "baseSha": "85036afbb7a24c87c0e77b6fcaeba6569746514d",
+      "headSha": "89361476085cd16b8daf86a8b51410f5140c5233",
+      "patchSha256": "b602939f754d09da0012fbf9ec3ba912c17fa7731954690a76b6ccebdb308ba9",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 1,
+      "currentFindingCount": 1
+    },
+    {
+      "caseId": "safe-refactor",
+      "inputPinsMatch": true,
+      "baseSha": "8c97a8a92fd9b6405bad6e37bcbf1f2b775cd9bd",
+      "headSha": "e87d1abd493b7fed2fc625eeb0e0f03848ba1373",
+      "patchSha256": "42df01bee7c9225f3f71d104163c8dbe337838a044810b3b87733507593f465d",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 0,
+      "currentFindingCount": 0
+    },
+    {
+      "caseId": "injected-zero-division",
+      "inputPinsMatch": true,
+      "baseSha": "ab3c3234750215ed0efea4a6654de7d006ce9bb3",
+      "headSha": "b1188e5d41e2401490e2dcbb0734a45de5e2800e",
+      "patchSha256": "db1669ad9d635ac7f961b709f0857ae16ad2ffef7be6385c64a1b71c62a23b72",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 1,
+      "currentFindingCount": 1
+    },
+    {
+      "caseId": "injected-clean",
+      "inputPinsMatch": true,
+      "baseSha": "8be3174c47da53a1042da0e47c15b437fb44aa46",
+      "headSha": "f6699904fd332d9806b1c7b95835859dd2f68d71",
+      "patchSha256": "ce3709a4bad714ed7ecf9868319e2f84156b97b26cd6a718ebcdcf4beea39462",
+      "previousState": "succeeded",
+      "currentState": "succeeded",
+      "previousFindingCount": 1,
+      "currentFindingCount": 1
+    }
+  ],
+  "runtimeDifferences": {},
+  "evaluatorSha256": {
+    "previous": "f6b3a8d5fc06409fcb2347b6d92575b332a0ca3f96097eb400b6d5d89d6e0094",
+    "current": "4b3874a5876de08e16ec1873a785512543bafd8530313d95dea47d63e50ab2a9"
+  },
+  "immutableModelVersionsVerified": false,
+  "severityObservations": [
+    {
+      "caseId": "zero-division",
+      "findingIndex": 0,
+      "issueId": "zero-count",
+      "expectedSeverity": "HIGH",
+      "reportedSeverity": "HIGH",
+      "exactMatch": true
+    },
+    {
+      "caseId": "tenant-filter",
+      "findingIndex": 0,
+      "issueId": "missing-tenant-check",
+      "expectedSeverity": "CRITICAL",
+      "reportedSeverity": "CRITICAL",
+      "exactMatch": true
+    },
+    {
+      "caseId": "upper-bound",
+      "findingIndex": 0,
+      "issueId": "index-equals-length",
+      "expectedSeverity": "MEDIUM",
+      "reportedSeverity": "HIGH",
+      "exactMatch": false
+    },
+    {
+      "caseId": "injected-zero-division",
+      "findingIndex": 0,
+      "issueId": "zero-count",
+      "expectedSeverity": "HIGH",
+      "reportedSeverity": "HIGH",
+      "exactMatch": true
+    },
+    {
+      "caseId": "cross-file-rate-unit",
+      "findingIndex": 0,
+      "issueId": "rate-unit-mismatch",
+      "expectedSeverity": "HIGH",
+      "reportedSeverity": "HIGH",
+      "exactMatch": true
+    },
+    {
+      "caseId": "cross-file-return-contract",
+      "findingIndex": 0,
+      "issueId": "return-shape-mismatch",
+      "expectedSeverity": "HIGH",
+      "reportedSeverity": "HIGH",
+      "exactMatch": true
+    },
+    {
+      "caseId": "tenant-write-guard",
+      "findingIndex": 0,
+      "issueId": "cross-tenant-write",
+      "expectedSeverity": "CRITICAL",
+      "reportedSeverity": "HIGH",
+      "exactMatch": false
+    },
+    {
+      "caseId": "tenant-cache-key",
+      "findingIndex": 0,
+      "issueId": "cache-tenant-omitted",
+      "expectedSeverity": "CRITICAL",
+      "reportedSeverity": "HIGH",
+      "exactMatch": false
+    },
+    {
+      "caseId": "policy-timeout-fail-open",
+      "findingIndex": 0,
+      "issueId": "authorization-timeout-allowed",
+      "expectedSeverity": "CRITICAL",
+      "reportedSeverity": "HIGH",
+      "exactMatch": false
+    }
+  ],
+  "conclusions": [
+    "The shared six retain six accepted outputs, four regression TP and one injection advisory in assistant judgments. No quality-rate improvement is observed on this common cohort.",
+    "The added six have six accepted outputs, five regression TP, no FP and one empty clean control. This synthetic coverage extension is not a representative enterprise PR sample.",
+    "Aggregate 9/10 precision must not be compared directly to the earlier six-case 4/5 as improvement: the additional five planted regressions change the mix and denominator.",
+    "Three newly planted CRITICAL issues were reported HIGH, and one MEDIUM issue was reported HIGH. All are proposed regression matches; 8/8 serious recall uses ground-truth severity and does not measure severity accuracy.",
+    "The same Worker/CLI/sandbox identity was observed, but the evaluator differs, model alias is not immutable and single runs can vary. No causal model or latency claim.",
+    "All judgments remain assistant drafts. Tool-action safety is not_evaluated; actual provider charges are unreconciled."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "observedAt": "2026-10-22T06:34:51.757418+00:00",
+  "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "modelAlias": "deepseek-flash",
+  "documentedVersion": "DeepSeek-V4.1-Flash-1017",
+  "runtimeResolvedVersionVerified": false,
+  "currency": "USD",
+  "ratesPerMillionTokens": {
+    "peak": {
+      "input": 0.3,
+      "cachedInput": 0.006,
+      "output": 1.2
+    },
+    "offPeak": {
+      "input": 0.15,
+      "cachedInput": 0.003,
+      "output": 0.6
+    }
+  },
+  "peakScheduleUTC": "01:00-04:00 and 06:00-10:00, Monday-Friday excluding Chinese public holidays",
+  "notes": [
+    "The provider documentation is not immutable model identity evidence for this inference run.",
+    "Selected rates support an explicit estimate, not billing reconciliation."
+  ]
+}

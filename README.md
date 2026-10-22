@@ -941,6 +941,18 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 旧无效输出没有复现，具体历史原因仍未知；Worker/评测程序已变化、模型别名未绑定已核验的不可变版本，
 所以本轮只提供独立观察，不作改进归因或工具行为安全结论。旧证据未改动，完整摘要和运行身份见[清单](docs/evaluations/2026-10-22-diagnostics/manifest.json)。
 
+同日第 43 步按[预先保存的计划](docs/evaluations/2026-10-22-extended/plan.json)对 `extended-v1` 独立运行一次。
+[十二例捕获](docs/evaluations/2026-10-22-extended/capture.json)全部通过输出契约校验；
+[助手标注](docs/evaluations/2026-10-22-extended/adjudications.draft.json)和[评分草稿](docs/evaluations/2026-10-22-extended/report.draft.json)
+为 9 TP、0 FP、1 advisory、0 FN，precision=9/10、recall=9/9、严重问题召回=8/8，仍待人工复核。
+[比较记录](docs/evaluations/2026-10-22-extended/comparison.json)逐一确认原六例输入不变，其结果仍为 4 TP 加 1 advisory；
+新增六例单列为 5 TP 和一个无 Findings 的正常重构对照，不能把总体 precision 从 4/5 到 9/10 当作质量提升。
+三个基准 CRITICAL 被模型标为 HIGH，一个 MEDIUM 被标为 HIGH；问题命中不等同于严重度准确，严重问题召回使用基准严重度。
+累计 235.637 秒、42 次请求、501,682 tokens；按[高峰费率快照](docs/evaluations/2026-10-22-extended/pricing.json)
+估算 $0.05730306，未对账，来源为 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing/)。
+[证据清单](docs/evaluations/2026-10-22-extended/manifest.json)保留运行身份、文件摘要及验证结果；历史 16 个 JSON 文件未修改，
+离线重放评分逐字节一致。十二例均为合成样例，尚不能支持正式质量验收或工具行为安全结论。
+
 普通离线验证（无真实凭据/模型调用）：
 
 ```bash
