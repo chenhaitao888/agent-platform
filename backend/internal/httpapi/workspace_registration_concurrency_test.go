@@ -38,7 +38,7 @@ func TestConcurrentWorkspaceRegistrationKeepsTaskAndKeyBindings(t *testing.T) {
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			var verificationCalls atomic.Uint64
-			handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+			handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 				func(ctx context.Context, _ task.RepositoryReference) error {
 					if verificationCalls.Add(1) <= 2 {
 						entered <- struct{}{}

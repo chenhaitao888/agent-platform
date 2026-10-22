@@ -1,9 +1,10 @@
+import { useAPI } from './api'
 import { useEffect, useState } from 'react'
 
 import TaskCreator from './TaskCreator'
 import TaskEventTimeline from './TaskEventTimeline'
 import WorkspaceDetails from './WorkspaceDetails'
-import { LOCAL_TENANT_ID, type Task } from './task'
+import { type Task } from './task'
 
 type TaskListResponse = {
   items: Task[]
@@ -35,6 +36,8 @@ function mergeTasks(currentItems: Task[], serverItems: Task[]) {
 }
 
 export default function TaskWorkspace() {
+  const api = useAPI()
+
   const [listState, setListState] = useState<TaskListState>({ kind: 'loading' })
   const [updatingTaskIDs, setUpdatingTaskIDs] = useState<Set<string>>(() => new Set())
   const [updateErrors, setUpdateErrors] = useState<Map<string, string>>(() => new Map())
@@ -57,7 +60,7 @@ export default function TaskWorkspace() {
     })
 
     try {
-      const response = await fetch(`/api/v1/tasks/${task.id}`, {
+      const response = await api.fetch(`/api/v1/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -106,8 +109,8 @@ export default function TaskWorkspace() {
 
     async function loadTasks() {
       try {
-        const query = new URLSearchParams({ tenantId: LOCAL_TENANT_ID })
-        const response = await fetch(`/api/v1/tasks?${query.toString()}`, {
+        const query = new URLSearchParams({ tenantId: api.tenantId })
+        const response = await api.fetch(`/api/v1/tasks?${query.toString()}`, {
           signal: controller.signal,
         })
         if (controller.signal.aborted) return
@@ -145,7 +148,7 @@ export default function TaskWorkspace() {
     void loadTasks()
 
     return () => controller.abort()
-  }, [])
+  }, [api])
 
   return (
     <div className="task-workspace">

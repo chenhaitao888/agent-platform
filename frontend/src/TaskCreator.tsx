@@ -1,6 +1,7 @@
+import { useAPI } from './api'
 import { useRef, useState, type FormEvent } from 'react'
 
-import { LOCAL_TENANT_ID, type Task } from './task'
+import { type Task } from './task'
 
 type TaskCreatorProps = {
   onCreated?: (task: Task) => void
@@ -11,6 +12,8 @@ type ErrorResponse = {
 }
 
 export default function TaskCreator({ onCreated }: TaskCreatorProps) {
+  const api = useAPI()
+
   const [taskType, setTaskType] = useState('PR_REVIEW')
   const [goal, setGoal] = useState('')
   const [repositoryID, setRepositoryID] = useState('')
@@ -28,7 +31,7 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
     try {
       const requestId = `req_${crypto.randomUUID()}`
       const content = {
-        tenantId: LOCAL_TENANT_ID,
+        tenantId: api.tenantId,
         type: taskType.trim(),
         goal: goal.trim(),
         repository: {
@@ -44,7 +47,7 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           ? pendingSubmission.current.key
           : `task-create:${crypto.randomUUID()}`
       pendingSubmission.current = { content: signature, key: idempotencyKey }
-      const response = await fetch('/api/v1/tasks', {
+      const response = await api.fetch('/api/v1/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

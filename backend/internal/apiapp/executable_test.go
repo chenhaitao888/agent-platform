@@ -100,6 +100,7 @@ func apiNetworkWrite(t *testing.T, address, method, path, body string, want int)
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+testAPIToken)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +128,14 @@ func TestAPIExecutableUsesDeploymentAndShutsDownAfterReview(t *testing.T) {
 	binary := buildAPI(t)
 	process := startAPI(t, binary)
 	apiNetworkWrite(t, process.address, "GET", "/healthz", "", 200)
+	anonymous, err := http.Get(process.address + "/api/v1/tasks?tenantId=test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = anonymous.Body.Close()
+	if anonymous.StatusCode != http.StatusUnauthorized {
+		t.Fatal("actual API executable admitted an anonymous tenant claim")
+	}
 	prepareAPINetwork(t, process.address, fixture)
 	content := apiNetworkWrite(t, process.address, "POST", "/api/v1/tasks/task-1/review", `{"requestId":"review","idempotencyKey":"review","tenantId":"test","expectedWorkspaceVersion":3}`, 201)
 	var operation struct {
@@ -144,7 +153,7 @@ func TestAPIExecutableUsesDeploymentAndShutsDownAfterReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(logs), "api-gitlab-token") || strings.Contains(string(logs), "api-model-token") {
+	if strings.Contains(string(logs), "api-gitlab-token") || strings.Contains(string(logs), "api-model-token") || strings.Contains(string(logs), testAPIToken) {
 		t.Fatal("API startup logs leaked service credentials")
 	}
 }

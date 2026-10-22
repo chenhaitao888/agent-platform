@@ -131,7 +131,7 @@ func (read diffReaderFunc) Read(ctx context.Context, input repository.DiffInput)
 }
 
 func newHandlerWithVerifiedRepositories() http.Handler {
-	return NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	return businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return nil
 		},

@@ -16,7 +16,7 @@ import (
 func TestGetDiffFromAReadyWorkspace(t *testing.T) {
 	var gotPath, gotBaseSHA, gotHeadSHA string
 	patch := "diff --git a/README.md b/README.md\n-base\n+head\n"
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(_ context.Context, input repository.DiffInput) ([]byte, error) {
@@ -88,7 +88,7 @@ func TestGetDiffFromAReadyWorkspace(t *testing.T) {
 }
 
 func TestGetWorkspaceDiffReturnsAStableOversizedError(t *testing.T) {
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) {
@@ -140,7 +140,7 @@ func TestGetWorkspaceDiffReturnsAStableOversizedError(t *testing.T) {
 
 func TestGetWorkspaceDiffRequiresAReadyWorkspace(t *testing.T) {
 	diffCalls := 0
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) {

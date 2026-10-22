@@ -50,7 +50,7 @@ func TestConcurrentDiffArchiveKeepsArtifactsAndEventsConsistent(t *testing.T) {
 			var reads atomic.Uint64
 			var replayContent atomic.Value
 			replayContent.Store(firstPatch)
-			handler, err := NewHandlerWithWorkspaceServices(
+			handler, err := businessTestWorkspaceServices(
 				repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 				workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 				diffReaderFunc(func(ctx context.Context, _ repository.DiffInput) ([]byte, error) {

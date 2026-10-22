@@ -3,6 +3,7 @@
 这是“企业研发智能体与工作流平台”的最小可运行骨架。当前只完成：
 
 - Go HTTP 服务与 `GET /healthz`
+- 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
 - GitLab 仓库/分支/merge-base 只读解析，以及 Workspace 登记、bare clone、detached worktree 和状态查询
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
@@ -17,7 +18,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～39 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～40 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -60,6 +61,77 @@ agent-platform/
 本项目使用 Go 1.27.1。请确认 `go version` 显示 `go1.27.1 darwin/arm64`
 或对应平台的 Go 1.27.1。
 
+### 本机身份与租户配置
+
+所有业务 API 现在要求 `Authorization: Bearer <token>`，仅 `/healthz` 保持公开。
+未配置认证时服务可以启动，但业务请求一律返回 401；没有匿名开发模式。
+后端无论是否启用 Review 都只接受 loopback IP，默认 `127.0.0.1:8080`，前端开发服务器同样绑定 `127.0.0.1`。
+本次新增的是平台 API 凭据，与 GitLab token、DeepSeek API key 分开管理，不要混用。
+
+通过 `AGENT_PLATFORM_AUTH_FILE` 指定工作区之外的绝对路径 JSON 文件，格式如下：
+
+```json
+{
+  "identities": [
+    {
+      "subject": "local-developer",
+      "tenantId": "tenant-local",
+      "tokenSha256": "原始随机 token 的 64 位小写十六进制 SHA-256",
+      "repositoryIds": ["platform/project-7"]
+    }
+  ]
+}
+```
+
+文件必须属于 API 运行用户、权限为 `0600`、普通文件且只有一个硬链接；拒绝最终路径符号链接、超出 64 KiB、
+重复/未知/大小写混淆字段和缺失字段。最多 64 个身份，每个身份固定一个租户；同租户各身份的仓库白名单必须一致。
+subject 和 tenantId 使用 1～128 位 ASCII 字母、数字及 `._:-`，首位为字母或数字。
+token 格式为 32～256 位字母、数字及 `_-`，应使用至少 32 个随机字节生成，不能使用人类密码。
+认证文件只保存摘要；服务启动时加载并冻结策略，修改文件后需重启。轮换时使用不同 subject 配置新 token，
+确认迁移后移除旧条目并重启。旧进程内的身份不会因文件修改立即失效。
+
+首次本机使用可执行以下示例生成文件；先将 `repository_ids` 和后续创建 Task 示例的 `repositoryId`
+一起改成允许访问的真实 GitLab 项目 ID，优先使用数字项目 ID。
+文件使用独占创建，已有文件不会被覆盖；命令不输出 token。配置文件和客户端 token 都不要放入仓库或 Workspace。
+
+```bash
+python3 - <<'PY'
+import hashlib, json, os, secrets
+from pathlib import Path
+directory = Path.home() / '.config' / 'agent-platform'
+directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+repository_ids = ['platform/project-7']  # 与创建 Task 的 repositoryId 保持一致
+token = secrets.token_urlsafe(32)
+config = {'identities': [{'subject': 'local-developer', 'tenantId': 'tenant-local',
+    'tokenSha256': hashlib.sha256(token.encode()).hexdigest(), 'repositoryIds': repository_ids}]}
+files = {'api-auth.json': json.dumps(config, indent=2) + '\n',
+         'api-token.txt': token + '\n',
+         'api-curl.conf': 'header = "Authorization: Bearer ' + token + '"\n'}
+for name, content in files.items():
+    with os.fdopen(os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
+        file.write(content)
+PY
+export AGENT_PLATFORM_AUTH_FILE="$HOME/.config/agent-platform/api-auth.json"
+export AGENT_PLATFORM_API_CURL_CONFIG="$HOME/.config/agent-platform/api-curl.conf"
+```
+
+API 启动后，用 `curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" http://127.0.0.1:8080/api/v1/session` 验证身份。
+前端输入 `api-token.txt` 中的原始 token；页面通过 `/api/v1/session` 取得租户，所有业务请求携带 Authorization，
+退出时取消在途请求并清除页面状态。token 只存页面内存，不写 URL、cookie、localStorage 或 sessionStorage；刷新后需重新输入。
+Artifact 内容也通过认证请求读取，页面展示最多 65,536 字符预览。
+
+原接口字段和路径保留，body/query 的 `tenantId` 仍必填，但只用于和可信身份作一致性校验。
+不接受 URL token、cookie 或 `X-Tenant-ID`/`X-Forwarded-User` 作为身份。未认证返回 401；租户不匹配返回 403；
+使用自己的租户访问他人的资源与访问不存在资源一样返回 404，避免泄露归属。
+重复租户查询参数、重复/大小写混淆的 JSON tenantId 返回 400。
+repositoryIds 为空数组时不能创建 Task 或发起仓库 I/O；非空时按请求的 GitLab repositoryId 精确匹配，不能用 `*`。
+新建 Task、登记/准备 Workspace、读取 diff、归档 diff 和执行 Review 都要通过白名单；禁止项目不会触达 GitLab/模型服务凭据。
+白名单移除后，本租户已经保存的 Task、事件和 Artifact 仍可读取；它不是细粒度历史数据访问撤销机制。
+
+这仍是本机试点方案：同租户身份具有相同权限，尚无角色、自动过期/热撤销、限流或持久审计。
+token 泄漏等同该身份被使用；同一 OS 用户或 root 仍能读取本地凭据/进程内存。上线网络服务需另行设计 TLS、
+可信身份源、仓库授权同步和运营控制，本次不放宽监听限制。
+
 Workspace 登记和准备需要同时配置 GitLab 地址、只读服务令牌和一个绝对路径的 Workspace 根目录。
 Base URL 必须使用 HTTPS，不能包含用户名、密码、query 或 fragment，也不包含 `/api/v4`；平台会
 自行拼接 API 路径。不要把 token 写进代码、README 或命令行参数：
@@ -72,7 +144,7 @@ export AGENT_PLATFORM_GITLAB_TOKEN
 export AGENT_PLATFORM_WORKSPACE_ROOT='/var/lib/agent-platform/workspaces'
 ```
 
-三个变量都未配置时，服务仍可启动并提供健康检查；创建 Task 因无法固定 `master` 与 merge-base
+三个变量都未配置时，服务仍可启动并提供健康检查；已认证且仓库获准的创建 Task 请求因无法固定 `master` 与 merge-base
 返回 `503 repository_resolution_unavailable`，Workspace 操作也失败关闭。
 只配置其中一部分时，服务拒绝启动。根目录必须是绝对路径，且不能是文件系统根目录；服务启动时会
 以 `0700` 创建不存在的目录。当前 token 只属于控制平面及其受控 Git 子进程，不会写入 clone URL、
@@ -104,14 +176,14 @@ export AGENT_PLATFORM_REVIEW_SECCOMP_POLICY='codex-bwrap'
 
 | 可选变量 | 默认值与用途 |
 | --- | --- |
-| `AGENT_PLATFORM_API_ADDR` | Review 开启时默认 `127.0.0.1:8080`；当前只接受 loopback IP，`127.0.0.1:0` 可分配临时端口 |
+| `AGENT_PLATFORM_API_ADDR` | 默认 `127.0.0.1:8080`；所有模式只接受 loopback IP，`127.0.0.1:0` 可分配临时端口 |
 | `AGENT_PLATFORM_DOCKER_BINARY` | `docker`，部署选定的客户端二进制 |
 | `AGENT_PLATFORM_REVIEW_TIMEOUT` | `90s`，接受 `1s`～`2m`，覆盖 Review 的 Git 输入读取、模型执行和结果提交前检查 |
 | `AGENT_PLATFORM_REVIEW_SECCOMP_POLICY` | `docker-default`；本机需明确选择已验证的 `codex-bwrap` |
 | `AGENT_PLATFORM_MODEL_CA_FILE` | 可选部署 PEM CA 文件，用于模型 HTTPS；不读取个人代理或关闭 TLS 验证 |
 
 Worker 使用 API 服务进程的 UID/GID，API 需以非 root 服务用户运行并拥有私有 Workspace 与凭据。
-本切片用于本机试点；扩展监听范围需后续身份认证与租户授权。配置仅由部署读取并在启动时固定，任务请求不能覆盖。
+本切片用于本机试点；已接入上述最小身份认证与租户授权，仍不允许扩展监听范围。配置仅由部署读取并在启动时固定，任务请求不能覆盖。
 `REVIEW_ENABLED` 只接受 `true`/`false`；没有开启却提供审阅字段、字段不完整、可变镜像或不兼容 Worker 都会拒绝启动。
 
 ```bash
@@ -131,7 +203,7 @@ go run ./cmd/api
 另开终端验证：
 
 ```bash
-curl -i http://localhost:8080/healthz
+curl -i http://127.0.0.1:8080/healthz
 ```
 
 预期响应：
@@ -154,15 +226,15 @@ GitLab project ID（如 `42`），或 `namespace/project` 路径（如 `platform
 服务端把 503/500 的原因写为 stderr 中的 JSON 日志，包含 `requestId`、`tenantId`、`taskId`、
 错误码与内部原因；HTTP 响应仍只给稳定文案。写请求使用 body 中的 `requestId`；读取 Workspace diff
 时可传 `X-Request-ID` 请求头，便于定位该次读取。代码不主动记录请求 body 或幂等键，并会遮盖
-错误文本中当前 GitLab token 的直接回显；日志仍可能含仓库地址等内部信息，需要限制访问。
+错误文本中当前 API token 和 GitLab token 的直接回显；日志仍可能含仓库地址等内部信息，需要限制访问。
 
 ### 创建、查询和列出 Task
 
 创建 Task：
 
 ```bash
-curl -i \
-  -X POST http://localhost:8080/api/v1/tasks \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X POST http://127.0.0.1:8080/api/v1/tasks \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-01",
@@ -219,18 +291,18 @@ GitLab 缺少 master 或 head 时返回 404、两提交没有可用共同祖先�
 按 ID 查询：
 
 ```bash
-curl -i 'http://localhost:8080/api/v1/tasks/task-1?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i 'http://127.0.0.1:8080/api/v1/tasks/task-1?tenantId=tenant-local'
 ```
 
 查询最近 Task（最新创建的排在前面）：
 
 ```bash
-curl -i 'http://localhost:8080/api/v1/tasks?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i 'http://127.0.0.1:8080/api/v1/tasks?tenantId=tenant-local'
 ```
 
 这两条 Task 读取接口都要求 `tenantId`。列表只返回该租户的 Task；按 ID 查询其他租户的
 Task 与查询不存在的 ID 一样返回 404。创建响应中的 `Location` 也包含 `tenantId`，可直接用于
-读取。当前 `tenantId` 仍由调用方提供，尚未接入认证和授权，不能把它当作真实身份凭证。
+读取。`tenantId` 仅为兼容性声明，必须与 Bearer 身份绑定的租户一致，数据访问使用认证上下文中的租户。
 
 响应使用 `items` 包装数组，为以后增加分页信息保留空间：
 
@@ -262,8 +334,8 @@ Task 与查询不存在的 ID 一样返回 404。创建响应中的 `Location` �
 将一个 `CREATED` Task 准入为 `QUEUED`：
 
 ```bash
-curl -i \
-  -X PATCH http://localhost:8080/api/v1/tasks/task-1 \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X PATCH http://127.0.0.1:8080/api/v1/tasks/task-1 \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-02",
@@ -282,8 +354,8 @@ curl -i \
 查询 Task 事件时间线：
 
 ```bash
-curl -i \
-  'http://localhost:8080/api/v1/tasks/task-1/events?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  'http://127.0.0.1:8080/api/v1/tasks/task-1/events?tenantId=tenant-local'
 ```
 
 响应按 `sequence` 从小到大返回该 Task 已经发生的事实：
@@ -316,15 +388,15 @@ Artifact payload 包含 `artifactId`、`workspaceId`、`type`、`mediaType`、`s
 不包含 diff 正文。`workspace.preparation_failed` 记录恢复后的 `REGISTERED` 状态与新版本，
 不暴露内部 Git 错误。客户端若依赖旧的扁平 `payload.status/version`，须同步迁移。
 创建、准入、登记、准备成功和归档请求被幂等重放时，不会重复追加事件。
-`tenantId` 当前是显式查询参数；它只能提供最小租户范围校验，不能替代后续的身份认证与授权。
+`tenantId` 保留为显式查询参数，HTTP 层校验它与认证身份一致，Store 再检查资源租户归属。
 
 ### 登记和查询 Workspace 元数据
 
 Task 必须先进入 `QUEUED`，才能登记 Workspace：
 
 ```bash
-curl -i \
-  -X POST http://localhost:8080/api/v1/tasks/task-1/workspace \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X POST http://127.0.0.1:8080/api/v1/tasks/task-1/workspace \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-03",
@@ -348,8 +420,8 @@ Workspace Manager 从 Task 读取仓库与不可变 SHA，调用方不再重复�
 查询 Workspace：
 
 ```bash
-curl -i \
-  'http://localhost:8080/api/v1/tasks/task-1/workspace?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  'http://127.0.0.1:8080/api/v1/tasks/task-1/workspace?tenantId=tenant-local'
 ```
 
 `REGISTERED` 表示仓库标识和不可变 SHA 已经 GitLab 验证并登记。处于这个状态时还没有 clone 仓库、
@@ -360,8 +432,8 @@ curl -i \
 登记完成后，使用当前 `version` 发起准备：
 
 ```bash
-curl -i \
-  -X POST http://localhost:8080/api/v1/tasks/task-1/workspace/prepare \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X POST http://127.0.0.1:8080/api/v1/tasks/task-1/workspace/prepare \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-04",
@@ -407,8 +479,8 @@ GitLab 返回的 clone URL 必须是 HTTPS、不能含内嵌凭据，并且必�
 Workspace 进入 READY 后，可以读取 Task 创建时由服务端固定的 Review Base 与 head 之间的补丁：
 
 ```bash
-curl -i \
-  'http://localhost:8080/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  'http://127.0.0.1:8080/api/v1/tasks/task-1/workspace/diff?tenantId=tenant-local'
 ```
 
 请求没有 `baseSha`、`headSha` 或本地路径参数。服务端从 READY Workspace 读取创建 Task 时已计算
@@ -438,8 +510,8 @@ Git 使用参数数组运行，不经过 shell，并关闭 external diff 与 tex
 查看 diff 后，可以使用 READY Workspace 当前版本创建不可变 Artifact：
 
 ```bash
-curl -i \
-  -X POST http://localhost:8080/api/v1/tasks/task-1/artifacts/diff \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X POST http://127.0.0.1:8080/api/v1/tasks/task-1/artifacts/diff \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-05",
@@ -470,11 +542,11 @@ curl -i \
 查询元数据和读取原始内容：
 
 ```bash
-curl -i \
-  'http://localhost:8080/api/v1/artifacts/artifact-1?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  'http://127.0.0.1:8080/api/v1/artifacts/artifact-1?tenantId=tenant-local'
 
-curl -i \
-  'http://localhost:8080/api/v1/artifacts/artifact-1/content?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  'http://127.0.0.1:8080/api/v1/artifacts/artifact-1/content?tenantId=tenant-local'
 ```
 
 内容响应使用 `text/x-diff`，并带 SHA-256 `ETag`、`Content-Length` 和
@@ -495,8 +567,8 @@ Workspace 的固定 base/head/path，再读取 Git diff、调用 Runner 并校�
 二进制、模型、凭据、patch、SHA 与权限参数不能由请求指定；新增接口拒绝未知 JSON 字段。
 
 ```bash
-curl -i \
-  -X POST http://localhost:8080/api/v1/tasks/task-1/review \
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i \
+  -X POST http://127.0.0.1:8080/api/v1/tasks/task-1/review \
   -H 'Content-Type: application/json' \
   -d '{
     "requestId":"req-review-01",
@@ -505,7 +577,7 @@ curl -i \
     "expectedWorkspaceVersion":3
   }'
 
-curl -i 'http://localhost:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i 'http://127.0.0.1:8080/api/v1/tasks/task-1/review?tenantId=tenant-local'
 ```
 
 未启用 Review 时，以上 POST 在满足 Task/Workspace 前置条件后返回 `503 review_unavailable`。
@@ -862,10 +934,10 @@ node --run dev
 `/api/healthz` 转发到后端 `/healthz`，并把 `/api/v1/*` 原样转发到 Go
 业务接口，所以需要同时启动 Go 后端。
 
-页面会先调用 `GET /api/v1/tasks?tenantId=tenant-local` 加载最近 Task。“创建 Task”表单调用
+页面先显示凭据入口，认证成功后使用 `/api/v1/session` 返回的 tenantId 加载最近 Task。“创建 Task”表单调用
 `POST /api/v1/tasks`；表单采集仓库 ID 与不可变 head SHA，平台计算并固定 master 快照与 Review Base，提交成功后会显示后端生成的
-Task ID、状态、仓库和目标，并立即更新最近列表。前端在 Phase 0 固定使用 `tenant-local` 与
-GitLab provider。每次提交都有新的 request ID；同一份未修改的 Task 表单在当前页面内重试会沿用
+Task ID、状态、仓库和目标，并立即更新最近列表。租户来自已认证会话，provider 当前固定为
+GitLab。每次提交都有新的 request ID；同一份未修改的 Task 表单在当前页面内重试会沿用
 原幂等键，修改表单或成功后再次提交才生成新键。准入、Workspace 登记和准备则由 Task ID、Workspace
 版本等稳定坐标生成幂等键。`CREATED` Task 会显示“加入队列”按钮，成功后用后端返回的
 `QUEUED / version 2` 替换旧对象。请求期间按钮会禁用，后端校验错误或网络错误会直接
@@ -875,7 +947,7 @@ GitLab provider。每次提交都有新的 request ID；同一份未修改的 Ta
 `QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
-base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和内容读取链接。
+base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和带认证的内容读取按钮。
 
 运行前端静态检查、测试与构建：
 

@@ -34,11 +34,11 @@ describe('App', () => {
     expect(await screen.findByText('运行正常')).toBeInTheDocument()
     expect(screen.getByText('agent-platform-api')).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '创建 Task' }),
+      screen.getByRole('button', { name: '验证身份' }),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { name: '最近 Task' }),
-    ).toBeInTheDocument()
+      screen.queryByRole('heading', { name: '最近 Task' }),
+    ).not.toBeInTheDocument()
   })
 
   it('shows an unavailable state when the health check fails', async () => {

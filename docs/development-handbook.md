@@ -38,9 +38,9 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件。
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
-Credential Broker、鉴权与其他企业 Connector 仍未接入。
+Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
-当前阶段（2026-10-19）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-22）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -56,7 +56,8 @@ Credential Broker、鉴权与其他企业 Connector 仍未接入。
 第 37 步完成 API 部署装配、显式启用、HTTPS GitLab 信任与真实 API/Docker 贯穿验证，用户审阅后于 10 月 14 日以 `394875d` 推送至 `origin/main`。
 第 38 步建立固定合成样例、独立评测 CLI、执行捕获与人工标注评分，用户审阅后于 2026-10-15 以 `fb443b3` 推送至 `origin/main`。
 第 39 步增加宿主用量采集、显式费率估算与标注来源，并保存首轮真实 Flash 6 例结果和助手标注草稿，用户审阅后于 2026-10-15 以 `3b36d61` 推送至 `origin/main`。
-用户于 2026-10-19 恢复工作。第 40 步补充无效输出安全诊断和提示注入提醒的显式评分口径，用户于 2026-10-22 审阅后批准提交推送。
+用户于 2026-10-19 恢复工作。第 40 步补充无效输出安全诊断和提示注入提醒的显式评分口径，用户审阅后于 2026-10-22 以 `02d1303` 推送至 `origin/main`。
+最小身份认证与租户隔离专项修复及离线验证已完成；用户于 2026-10-22 审阅后批准提交推送，并恢复原定下一步工作。
 用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
@@ -2805,6 +2806,112 @@ Go 全套普通/race 测试、vet、golangci-lint（0 issues）、Linux/amd64 �
 下一步先以明确口径开展单独的新真实诊断采集，再扩充代表性 PR 和失败样例；
 原始首轮证据继续保留，不通过重跑覆盖失败。真实 GitLab 连接信息具备后再联调，前端审阅触发仍在后续路线。
 
+### 专项修复：最小身份认证与租户隔离（2026-10-22）
+
+本次以本地代码为准，接在已审阅推送的第 40 步 `02d1303` 后；与原定真实诊断采集、Workspace Prepare 异步化独立。
+审计时本地没有 Prepare 异步化实现，继续保留同步流程；本次未改动 Workspace Manager、Review Service 或 Artifact Store 的生产实现。
+
+审计确认 HTTP 直接使用 body/query 的 tenantId，没有可信身份绑定；内部 Task Store 的 Get/List/Transition/事件读取、
+Workspace Manager 的登记/准备/读取、Review Service 的执行/归档/查询，以及 Artifact Store 的读取均已有租户过滤。
+这些过滤解决数据选择问题，不能证明调用者有权使用该 tenantId。Artifact.Create 与事件追加是同进程可信服务接口，
+并非外部 API；事件追加缺少自身租户检查，本次补充防御，Artifact 的 Task/Workspace 关联继续由 Review Service 负责。
+GitLab 使用共享服务凭据，只有租户绑定还不能阻止调用方新建 Task 读取其他项目，因此需部署管理的租户仓库白名单。
+原 loopback 限制只在 Review 开启时生效，未启用时默认 :8080；本次统一限制所有 API 部署为 loopback。
+
+方案采用标准库实现的静态 Bearer 认证：私有配置文件保存 token 的 SHA-256 摘要及 subject、tenantId、repositoryIds。
+原始随机 token 只由调用方持有；每个 token 固定一个租户，同租户的仓库白名单必须一致。
+启动读取配置并冻结，未知/缺失凭据默认拒绝；未配置认证时只开放健康检查，配置错误则停止启动。
+认证中间件写入私有类型的可信上下文，HTTP Handler 从该上下文取租户，body/query tenantId 仅作为兼容性声明校验。
+未认证返回 401，身份与租户声明不符或仓库未授权返回 403，已认证但资源不属于本租户统一返回 404。
+内部服务继续按显式租户参数校验归属；不重构 Store、不引入数据库、IAM 或第三方认证库。
+前端提供仅存于内存的本机 token 入口，通过认证会话接口取得租户；刷新后重新输入，不写 URL/localStorage。
+认证失败不记录 token，业务错误日志对当前请求凭据做脱敏；现有 GitLab 脱敏保留。
+
+#### 安全边界和代码证据
+
+| 层 | 审计结果与本次处理 | 代码入口 |
+| --- | --- | --- |
+| HTTP 身份边界 | 原客户端 tenantId 可冒充任意租户；现在先认证，再比较声明，向内部服务传上下文租户 | `httpapi/authentication.go` 的 `Wrap`、`requireIdentity`、`checkedTenant`；`handler.go` 与 `review_execution.go` |
+| Task Store | Get/List/Transition/ListEvents 原有归属检查；创建幂等键已按租户分区；补上 AppendEvent 的归属检查 | `task/task.go` 的 `Get`、`List`、`Transition`、`appendEventLocked` |
+| Workspace Manager | Register 先通过 Task.Get 校验，Prepare/Get 检查 Workspace.TenantID；路径由服务生成，不接收客户端路径 | `workspace/workspace.go` 的 `Register`、`Prepare`、`Get` |
+| Review Service | Get/Archive 先取本租户 Workspace；Execute/GetExecution 先查本租户 Task，再按租户保存执行与幂等结果 | `review/service.go`、`review/execution.go` |
+| Artifact Store | Get/GetContent 检查 metadata.TenantID；Create 的关联约束由可信 Review Service 提供，并按租户区分幂等键 | `artifact/artifact.go` 的 `Create`、`Get`、`GetContent` |
+| 服务凭据使用 | 共享 GitLab 凭据不是租户授权来源；新建 Task 和仓库 I/O 必须匹配部署白名单，拒绝发生在外部调用前 | `httpapi/authentication.go` 的 `repositoryAllowed`、`authorizeTaskRepository` |
+| 本机监听与配置 | 所有模式绑定 loopback；私有身份文件启动加载，错误配置在 Git/Docker 装配前拒绝 | `apiapp/authentication.go`、`apiapp/application.go`、`cmd/api/main.go` |
+
+HTTP 层相当于 Java 中的认证 Filter：只信任它写入的 SecurityContext，不信任请求中的租户声明。
+内部 Store/Service 相当于带 tenant 条件的 Repository/Application Service，继续负责数据归属；它们不负责验证 Bearer。
+进程内任意代码执行者、部署配置管理员和同一 OS 用户仍在可信边界内。Artifact.Create 不能独立证明 Task/Workspace 关系，
+因此仍限于可信服务调用；未来增加直接上传或其他入口时，必须先建立同等的归属校验。
+
+#### 最小兼容策略与错误响应
+
+- 新增 `GET /api/v1/session` 返回 subject 与 tenantId；其他接口路径、body/query tenantId、业务幂等键和版本字段保持不变。
+- 只接受 Authorization Bearer；私有上下文键不能由请求头、URL 或 JSON 构造。令牌摘要按常量时间比较。
+- `/healthz` 公开；无认证配置时业务接口全部关闭，Handler 单独装配也默认拒绝。没有匿名或固定租户绕过开关。
+- 缺失/错误凭据为 `401 unauthenticated`；声明租户不一致为 `403 tenant_forbidden`；仓库不在白名单为 `403 repository_forbidden`。
+- 使用自身租户读取/修改他人资源时沿用原服务的 404，与该资源不存在时相同；重复或歧义租户字段返回 400。
+- 原始 token 不存服务配置，配置只含 SHA-256 摘要；认证文件必须绝对路径、0600、属于运行用户、单硬链接且在 Workspace 外。
+  最终符号链接、FIFO、超限文件、未知/重复/大小写混淆/缺失字段均拒绝，错误不回显配置内容或路径。
+- 同租户各身份使用同一仓库白名单。移除项目会阻止新建 Task、Workspace 登记/准备、diff 读取/归档及 Review；
+  已保存的本租户 Task、事件、Artifact 仍可读取。静态策略需重启生效，不把修改文件描述为立即撤销。
+- 浏览器通过认证会话取租户，凭据只存内存；退出取消全部在途请求并清空页面。Artifact 用带认证的 fetch 预览，取消原裸链接导航。
+  认证请求不带 cookie、不跟随重定向；业务响应禁用缓存。未增加第三方依赖。
+
+本机配置和凭据生成方式统一见 README 的“本机身份与租户配置”。API 凭据独立于 GitLab 和模型 key；
+现有本机用户需要先配置身份文件，匿名业务调用会改为 401，这是本次默认拒绝要求带来的兼容性调整。
+
+#### 修改文件清单
+
+以下路径均相对仓库根目录，新增项标注“新增”。既有 HTTP 测试文件主要切换到仅测试使用的已认证上下文适配器，
+保留原业务、并发、失败分支断言；新安全测试单独经过真实 Bearer 中间件，实际 API 测试加载真实私有配置文件。
+
+| 范围 | 文件与关键变化 |
+| --- | --- |
+| 身份与可信上下文 | `backend/internal/httpapi/authentication.go`（新增）：Bearer、会话、租户一致性、仓库白名单和默认拒绝 |
+| Handler 接入 | `backend/internal/httpapi/handler.go`、`backend/internal/httpapi/review_execution.go`：所有租户入口校验，歧义 JSON 拒绝，当前凭据日志脱敏 |
+| 部署与监听 | `backend/internal/apiapp/authentication.go`（新增）、`backend/internal/apiapp/application.go`、`backend/cmd/api/main.go`：安全文件加载、统一中间件与 loopback |
+| Task 防御 | `backend/internal/task/task.go`、`backend/internal/task/tenant_events_test.go`（新增）：跨租户事件不可追加 |
+| HTTP 安全测试 | `backend/internal/httpapi/authentication_test.go`（新增）、`backend/internal/httpapi/business_identity_test.go`（新增）：真实认证回归与原业务测试装配分离 |
+| HTTP 原有测试适配 | `backend/internal/httpapi/artifact_boundary_test.go`、`artifact_concurrency_test.go`、`artifact_http_test.go`、`event_lifecycle_test.go`、`handler_logging_test.go`、`review_diff_test.go`、`review_execution_test.go`、`review_input_integration_test.go`、`task_review_base_test.go`、`test_helpers_test.go`、`workspace_preparation_concurrency_test.go`、`workspace_preparation_test.go`、`workspace_registration_concurrency_test.go`、`workspace_registration_test.go`（同目录） |
+| 部署与真实进程测试 | `backend/internal/apiapp/authentication_test.go`（新增）、`application_test.go`、`docker_integration_test.go`、`executable_test.go`、`fixtures_test.go`（同目录） |
+| 前端认证与内容读取 | `frontend/src/api.ts`、`frontend/src/Authentication.tsx`、`frontend/src/ArtifactContent.tsx`（均新增） |
+| 前端现有业务接入 | `frontend/src/App.tsx`、`TaskCreator.tsx`、`TaskEventTimeline.tsx`、`TaskWorkspace.tsx`、`WorkspaceDetails.tsx`、`task.ts`（同目录）；`frontend/vite.config.ts` 同步限制 loopback |
+| 前端回归 | `frontend/src/Authentication.test.tsx`（新增）、`App.test.tsx`、`WorkspaceDetails.test.tsx`（同目录） |
+| 说明 | `README.md`、`docs/development-handbook.md`：配置、兼容性、边界、验证及本次状态 |
+
+#### 回归覆盖与执行结果
+
+第一条默认拒绝测试在原 Handler 上返回 200 而失败，加入身份边界后返回 401。
+新增真实认证回归覆盖无凭据/错误凭据/重复 Authorization、伪造身份头、URL token、合法身份会话、租户不匹配、
+重复/大小写混淆/null 租户字段，以及 Task、事件、Workspace、diff、Review、Artifact 元数据/内容的跨租户读取与写入拒绝。
+跨租户创建和评审之后核对原 Task、事件、Review 不变，CLI 执行次数不增加；相同幂等键在不同租户可独立成功。
+20 个并发请求在两个租户之间不串身份；仓库未授权不调用 resolver，移除仓库后已有 Workspace 也不能再次 Review。
+另外验证身份文件拒绝场景、启动策略冻结、全部模式 loopback、日志不泄漏当前 API 凭据，以及内部事件归属防御。
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test ./...` | 全部通过 |
+| `go test -race ./...` | 全部通过 |
+| `go vet ./...` | 通过 |
+| `golangci-lint run ./...` | 0 issues |
+| `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...` | 通过 |
+| 前端 lint、typecheck、test、build | 全部通过，10 个测试文件、53 个用例 |
+| `go test -race ./internal/apiapp -run '^TestAPIExecutable' -count=1 -v`（开启本机 Docker 集成） | 真实 API 进程、认证 HTTP、受控 HTTPS GitLab/模型、真实 Git 与原生沙箱全部通过 |
+| `git diff --check` | 通过 |
+
+Docker 验证使用已存在的第 40 步 Worker 镜像 `sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8`，
+覆盖归档/幂等重放、模型请求进行中的优雅停机和未认证 HTTP 拒绝；测试凭据不出现在日志中，结束后没有遗留测试 Worker。
+旧停机测试曾漏带 Authorization，认证拒绝使模型未启动；补齐测试请求凭据后该场景通过。
+本次没有调用真实模型或使用个人/企业 key，没有改写第 38～40 步的评测证据。用户于 2026-10-22 审阅后批准提交推送本次认证修改。
+
+#### 剩余边界
+
+这不是多用户 OS 隔离或企业 IAM。同租户身份具有相同权限，静态 token 无自动过期或热撤销，
+仓库白名单需部署管理员维护，尚无限流和持久审计。token 泄漏即对应身份泄漏；同一 OS 用户/root 可读取凭据与进程内存。
+策略重启生效，而既有业务状态仍是内存，重启会丢失；后续应把持久化、可信身份源、角色/仓库授权同步和撤销机制一起设计。
+监听仍只允许 loopback；对外部署必须另行补充 TLS 与运营控制，不能因为本次有 Bearer 就直接扩大监听。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -2829,14 +2936,14 @@ node --run build
 - CI 配置已推送，ESLint/Go lint 已本地验证；已知的账户账单锁定问题按当前协作约定忽略。
 - Task ID 是单进程递增值，不适合多实例部署。
 - Task 数据重启即丢失。
-- 当前 tenant 仍来自请求，Task 读取已按租户过滤，但还没有身份认证或租户授权。
+- tenant 来自静态 Bearer 身份的可信上下文，请求声明必须一致；同租户无角色区分，仓库白名单人工配置，认证策略变更需重启。
 - 幂等索引只存在于单个 Go 进程，重启或多实例部署后不能提供全局唯一保证。
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
   它们还不是事务 Outbox，也没有发布到 Event Bus。
 - Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
-  API 已具备显式部署装配，默认关闭 Review，本切片开启时只接受 loopback 监听；已实现 Docker 只读 Worker、受控转发与真实 Flash 联调。
+  API 已具备显式部署装配，默认关闭 Review，所有模式只接受 loopback 监听；已实现 Docker 只读 Worker、受控转发与真实 Flash 联调。
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。

@@ -14,7 +14,7 @@ import (
 
 func TestArchiveReadyWorkspaceDiffAsArtifact(t *testing.T) {
 	patch := "diff --git a/README.md b/README.md\n-base\n+head\n"
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) {

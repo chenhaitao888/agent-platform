@@ -58,7 +58,7 @@ func TestWorkspaceRegistrationAppendsATaskEvent(t *testing.T) {
 }
 
 func TestWorkspacePreparationAppendsPreparingAndReadyEvents(t *testing.T) {
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		t.TempDir(),
@@ -127,7 +127,7 @@ func TestWorkspacePreparationAppendsPreparingAndReadyEvents(t *testing.T) {
 }
 
 func TestWorkspacePreparationFailureAppendsARedactedFact(t *testing.T) {
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			return errors.New("private Git diagnostic")
@@ -181,7 +181,7 @@ func TestWorkspacePreparationFailureAppendsARedactedFact(t *testing.T) {
 
 func TestArchiveDiffAppendsAnArtifactCreatedEvent(t *testing.T) {
 	patch := []byte("diff --git a/README.md b/README.md\n+head\n")
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) { return patch, nil }),

@@ -171,7 +171,7 @@ func TestArchiveDiffChecksWorkspaceOwnershipAndReadinessBeforeReading(t *testing
 
 func newHandlerForArtifactBoundaryTest(t *testing.T, reader repository.DiffReader) http.Handler {
 	t.Helper()
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		reader,

@@ -100,7 +100,7 @@ func TestCreateWorkspaceForQueuedTask(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
-	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrRepositoryNotFound
 		},
@@ -143,7 +143,7 @@ func TestCreateWorkspaceRejectsAnUnknownRepository(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
-	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrBaseCommitNotFound
 		},
@@ -175,7 +175,7 @@ func TestCreateWorkspaceRejectsAnUnknownBaseCommit(t *testing.T) {
 }
 
 func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
-	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrHeadCommitNotFound
 		},
@@ -207,7 +207,7 @@ func TestCreateWorkspaceRejectsAnUnknownHeadCommit(t *testing.T) {
 }
 
 func TestCreateWorkspaceFailsClosedWhenRepositoryVerificationIsUnavailable(t *testing.T) {
-	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			return repository.ErrVerificationUnavailable
 		},
@@ -280,7 +280,7 @@ func TestCreateWorkspaceRejectsATaskThatIsNotQueued(t *testing.T) {
 
 func TestCreateWorkspaceReplaysTheSameIdempotentRequest(t *testing.T) {
 	verificationAttempts := 0
-	handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+	handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 		func(context.Context, task.RepositoryReference) error {
 			verificationAttempts++
 			if verificationAttempts > 1 {

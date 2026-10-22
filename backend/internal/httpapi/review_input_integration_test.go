@@ -54,7 +54,7 @@ func TestReviewInputRemainsFrozenThroughRealGitHTTPAndArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		localReviewInputReferences{source: source},
 		workspacePreparerFunc(func(ctx context.Context, reference task.RepositoryReference, destination string) error {
 			return preparer.Prepare(ctx, gitworkspace.Input{

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import TaskWorkspace from './TaskWorkspace'
+import Authentication from './Authentication'
 
 type HealthResponse = {
   status: 'ok'
@@ -59,7 +59,7 @@ export default function App() {
         <p className="intro">
           {pageState.kind === 'loading' && '正在检查 API 连接…'}
           {pageState.kind === 'healthy' &&
-            'API 连接正常，可以在下方创建 Task 并查看最近记录。'}
+            'API 连接正常，验证身份后可创建 Task 并查看记录。'}
           {pageState.kind === 'unavailable' &&
             'API 健康检查未通过，请查看下方错误信息。'}
         </p>
@@ -95,7 +95,7 @@ export default function App() {
           <p className="error-message">连接失败：{pageState.message}</p>
         )}
 
-        <TaskWorkspace />
+        <Authentication />
       </section>
     </main>
   )

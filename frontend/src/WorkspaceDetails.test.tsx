@@ -636,11 +636,8 @@ describe('WorkspaceDetails', () => {
     expect(archived).toHaveTextContent('artifact-1')
     expect(archived).toHaveTextContent('REPOSITORY_DIFF')
     expect(
-      screen.getByRole('link', { name: '读取 Artifact 内容' }),
-    ).toHaveAttribute(
-      'href',
-      '/api/v1/artifacts/artifact-1/content?tenantId=tenant-local',
-    )
+      screen.getByRole('button', { name: '读取 Artifact 内容' }),
+    ).toBeInTheDocument()
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
       '/api/v1/tasks/task-1/artifacts/diff',

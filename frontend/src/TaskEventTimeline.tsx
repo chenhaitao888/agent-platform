@@ -1,3 +1,4 @@
+import { useAPI } from './api'
 import { useEffect, useRef, useState } from 'react'
 
 import type { Task, TaskEvent } from './task'
@@ -45,6 +46,8 @@ function eventSummary(event: TaskEvent): string {
 }
 
 export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
+  const api = useAPI()
+
   const [state, setState] = useState<TimelineState>({ kind: 'idle' })
   const controllerRef = useRef<AbortController | null>(null)
 
@@ -63,7 +66,7 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
-      const response = await fetch(
+      const response = await api.fetch(
         `/api/v1/tasks/${task.id}/events?${query.toString()}`,
         { signal },
       )

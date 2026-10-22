@@ -19,7 +19,7 @@ import (
 func cleanDeployment(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"AGENT_PLATFORM_API_ADDR", "AGENT_PLATFORM_GITLAB_BASE_URL", "AGENT_PLATFORM_GITLAB_TOKEN", "AGENT_PLATFORM_WORKSPACE_ROOT",
+		"AGENT_PLATFORM_AUTH_FILE", "AGENT_PLATFORM_API_ADDR", "AGENT_PLATFORM_GITLAB_BASE_URL", "AGENT_PLATFORM_GITLAB_TOKEN", "AGENT_PLATFORM_WORKSPACE_ROOT",
 		"AGENT_PLATFORM_GITLAB_CA_FILE", "AGENT_PLATFORM_GIT_BINARY", "AGENT_PLATFORM_REVIEW_ENABLED", "AGENT_PLATFORM_DOCKER_BINARY",
 		"AGENT_PLATFORM_DOCKER_HOST", "AGENT_PLATFORM_REVIEW_WORKER_IMAGE", "AGENT_PLATFORM_REVIEW_MODEL", "AGENT_PLATFORM_MODEL_BASE_URL",
 		"AGENT_PLATFORM_MODEL_SERVICE_PRINCIPAL", "AGENT_PLATFORM_MODEL_CREDENTIAL_FILE", "AGENT_PLATFORM_MODEL_CA_FILE",
@@ -65,7 +65,7 @@ func TestAPIWithoutDeploymentKeepsHealthAvailableAndRepositoryAdmissionClosed(t 
 	request := `{"requestId":"create","idempotencyKey":"create","tenantId":"test","type":"PR_REVIEW","goal":"review","repository":{"provider":"gitlab","repositoryId":"42","headSha":"` + strings.Repeat("1", 40) + `"}}`
 	response := httptest.NewRecorder()
 	app.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(request)))
-	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "repository_resolution_unavailable") {
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "unauthenticated") {
 		t.Fatalf("unconfigured API admitted repository work: %d %s", response.Code, response.Body.String())
 	}
 }
@@ -91,7 +91,9 @@ func prepareAPITask(t *testing.T, handler http.Handler, fixture deploymentFixtur
 func apiWrite(t *testing.T, handler http.Handler, method, path, body string, want int) []byte {
 	t.Helper()
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(method, path, strings.NewReader(body)))
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+testAPIToken)
+	handler.ServeHTTP(response, request)
 	if response.Code != want {
 		t.Fatalf("%s %s: %d %s", method, path, response.Code, response.Body.String())
 	}

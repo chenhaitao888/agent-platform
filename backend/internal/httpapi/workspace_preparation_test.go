@@ -16,7 +16,7 @@ import (
 
 func TestPrepareRegisteredWorkspace(t *testing.T) {
 	workspaceRoot := t.TempDir()
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		workspaceRoot,
@@ -64,7 +64,7 @@ func TestPrepareRegisteredWorkspace(t *testing.T) {
 }
 
 func TestPrepareWorkspaceFailureReturnsAStableErrorAndRestoresRegistration(t *testing.T) {
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			return errors.New("Git output that must stay internal")
@@ -123,7 +123,7 @@ func TestPrepareWorkspaceFailureReturnsAStableErrorAndRestoresRegistration(t *te
 
 func TestPrepareWorkspaceFailureKeepsTheKeyBoundAndAllowsANewAttempt(t *testing.T) {
 	var calls atomic.Uint64
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			if calls.Add(1) == 1 {

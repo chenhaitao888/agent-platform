@@ -25,7 +25,7 @@ func TestPrepareWorkspaceReservesItsIdempotencyKeyBeforeCallingPreparer(t *testi
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			defer unblock()
 			var calls atomic.Uint64
-			handler, err := NewHandlerWithWorkspacePreparer(
+			handler, err := businessTestWorkspacePreparer(
 				repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 				workspacePreparerFunc(func(ctx context.Context, _ task.RepositoryReference, _ string) error {
 					if calls.Add(1) == 1 {

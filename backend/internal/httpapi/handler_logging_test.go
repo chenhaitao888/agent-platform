@@ -16,7 +16,7 @@ import (
 
 func TestPrepareWorkspaceFailureLogsCauseAndCorrelation(t *testing.T) {
 	logOutput := captureJSONLogs(t)
-	handler, err := NewHandlerWithWorkspacePreparer(
+	handler, err := businessTestWorkspacePreparer(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			return fmt.Errorf("clone failed: %w", errors.New("remote rejected commit"))
@@ -62,7 +62,7 @@ func TestPrepareWorkspaceFailureRedactsGitLabTokenFromLog(t *testing.T) {
 	// 进程环境故意放另一份值：遮盖必须跟随传给 handler 的真实 token。
 	t.Setenv("AGENT_PLATFORM_GITLAB_TOKEN", "stale-environment-token")
 	logOutput := captureJSONLogs(t)
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error {
 			return errors.New("remote echoed " + token)
@@ -110,7 +110,7 @@ func TestWorkspaceRegistrationLogsServiceAndUnexpectedFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			logOutput := captureJSONLogs(t)
-			handler := NewHandlerWithRepositoryServices(repositoryVerifierFunc(
+			handler := businessTestRepositoryHandler(repositoryVerifierFunc(
 				func(context.Context, task.RepositoryReference) error { return test.failure },
 			), "")
 			createQueuedTaskForWorkspaceTest(t, handler)
@@ -143,7 +143,7 @@ func TestWorkspaceRegistrationLogsServiceAndUnexpectedFailures(t *testing.T) {
 
 func TestGetWorkspaceDiffFailureLogsHeaderRequestID(t *testing.T) {
 	logOutput := captureJSONLogs(t)
-	handler, err := NewHandlerWithWorkspaceServices(
+	handler, err := businessTestWorkspaceServices(
 		repositoryVerifierFunc(func(context.Context, task.RepositoryReference) error { return nil }),
 		workspacePreparerFunc(func(context.Context, task.RepositoryReference, string) error { return nil }),
 		diffReaderFunc(func(context.Context, repository.DiffInput) ([]byte, error) {

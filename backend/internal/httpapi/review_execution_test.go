@@ -793,9 +793,9 @@ while True:
 		return preparer.Prepare(ctx, gitworkspace.Input{CloneURL: (&url.URL{Scheme: "file", Path: source}).String(), BaseSHA: reference.BaseSHA, HeadSHA: reference.HeadSHA, Destination: destination})
 	})
 	if mode == "unconfigured" {
-		fixture.handler, err = NewHandlerWithWorkspaceServices(localReviewInputReferences{source: source}, prepare, reader, root, "")
+		fixture.handler, err = businessTestWorkspaceServices(localReviewInputReferences{source: source}, prepare, reader, root, "")
 	} else {
-		fixture.handler, err = NewHandlerWithReviewServices(localReviewInputReferences{source: source}, prepare, reader, runner, root, "")
+		fixture.handler, err = businessTestReviewServices(localReviewInputReferences{source: source}, prepare, reader, runner, root, "")
 	}
 	if err != nil {
 		t.Fatal(err)

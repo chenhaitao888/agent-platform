@@ -21,9 +21,8 @@ type executeReviewRequest struct {
 }
 
 func (h *handler) getReviewExecution(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" || exceedsIdentifierLimit(tenantID) {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required and must fit the supported length")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 	current, ok := h.reviews.GetExecution(review.GetInput{TaskID: r.PathValue("id"), TenantID: tenantID})
@@ -40,10 +39,17 @@ func (h *handler) executeReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	if request.RequestID == "" || request.TenantID == "" || request.IdempotencyKey == "" || request.ExpectedWorkspaceVersion == 0 || exceedsIdentifierLimit(request.RequestID, request.TenantID, request.IdempotencyKey) {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, tenantId, idempotencyKey and expectedWorkspaceVersion are required and must fit supported limits")
+		return
+	}
+	if !h.authorizeTaskRepository(w, r, request.TenantID) {
 		return
 	}
 	w.Header().Set("X-Request-ID", request.RequestID)

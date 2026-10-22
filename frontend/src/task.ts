@@ -1,5 +1,3 @@
-export const LOCAL_TENANT_ID = 'tenant-local'
-
 export type TaskStatus = 'CREATED' | 'QUEUED'
 
 export type RepositoryReference = {

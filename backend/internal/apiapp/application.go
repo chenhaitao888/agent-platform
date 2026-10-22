@@ -25,6 +25,7 @@ type Application struct {
 }
 
 type deployment struct {
+	authFile                                                                                      string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
@@ -35,6 +36,7 @@ func loadDeployment() (deployment, error) {
 	value := func(key string) string { return strings.TrimSpace(os.Getenv("AGENT_PLATFORM_" + key)) }
 	config := deployment{address: value("API_ADDR"), gitlabURL: value("GITLAB_BASE_URL"), gitlabToken: value("GITLAB_TOKEN"), root: value("WORKSPACE_ROOT"), gitBinary: value("GIT_BINARY"), gitlabCA: value("GITLAB_CA_FILE"),
 		dockerBinary: value("DOCKER_BINARY"), dockerHost: value("DOCKER_HOST"), image: value("REVIEW_WORKER_IMAGE"), model: value("REVIEW_MODEL"), modelURL: value("MODEL_BASE_URL"), principal: value("MODEL_SERVICE_PRINCIPAL"), credentialFile: value("MODEL_CREDENTIAL_FILE"), modelCA: value("MODEL_CA_FILE"), seccomp: value("REVIEW_SECCOMP_POLICY"), timeout: 90 * time.Second}
+	config.authFile = value("AUTH_FILE")
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
@@ -64,18 +66,15 @@ func loadDeployment() (deployment, error) {
 		config.dockerBinary = "docker"
 	}
 	if config.address == "" {
-		config.address = ":8080"
-		if config.reviewEnabled {
-			config.address = "127.0.0.1:8080"
-		}
+		config.address = "127.0.0.1:8080"
 	}
 	host, port, err := net.SplitHostPort(config.address)
 	number, portErr := strconv.Atoi(port)
 	if err != nil || portErr != nil || number < 0 || number > 65535 {
 		return deployment{}, errors.New("AGENT_PLATFORM_API_ADDR must be a host and numeric port")
 	}
-	if config.reviewEnabled && (net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback()) {
-		return deployment{}, errors.New("enabled Review requires a loopback AGENT_PLATFORM_API_ADDR")
+	if net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return deployment{}, errors.New("API requires a loopback AGENT_PLATFORM_API_ADDR")
 	}
 	return config, nil
 }
@@ -90,8 +89,13 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	authentication, err := loadAuthentication(config.authFile, config.root)
+	if err != nil {
+		return nil, err
+	}
 	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled}
 	if config.gitlabURL == "" {
+		app.Handler = authentication.Wrap(app.Handler)
 		return app, nil
 	}
 	client, err := deploymentHTTPClient(config.gitlabCA, 5*time.Second)
@@ -119,6 +123,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		if err != nil {
 			return nil, err
 		}
+		app.Handler = authentication.Wrap(app.Handler)
 		return app, nil
 	}
 	var modelClient *http.Client
@@ -150,5 +155,6 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		underlying.ServeHTTP(w, r)
 	})
 	app.ShutdownGrace = max(time.Minute, config.timeout+30*time.Second)
+	app.Handler = authentication.Wrap(app.Handler)
 	return app, nil
 }

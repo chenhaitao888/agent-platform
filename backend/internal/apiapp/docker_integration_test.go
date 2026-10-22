@@ -122,6 +122,7 @@ USER 65534:65534
 				done := make(chan int, 1)
 				go func() {
 					request, _ := http.NewRequest("POST", process.address+"/api/v1/tasks/task-1/review", strings.NewReader(body))
+					request.Header.Set("Authorization", "Bearer "+testAPIToken)
 					client := &http.Client{Timeout: 5 * time.Second}
 					response, err := client.Do(request)
 					if err != nil {

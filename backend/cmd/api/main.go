@@ -45,7 +45,7 @@ func main() {
 
 func newServer(handler http.Handler) *http.Server {
 	return &http.Server{
-		Addr:              ":8080",
+		Addr:              "127.0.0.1:8080",
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

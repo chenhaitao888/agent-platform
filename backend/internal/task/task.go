@@ -334,6 +334,10 @@ func (s *Store) AppendEvent(input AppendEventInput) {
 }
 
 func (s *Store) appendEventLocked(input AppendEventInput) {
+	current, ok := s.tasks[input.TaskID]
+	if !ok || current.TenantID != input.TenantID {
+		return
+	}
 	s.nextEventID++
 	sequence := uint64(len(s.events[input.TaskID]) + 1)
 	event := Event{

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -148,6 +149,7 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
+	mux.HandleFunc("GET /api/v1/session", session)
 	mux.HandleFunc("POST /api/v1/tasks", h.createTask)
 	mux.HandleFunc("GET /api/v1/tasks", h.listTasks)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", h.getTask)
@@ -163,13 +165,12 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.getArtifactContent)
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)
 
-	return mux
+	return requireIdentity(mux)
 }
 
 func (h *handler) getArtifactContent(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -187,9 +188,8 @@ func (h *handler) getArtifactContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getArtifact(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -208,13 +208,21 @@ func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
 		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
 		return
 	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" || request.ExpectedWorkspaceVersion == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey, tenantId and expectedWorkspaceVersion are required")
+		return
+	}
+
+	if !h.authorizeTaskRepository(w, r, request.TenantID) {
 		return
 	}
 
@@ -266,9 +274,12 @@ func (h *handler) archiveWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
+		return
+	}
+
+	if !h.authorizeTaskRepository(w, r, tenantID) {
 		return
 	}
 
@@ -309,13 +320,21 @@ func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
 		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
 		return
 	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" || request.ExpectedVersion == 0 {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey, tenantId and expectedVersion are required")
+		return
+	}
+
+	if !h.authorizeTaskRepository(w, r, request.TenantID) {
 		return
 	}
 
@@ -363,9 +382,8 @@ func (h *handler) prepareWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getWorkspace(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -384,13 +402,21 @@ func (h *handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
 		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
 		return
 	}
 	if request.RequestID == "" || request.IdempotencyKey == "" || request.TenantID == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "requestId, idempotencyKey and tenantId are required")
+		return
+	}
+
+	if !h.authorizeTaskRepository(w, r, request.TenantID) {
 		return
 	}
 
@@ -455,7 +481,11 @@ func (h *handler) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	request.Status = task.Status(strings.TrimSpace(string(request.Status)))
 	if exceedsIdentifierLimit(request.RequestID, request.IdempotencyKey, request.TenantID) {
 		writeError(w, http.StatusBadRequest, "validation_error", "request fields exceed supported length")
@@ -505,9 +535,8 @@ func (h *handler) updateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listTaskEvents(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -521,9 +550,8 @@ func (h *handler) listTaskEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) listTasks(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -531,9 +559,8 @@ func (h *handler) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getTask(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenantId"))
-	if tenantID == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "tenantId is required")
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
 		return
 	}
 
@@ -553,7 +580,11 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	request.RequestID = strings.TrimSpace(request.RequestID)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
-	request.TenantID = strings.TrimSpace(request.TenantID)
+	var authorized bool
+	request.TenantID, authorized = checkedTenant(w, r, request.TenantID)
+	if !authorized {
+		return
+	}
 	request.Type = strings.TrimSpace(request.Type)
 	request.Goal = strings.TrimSpace(request.Goal)
 	request.Repository.Provider = strings.TrimSpace(request.Repository.Provider)
@@ -604,6 +635,10 @@ func (h *handler) createTask(w http.ResponseWriter, r *http.Request) {
 		RepositoryID: request.Repository.RepositoryID,
 		HeadSHA:      request.Repository.HeadSHA,
 	}
+	if !repositoryAllowed(w, r, request.Repository.RepositoryID) {
+		return
+	}
+
 	createInput := task.CreateInput{
 		RequestID:      request.RequestID,
 		TenantID:       request.TenantID,
@@ -736,7 +771,8 @@ func decodeRequestFields(w http.ResponseWriter, r *http.Request, destination any
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	// 请求体已经只读解码；关闭错误不替代解码结果或已写出的 HTTP 响应。
 	defer func() { _ = r.Body.Close() }()
-	decoder := json.NewDecoder(r.Body)
+	var content bytes.Buffer
+	decoder := json.NewDecoder(io.TeeReader(r.Body, &content))
 	if strict {
 		decoder.DisallowUnknownFields()
 	}
@@ -748,6 +784,10 @@ func decodeRequestFields(w http.ResponseWriter, r *http.Request, destination any
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		writeDecodeError(w, err)
+		return false
+	}
+	if !unambiguousTenantClaim(content.Bytes()) {
+		writeError(w, http.StatusBadRequest, "validation_error", "tenantId must be an unambiguous field")
 		return false
 	}
 	return true
@@ -767,6 +807,9 @@ func (h *handler) logServerError(r *http.Request, requestID, tenantID, code stri
 	// token 不应进入 Git URL/argv；但 Git stderr 属于外部文本，仍对构造时传入的 token
 	// 做兜底遮盖，避免远端异常回显时把凭据带进日志。
 	redact := func(value string) string {
+		if identity, ok := r.Context().Value(identityKey{}).(authenticatedIdentity); ok && identity.redact != nil {
+			value = identity.redact(value)
+		}
 		if h.logSecret == "" {
 			return value
 		}

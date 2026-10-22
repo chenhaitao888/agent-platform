@@ -161,6 +161,7 @@ elif args[0]=="rm":
 
 func (fixture deploymentFixture) configure(t *testing.T, review bool) {
 	t.Helper()
+	configureAPIAuthentication(t, apiCredential("fixture-user", "test", testAPIToken, "42"))
 	for key, value := range map[string]string{"GITLAB_BASE_URL": fixture.gitlab.URL, "GITLAB_TOKEN": "api-gitlab-token", "WORKSPACE_ROOT": fixture.root, "GITLAB_CA_FILE": fixture.ca} {
 		t.Setenv("AGENT_PLATFORM_"+key, value)
 	}
@@ -175,7 +176,9 @@ func createAPITask(t *testing.T, handler http.Handler, fixture deploymentFixture
 	t.Helper()
 	body := `{"requestId":"create","idempotencyKey":"create","tenantId":"test","type":"PR_REVIEW","goal":"review","repository":{"provider":"gitlab","repositoryId":"42","headSha":"` + fixture.head + `"}}`
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+testAPIToken)
+	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("API create: %d %s", response.Code, response.Body.String())
 	}

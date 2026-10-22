@@ -1,3 +1,5 @@
+import ArtifactContent from './ArtifactContent'
+import { useAPI } from './api'
 import { useEffect, useRef, useState } from 'react'
 
 import type { Artifact } from './artifact'
@@ -37,6 +39,8 @@ type ArtifactState =
 const maxDiffPreviewCharacters = 64 * 1024
 
 export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
+  const api = useAPI()
+
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
   const [diffState, setDiffState] = useState<DiffState>({ kind: 'idle' })
   const [artifactState, setArtifactState] = useState<ArtifactState>({
@@ -63,7 +67,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
-      const response = await fetch(
+      const response = await api.fetch(
         `/api/v1/tasks/${task.id}/workspace?${query.toString()}`,
         { signal },
       )
@@ -100,7 +104,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     setArtifactState({ kind: 'idle' })
 
     try {
-      const response = await fetch(`/api/v1/tasks/${task.id}/workspace`, {
+      const response = await api.fetch(`/api/v1/tasks/${task.id}/workspace`, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/json' },
@@ -140,7 +144,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     setArtifactState({ kind: 'idle' })
 
     try {
-      const response = await fetch(
+      const response = await api.fetch(
         `/api/v1/tasks/${task.id}/workspace/prepare`,
         {
           method: 'POST',
@@ -184,7 +188,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
-      const response = await fetch(
+      const response = await api.fetch(
         `/api/v1/tasks/${task.id}/workspace/diff?${query.toString()}`,
         { signal },
       )
@@ -218,7 +222,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     const idempotencyKey = `artifact-diff:v1:${task.id}:${workspace.id}:v${workspace.version}`
 
     try {
-      const response = await fetch(`/api/v1/tasks/${task.id}/artifacts/diff`, {
+      const response = await api.fetch(`/api/v1/tasks/${task.id}/artifacts/diff`, {
         method: 'POST',
         signal,
         headers: { 'Content-Type': 'application/json' },
@@ -446,11 +450,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
                       <dd>{artifactState.artifact.sha256}</dd>
                     </div>
                   </dl>
-                  <a
-                    href={`/api/v1/artifacts/${artifactState.artifact.id}/content?${new URLSearchParams({ tenantId: task.tenantId }).toString()}`}
-                  >
-                    读取 Artifact 内容
-                  </a>
+                  <ArtifactContent key={artifactState.artifact.id} id={artifactState.artifact.id} tenantId={task.tenantId} />
                 </section>
               )}
             </section>
