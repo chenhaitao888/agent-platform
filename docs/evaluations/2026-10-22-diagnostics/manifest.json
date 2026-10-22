@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "step41-independent-live-diagnostic-run",
+  "sourceBaseCommit": "3b3df6ac9961142cd87f0d0de8e2a2b640cf7a91",
+  "implementationState": "step41-evidence-only-uncommitted",
+  "planFileSHA256": "c39101a6c7401f1edcb98e246f82eff94092bbd4ae83076076d0a1c399ff2913",
+  "captureFileSHA256": "a033235f0a19d4277851ed392281150c5fb442b95d397cdfd69e13f48d0c89ae",
+  "captureCanonicalSHA256": "b77e35df108bc363d5b41cd9c7ec10bdd5877a9a2ef9974983560a83e71e9e8e",
+  "captureExecutableSHA256": "f6b3a8d5fc06409fcb2347b6d92575b332a0ca3f96097eb400b6d5d89d6e0094",
+  "scoringExecutableSHA256": "f6b3a8d5fc06409fcb2347b6d92575b332a0ca3f96097eb400b6d5d89d6e0094",
+  "captureStartedAt": "2026-10-22T03:57:56.556512Z",
+  "captureOutputWrittenAt": "2026-10-22T03:59:29.537833+00:00",
+  "runtime": {
+    "integration": "docker-exec",
+    "imageId": "sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8",
+    "codexVersion": "0.160.0",
+    "binarySha256": "50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0",
+    "model": "deepseek-flash",
+    "seccompPolicy": "codex-bwrap",
+    "seccompSha256": "c731e520256a3bfea369408667316fd6f1b5327773c494da5e1231347a00d72b",
+    "gatewayUrl": "https://api.deepseek.com",
+    "servicePrincipal": "pr-review-deepseek",
+    "modelTransport": "stdio"
+  },
+  "artifacts": {
+    "adjudications.draft.json": "e95a37106f78e74cea0f6cbad89d782b4d71850815a4b99fa4b9860a9f5873e5",
+    "capture.json": "a033235f0a19d4277851ed392281150c5fb442b95d397cdfd69e13f48d0c89ae",
+    "comparison.json": "06e3cd21ba3d7d1aa79dc337e60951e2fefc9031f6bdd97168b67da35212d704",
+    "plan.json": "c39101a6c7401f1edcb98e246f82eff94092bbd4ae83076076d0a1c399ff2913",
+    "pricing.json": "89ca29f0fb9c65baac3a87afa16c31a694514d1ac538a7f7f182a009d8cc32bf",
+    "provider-observation.json": "38dc8f7fae5cbb51bdcefa2c5c9b09236892fd6f3af9b7d85ba7413b9c4c5e7f",
+    "report.draft.json": "fdc021263ca0455b2aea5d286c2c4d4ea55aa93404f8e5adc9609952c7b23d7c"
+  },
+  "validation": {
+    "goTest": "go test ./cmd/revieweval ./internal/revieweval -count=1 passed",
+    "offlineScoreReplay": "same executable, capture, assistant decisions and pricing produced byte-identical report",
+    "historicalJSONFilesUnchanged": 8,
+    "allSixBaseHeadPatchPinsMatchHistory": true,
+    "testWorkerContainersRemaining": 0
+  },
+  "notes": [
+    "The plan and rubric were saved before this single six-case run. No rerun, filtered failure, suite modification, or Pro call.",
+    "All six outputs were accepted. The invalid_output seen on Oct 15 did not recur; its original cause remains unknown. Diagnostic rejection coverage remains the controlled tests from step40.",
+    "Five assistant decisions propose four regression matches and one prompt-injection advisory. Human review is required; this is not production quality acceptance.",
+    "The provider documentation observed today names DeepSeek-V4.1-Flash-1017 for deepseek-flash, but this run does not verify an immutable model version. Runtime binary changes and alias drift prevent causal attribution.",
+    "Cost is an explicit weekday peak-rate estimate for the observed UTC interval, not an invoice. Prior evidence used off-peak rates, so raw dollar totals are not normalized.",
+    "The provider key stayed in the pre-existing private host credential file. No raw rejected output or credential is retained in this evidence bundle.",
+    "This local evaluation CLI uses synthetic repositories and the deployment Docker runner. It does not read enterprise repositories or invoke the public tenant HTTP APIs.",
+    "Source production code is unchanged from the approved authentication commit. This evidence bundle and its documentation await review."
+  ]
+}

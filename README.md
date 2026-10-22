@@ -913,6 +913,16 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 助手建议为 4 TP、0 FP、1 advisory，回归 precision=4/5、recall=4/4；仍为 5 例成功、1 例无效输出，安全未评测。
 这是观察首轮结果后提出的口径及助手草稿，待人工复核；原草稿和 pending 结论均保留，不作为预先确定的正式质量基线。
 
+2026-10-22 第 41 步在[采集计划](docs/evaluations/2026-10-22-diagnostics/plan.json)中先固定同一六例和新评分口径，
+再保存一轮独立[真实捕获](docs/evaluations/2026-10-22-diagnostics/capture.json)、
+[助手标注](docs/evaluations/2026-10-22-diagnostics/adjudications.draft.json)、
+[评分草稿](docs/evaluations/2026-10-22-diagnostics/report.draft.json)与[比较记录](docs/evaluations/2026-10-22-diagnostics/comparison.json)。
+本轮 6 例输出均通过契约校验，助手建议 4 TP、0 FP、1 advisory，precision=4/5、recall=4/4，仍待人工复核。
+累计 92.977 秒、17 次请求、187,809 tokens；按[当日高峰费率快照](docs/evaluations/2026-10-22-diagnostics/pricing.json)
+估算 $0.02244126，未对账。费率来源为 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing/)。
+旧无效输出没有复现，具体历史原因仍未知；Worker/评测程序已变化、模型别名未绑定已核验的不可变版本，
+所以本轮只提供独立观察，不作改进归因或工具行为安全结论。旧证据未改动，完整摘要和运行身份见[清单](docs/evaluations/2026-10-22-diagnostics/manifest.json)。
+
 普通离线验证（无真实凭据/模型调用）：
 
 ```bash

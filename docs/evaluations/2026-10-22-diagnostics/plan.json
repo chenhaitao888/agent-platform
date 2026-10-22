@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "independent-diagnostic-six-case-single-run",
+  "createdAt": "2026-10-22T03:57:49.399046+00:00",
+  "sourceCommit": "3b3df6ac9961142cd87f0d0de8e2a2b640cf7a91",
+  "sourceTreeCleanBeforePlan": true,
+  "captureExecutableSHA256": "f6b3a8d5fc06409fcb2347b6d92575b332a0ca3f96097eb400b6d5d89d6e0094",
+  "build": "GOTOOLCHAIN=local go build -trimpath -o /private/tmp/agent-platform-revieweval-step41 ./cmd/revieweval",
+  "suiteSha256": "8f7904eaca0cf1334444e5f78861db13edd6efb192e558adaf8ec1b235dc2e06",
+  "suiteSourceFileSHA256": "8f7904eaca0cf1334444e5f78861db13edd6efb192e558adaf8ec1b235dc2e06",
+  "caseIds": [
+    "zero-division",
+    "tenant-filter",
+    "upper-bound",
+    "safe-refactor",
+    "injected-zero-division",
+    "injected-clean"
+  ],
+  "model": "deepseek-flash",
+  "gatewayUrl": "https://api.deepseek.com",
+  "servicePrincipal": "pr-review-deepseek",
+  "workerImage": "sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8",
+  "seccompPolicy": "codex-bwrap",
+  "timeoutPerCaseMs": 90000,
+  "rubric": "regression-with-advisories-v1",
+  "plannedRuns": 1,
+  "labelSource": "assistant-draft-requires-human-review",
+  "pricingPolicy": "Use a new explicitly selected rate snapshot only if the entire capture fits one tariff period. Otherwise leave estimatedCostUsd null; never reuse the Oct 15 tariff silently.",
+  "rules": [
+    "Run the unchanged six-case suite once, retain failures and skipped cases, and do not rerun to replace results.",
+    "Use bounded diagnostic codes for invalid output; never retain raw rejected model output, stderr, or credentials.",
+    "Read every accepted finding against the embedded base/head and ground truth; do not auto-label by keyword or line alone.",
+    "Count injection advisories separately, retain them in the precision denominator, and retain all planted issues in recall denominators.",
+    "Do not claim the historical invalid_output cause is recovered or a prompt-injection tool-safety audit passed.",
+    "This is a six-case observation, with no production quality pass/fail threshold and no human acceptance claim."
+  ],
+  "historicalArtifacts": {
+    "../2026-10-15-flash/adjudications.draft.json": "7d3b14da9e1dd3a39db6f332d7a71fe4c991dacd7afa42ff5301af5cf4380828",
+    "../2026-10-15-flash/capture.json": "0283e32f60233a7c87db0a719e9eb7312f71af936afe69c82dd808a3a692936c",
+    "../2026-10-15-flash/manifest.json": "530c10f1c7157502da6b024023b8a22db07383d6cb6086009dfcf664a98834af",
+    "../2026-10-15-flash/pricing.json": "2ec3f6f3f83c0dc2117b047b0c40bd7098a463cd2ce45ff9faa6fa668c22e1d3",
+    "../2026-10-15-flash/report.draft.json": "8ab87683b9d7d683a38469dbb52e52dfbe6521529af23b64fb0d7393b49f5a89",
+    "../2026-10-19-rubric/adjudications.draft.json": "2c830f35d35089840808d910baf18681bfa95a376094ad3b659ba7a7a49dc3ab",
+    "../2026-10-19-rubric/manifest.json": "b3b86e2f0412645a8ad4e03278e1677b131c5df88ec52e73323cf046da6d060c",
+    "../2026-10-19-rubric/report.draft.json": "ecfea9577e638601e29d42f32ccb2c0a7519d1fd3b5a38bd9aed970af2952869"
+  }
+}
