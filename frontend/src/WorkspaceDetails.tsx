@@ -1,4 +1,5 @@
 import ArtifactContent from './ArtifactContent'
+import TaskReview from './TaskReview'
 import { useAPI } from './api'
 import { useEffect, useRef, useState } from 'react'
 
@@ -386,6 +387,7 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
                 : '查看固定版本差异'}
             </button>
           )}
+          <TaskReview task={task} workspace={state.workspace} />
           {diffState.kind === 'failed' && (
             <p className="error-message" role="alert">
               差异加载失败：{diffState.message}

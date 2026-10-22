@@ -9,7 +9,7 @@
 - READY Workspace 的固定 base/head Git diff，以及 React 页面中的受控差异查看
 - 固定 diff 的幂等 Artifact 归档、元数据查询和租户范围内容读取
 - 只读 Review Runner、Codex 进程 adapter、任务范围 HTTP 触发、执行投影与 Findings Artifact/事件
-- React + TypeScript 状态页、Task 操作、事件、Workspace 准备与真实路径展示
+- React + TypeScript 状态页、Task 操作、事件、Workspace 准备、只读审阅触发与 Findings 展示
 - Go 接口测试与 React 组件测试
 
 这一阶段没有接入数据库、Temporal、Codex app-server 或 Credential Broker。GitLab 只读验证和
@@ -18,7 +18,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现与评测切片见第 31～44 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现与评测切片见第 31～45 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -596,6 +596,12 @@ Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 
 同一 Task 执行期间，重复请求或新 key 返回 `409 review_in_progress`；不同 Task 可以并发。
 终态后使用新 key 会发起新的审阅尝试，即使前次已成功，也会重新执行。
 
+前端在 READY Workspace 中提供审阅入口。先点击“刷新审阅状态”，再显式开始审阅；
+已有执行时显示状态与固定 SHA，成功后可点击“读取审阅结果”。页面校验内容摘要、引用和结构后展示 Findings。
+请求结果不确定时，“重试本次请求”沿用本页的幂等键；只有显式开始新一轮才生成新键。
+刷新页面或重新加载 Workspace 会清除本页尝试信息，应先查询服务端最新状态；
+中止浏览器请求不代表服务端已经取消执行。当前状态刷新为手动操作，POST 仍使用已有同步接口。
+
 成功追加 `review.started → artifact.created → review.succeeded`；失败或取消只追加开始与终态事件，
 不会保存部分 Findings。Task 的准入状态仍为 QUEUED，审阅执行投影单独管理；所有记录仍只在单进程内存中。
 
@@ -998,11 +1004,17 @@ GitLab。每次提交都有新的 request ID；同一份未修改的 Task 表单
 `QUEUED / version 2` 替换旧对象。请求期间按钮会禁用，后端校验错误或网络错误会直接
 显示在对应区域。列表请求晚到时，前端按 Task ID 和 version 合并，不让旧快照覆盖新状态。
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动
-发起额外请求。时间线支持审阅执行状态、执行 ID、Findings Artifact ID 与稳定失败码；尚无审阅触发按钮。
+发起额外请求。时间线支持审阅执行状态、执行 ID、Findings Artifact ID 与稳定失败码。
 `QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
 base/head 的差异。diff 展示后可归档为 Artifact，页面会显示 Artifact ID、摘要和带认证的内容读取按钮。
+
+READY 的 `PR_REVIEW` Task 同时显示只读审阅区域：查询已有状态后，可开始首次或新一轮审阅；
+执行期间禁止重复提交，结果不确定时保留同一次请求供重试。成功结果通过带认证的 Artifact 接口读取，
+展示严重度、文件/行号、描述与模型置信度，供人工复核；空结果不代表质量验收通过。
+Task、身份或 Workspace 版本切换后，旧请求与结果不会写入新面板。凭据和审阅重试键只保存在内存中。
+后端默认关闭 Review；收到“当前服务未启用只读审阅”时，需按前面的部署说明显式启用。
 
 运行前端静态检查、测试与构建：
 
@@ -1013,6 +1025,17 @@ node --run typecheck
 node --run test
 node --run build
 ```
+
+安装前端依赖后，可从仓库根目录运行前后端 HTTP 贯穿测试（Node 22 需在 PATH 中）：
+
+```bash
+cd backend
+AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test ./internal/httpapi -run '^TestFrontendReviewFlowOverAuthenticatedHTTP$' -count=1
+```
+
+该测试使用真实 loopback Go HTTP 服务、React/jsdom、临时 Git 仓库和受控 CLI，验证认证、
+审阅、响应丢失后的幂等重试及跨租户拒绝；不调用真实模型，也不需要 Docker 或服务凭据。
+普通前端测试会跳过这个需要 Go 启动服务的用例，普通 Go 测试也不要求安装 Node。
 
 `node --run` 是 Node.js 22 支持的 package script 运行方式；也可使用对应的 `npm run` 命令。
 前端使用固定版本 ESLint 10.12.0，检查 JS/TS 推荐规则、核心 React Hooks 规则和 Vite Fast Refresh

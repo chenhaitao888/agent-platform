@@ -501,6 +501,36 @@ h1 {
   font-size: 0.72rem;
 }
 
+.task-review {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgb(24 32 39 / 12%);
+}
+
+.task-review h3 { margin: 0; font-size: 1rem; }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.task-review button {
+  padding: 8px 12px;
+  border: 1px solid #287a5b;
+  border-radius: 12px;
+  color: #1f6f52;
+  background: #fff;
+  cursor: pointer;
+}
+.task-review button:hover:not(:disabled) { background: #e6f4ed; }
+.task-review button:focus-visible { outline: 3px solid #9ab9ac; outline-offset: 2px; }
+.task-review button:disabled { opacity: .6; cursor: default; }
+.review-findings ol { padding: 0; list-style: none; }
+.review-findings li { margin-top: 12px; min-width: 0; }
+.review-findings h4 { margin: 10px 0; overflow-wrap: anywhere; }
+.review-findings code { display: block; overflow-wrap: anywhere; }
+.finding-description { white-space: pre-wrap; }
+.finding-severity { border-radius: 6px; padding: 3px 7px; font-size: .75rem; font-weight: 700; }
+.severity-critical { color: #8a2433; background: #fbe5e9; }
+.severity-high { color: #963b29; background: #fff0ec; }
+.severity-medium { color: #74510f; background: #fff3d4; }
+.severity-low { color: #1f6f52; background: #e6f4ed; }
+
 @media (max-width: 620px) {
   .details {
     grid-template-columns: 1fr;
