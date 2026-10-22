@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "step44-offline-severity-calibration",
+  "createdAt": "2026-10-22T06:58:08.322331+00:00",
+  "sourceBaseCommit": "2f06875908ab8f27de327f8fec6c03acef3ea09d",
+  "implementationState": "step44-source-and-evidence-uncommitted",
+  "implementationFileSHA256": {
+    "backend/internal/revieweval/score.go": "1b679fe83aae944895e22a96601cf65a797d2ab50f6b61e7f655311c3cb3f7ee",
+    "backend/internal/revieweval/severity.go": "9a0e5109b5695b2953bb6a0f47ccc836db118c30e7c68c1668bdede1b6f62f6e",
+    "backend/internal/revieweval/severity_test.go": "332576fce098f2a24fa48224a6469b039c077dd47c2a4bbc79f0bea48a27a898",
+    "backend/internal/revieweval/extended_test.go": "f5b484c88cd09183e34a70d0f548c20a7204273172e9fe9e4ec7dd020f99a920",
+    "backend/cmd/revieweval/main_test.go": "fe3612141158515301e069af4ce59d9ae34160a96ad205cd62c3f0ceb8189c12"
+  },
+  "scoringExecutableSHA256": "9e0a9d112f3df854dfd7e997f689ff73ddcd17a4fa0eceab45dbb05eebe35c21",
+  "build": "GOTOOLCHAIN=local go build -trimpath -o /private/tmp/agent-platform-revieweval-step44 ./cmd/revieweval",
+  "captureCanonicalSHA256": "7d2b44ac82b6f3f22d49d59eadeec206bc295f9d715e35737f360f687283146d",
+  "adjudicationsCanonicalSHA256": "23dfaefed557ee1c7feaabf4f5e1e4e84f6ae5312a10263934bd46ea8b8e31fa",
+  "sourceCapture": "../2026-10-22-extended/capture.json",
+  "sourceAdjudications": "../2026-10-22-extended/adjudications.draft.json",
+  "sourcePricing": "../2026-10-22-extended/pricing.json",
+  "priorReport": "../2026-10-22-extended/report.draft.json",
+  "historicalArtifacts": {
+    "../2026-10-15-flash/adjudications.draft.json": "7d3b14da9e1dd3a39db6f332d7a71fe4c991dacd7afa42ff5301af5cf4380828",
+    "../2026-10-15-flash/capture.json": "0283e32f60233a7c87db0a719e9eb7312f71af936afe69c82dd808a3a692936c",
+    "../2026-10-15-flash/manifest.json": "530c10f1c7157502da6b024023b8a22db07383d6cb6086009dfcf664a98834af",
+    "../2026-10-15-flash/pricing.json": "2ec3f6f3f83c0dc2117b047b0c40bd7098a463cd2ce45ff9faa6fa668c22e1d3",
+    "../2026-10-15-flash/report.draft.json": "8ab87683b9d7d683a38469dbb52e52dfbe6521529af23b64fb0d7393b49f5a89",
+    "../2026-10-19-rubric/adjudications.draft.json": "2c830f35d35089840808d910baf18681bfa95a376094ad3b659ba7a7a49dc3ab",
+    "../2026-10-19-rubric/manifest.json": "b3b86e2f0412645a8ad4e03278e1677b131c5df88ec52e73323cf046da6d060c",
+    "../2026-10-19-rubric/report.draft.json": "ecfea9577e638601e29d42f32ccb2c0a7519d1fd3b5a38bd9aed970af2952869",
+    "../2026-10-22-diagnostics/adjudications.draft.json": "e95a37106f78e74cea0f6cbad89d782b4d71850815a4b99fa4b9860a9f5873e5",
+    "../2026-10-22-diagnostics/capture.json": "a033235f0a19d4277851ed392281150c5fb442b95d397cdfd69e13f48d0c89ae",
+    "../2026-10-22-diagnostics/comparison.json": "06e3cd21ba3d7d1aa79dc337e60951e2fefc9031f6bdd97168b67da35212d704",
+    "../2026-10-22-diagnostics/manifest.json": "b296f78890996f696e43cd9a4c2fa4a6732dd221fb49659b33f7ff77d26a3942",
+    "../2026-10-22-diagnostics/plan.json": "c39101a6c7401f1edcb98e246f82eff94092bbd4ae83076076d0a1c399ff2913",
+    "../2026-10-22-diagnostics/pricing.json": "89ca29f0fb9c65baac3a87afa16c31a694514d1ac538a7f7f182a009d8cc32bf",
+    "../2026-10-22-diagnostics/provider-observation.json": "38dc8f7fae5cbb51bdcefa2c5c9b09236892fd6f3af9b7d85ba7413b9c4c5e7f",
+    "../2026-10-22-diagnostics/report.draft.json": "fdc021263ca0455b2aea5d286c2c4d4ea55aa93404f8e5adc9609952c7b23d7c",
+    "../2026-10-22-extended/adjudications.draft.json": "ccbe95db2c4a0fdd95f7580acec1b988de66aee2e4f2c24c473848dc024bbbb7",
+    "../2026-10-22-extended/capture.json": "3c686e613787c08f4f85e8b1a3663ab4515f73fe1ee1d6575d14abc556aad0fe",
+    "../2026-10-22-extended/comparison.json": "3b54bae1c8e7d787dd41c8aba4a15947c7b795755a5cfe485747c5c202aaaffa",
+    "../2026-10-22-extended/manifest.json": "9d181c3d5bfacd125b845b42103a9c293b3fb25c6592a60503f02064eb2e60cd",
+    "../2026-10-22-extended/plan.json": "076ec1954b7e8ca62140d2fc94b953802bb4de3c256b7c3810f5b60fe141a723",
+    "../2026-10-22-extended/pricing.json": "d2d59147666f7a9c2a1278a33e08ce62323729fe6c46fd9a41e1c8a38a791641",
+    "../2026-10-22-extended/provider-observation.json": "96dc1d99f04fd3ca84d9dc7f8021c8169f2e76b1429bbff997d873880f66c075",
+    "../2026-10-22-extended/report.draft.json": "cb8ea5eae6dada7856fdf1f4ce62e814772357966030410baaf4be8e26a08282"
+  },
+  "artifacts": {
+    "report.draft.json": "30232038ab4bc84fa1c28d569f171e86c6d4f41b1cffda2c2b54a8f14e2046a4"
+  },
+  "policy": "first-adjudicated-match-v1",
+  "newModelRequests": 0,
+  "validation": {
+    "targetedGoTests": "go test ./cmd/revieweval ./internal/revieweval -count=1 passed",
+    "fullGoTests": "go test ./... -count=1 passed",
+    "raceGoTests": "go test -race ./... -count=1 passed",
+    "goVet": "go vet ./... passed",
+    "golangciLint": "golangci-lint run ./... passed, 0 issues",
+    "linuxAMD64Build": "GOOS=linux GOARCH=amd64 go build ./... passed",
+    "executableScoring": "Actual CLI child-process tests passed with no Docker or model credential configured",
+    "offlineScoreReplay": "Same executable and historical inputs produced byte-identical report",
+    "historicalJSONFilesUnchanged": 24,
+    "historicalScoreRecipesCompared": 4,
+    "priorExtendedReportEquivalentExcept": [
+      "severityCalibration",
+      "scorerSha256"
+    ]
+  },
+  "notes": [
+    "This is offline analysis of the existing twelve-case run. No new capture, model request, provider credential read, runtime rebuild or enterprise repository access.",
+    "Usage, price and runtime in the new report describe the historical capture, not additional consumption by this offline scoring step. The original peak-price estimate remains unreconciled.",
+    "Severity policy was added after observing prior results. Labels remain assistant drafts, and severity ground truth also requires human validation; this is not preregistered production quality acceptance.",
+    "Nine regression matches yield five exact severity matches, three CRITICAL-to-HIGH understatements and one MEDIUM-to-HIGH overstatement. The advisory is excluded from calibration but retained in detection precision.",
+    "The first adjudicated match is selected in capture finding order, independent of decision array order. Later duplicates cannot improve calibration and remain FP.",
+    "Misses and unresolved issues have no predicted severity. Any pending finding makes the calibration ratio null; the conditional exact-match rate must be read with recall and miss counts.",
+    "All historical evidence is preserved. File hashes and source identifiers provide local traceability rather than third-party signatures.",
+    "API authentication, tenant isolation, loopback restrictions, Workspace Prepare and frontend are unchanged. New source, evidence and documentation await user review."
+  ]
+}

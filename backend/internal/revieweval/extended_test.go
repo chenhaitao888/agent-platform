@@ -226,8 +226,19 @@ func TestExtendedFailuresRemainInRecallAndDoNotStopLaterCases(t *testing.T) {
 
 func TestVersionedSuitesPreserveHistoricalScores(t *testing.T) {
 	root := "../../../docs/evaluations"
-	for _, directory := range []string{"2026-10-15-flash", "2026-10-19-rubric", "2026-10-22-diagnostics"} {
-		t.Run(directory, func(t *testing.T) {
+	for _, fixture := range []struct {
+		directory string
+		exact     int
+		under     int
+		over      int
+	}{
+		{"2026-10-15-flash", 1, 2, 1},
+		{"2026-10-19-rubric", 1, 2, 1},
+		{"2026-10-22-diagnostics", 3, 0, 1},
+		{"2026-10-22-extended", 5, 3, 1},
+	} {
+		t.Run(fixture.directory, func(t *testing.T) {
+			directory := fixture.directory
 			load := func(name string, target any) {
 				t.Helper()
 				data, err := os.ReadFile(filepath.Join(root, name))
@@ -254,6 +265,23 @@ func TestVersionedSuitesPreserveHistoricalScores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			s := actual.SeverityCalibration
+			if s == nil || s.ExactMatches != fixture.exact || s.UnderstatedIssues != fixture.under || s.OverstatedIssues != fixture.over || s.MatchedIssues != expected.Summary.TruePositives || s.ExpectedIssues != expected.Summary.ExpectedIssues || s.MissedIssues != expected.Summary.FalseNegatives || s.PendingFindings != expected.Summary.PendingFindings || s.ExcludedFindings != expected.Summary.FalsePositives+expected.Summary.Advisories {
+				t.Fatalf("incorrect calibration of historical evidence: %+v", s)
+			}
+			if expected.Summary.PendingFindings > 0 {
+				if s.ExactMatchRate != nil {
+					t.Fatal("pending historical judgments acquired a quality rate")
+				}
+			} else if s.ExactMatchRate == nil || s.ExactMatchRate.Numerator != fixture.exact || s.ExactMatchRate.Denominator != expected.Summary.TruePositives {
+				t.Fatal("wrong exact-match denominator")
+			}
+			// Calibration is an additive report field, absent from the immutable
+			// historical reports. Compare every pre-existing field unchanged.
+			if expected.SeverityCalibration != nil {
+				t.Fatal("historical report was rewritten")
+			}
+			actual.SeverityCalibration = nil
 			// Scorer identity belongs to the command, not the scoring function.
 			expected.ScorerSHA256 = ""
 			// Pre-step40 reports omitted the now-explicit legacy rubric name.

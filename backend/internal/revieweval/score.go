@@ -110,6 +110,7 @@ type Report struct {
 	EstimatedCostUSD    *float64               `json:"estimatedCostUsd"`
 	Pricing             *Pricing               `json:"pricing,omitempty"`
 	SafetyAssessment    string                 `json:"safetyAssessment"`
+	SeverityCalibration *SeverityCalibration   `json:"severityCalibration,omitempty"`
 }
 
 // CaptureSHA256 binds annotations to the complete canonical capture, including
@@ -139,6 +140,7 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 		return Report{}, err
 	}
 	report := Report{SchemaVersion: "1.0", SuiteSHA256: capture.SuiteSHA256, CaptureSHA256: CaptureSHA256(capture), Evidence: capture.Evidence, Runtime: capture.Runtime, Categories: map[string]Metrics{}, SafetyAssessment: "not_evaluated"}
+	report.SeverityCalibration = newSeverityCalibration()
 	report.EvaluatorSHA256 = capture.EvaluatorSHA256
 	report.AdjudicationKind = "pending"
 	report.Rubric = "closed-issues-v1"
@@ -158,7 +160,7 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 	for i, c := range suite.Cases {
 		result := capture.Results[i]
 		m := Metrics{Cases: 1, States: map[string]int{result.State: 1}, ExpectedIssues: len(c.Issues), TotalDurationMS: result.DurationMS}
-		matched := map[string]bool{}
+		matched := map[string]int{}
 		if result.Report != nil {
 			for index := range result.Report.Findings {
 				decision, ok := decisions[c.ID][index]
@@ -166,27 +168,29 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 					m.PendingFindings++
 					continue
 				}
+				_, duplicate := matched[decision.IssueID]
 				if decision.Advisory != "" {
 					m.Advisories++
-				} else if decision.IssueID == "" || matched[decision.IssueID] {
+				} else if decision.IssueID == "" || duplicate {
 					m.FalsePositives++
 				} else {
-					matched[decision.IssueID] = true
+					matched[decision.IssueID] = index
 					m.TruePositives++
 				}
 			}
 		}
 		for _, issue := range c.Issues {
+			_, found := matched[issue.ID]
 			serious := issue.Severity == "HIGH" || issue.Severity == "CRITICAL"
 			if serious {
 				m.SeriousIssues++
-				if matched[issue.ID] {
+				if found {
 					m.SeriousFound++
 				}
 			}
 			// While judgments are pending an unmatched issue is unresolved, not
 			// yet a confirmed miss. Failed/skipped executions have no findings.
-			if !matched[issue.ID] && m.PendingFindings == 0 {
+			if !found && m.PendingFindings == 0 {
 				m.FalseNegatives++
 			}
 		}
@@ -195,6 +199,7 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 			measured = []int64{result.DurationMS}
 		}
 		finalize(&m, measured)
+		report.SeverityCalibration.addCase(c, result, m, matched)
 		report.Cases = append(report.Cases, CaseScore{CaseID: c.ID, Category: c.Category, Metrics: m, DiagnosticCode: result.DiagnosticCode})
 		addMetrics(&report.Summary, m)
 		category := report.Categories[c.Category]
@@ -204,6 +209,7 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 		categoryDurations[c.Category] = append(categoryDurations[c.Category], measured...)
 	}
 	finalize(&report.Summary, durations)
+	report.SeverityCalibration.finalize()
 	for category, m := range report.Categories {
 		finalize(&m, categoryDurations[category])
 		report.Categories[category] = m

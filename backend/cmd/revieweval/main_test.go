@@ -85,6 +85,9 @@ func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 	if pending.Summary.PendingFindings != 1 || pending.Summary.Recall != nil || pending.CaptureSHA256 == "" {
 		t.Fatal("unjudged findings claimed quality")
 	}
+	if pending.SeverityCalibration == nil || pending.SeverityCalibration.PendingIssues != 1 || pending.SeverityCalibration.ExactMatchRate != nil {
+		t.Fatal("unjudged CLI output claimed severity accuracy")
+	}
 	labels := revieweval.Adjudications{SchemaVersion: "1.0", CaptureSHA256: pending.CaptureSHA256, Reviewer: "controlled-test", Decisions: []revieweval.Decision{{CaseID: "zero-division", FindingIndex: 0, IssueID: "zero-count", Reason: "Matches the lost guard."}}}
 	labelsPath, scoredPath := filepath.Join(directory, "labels.json"), filepath.Join(directory, "scored.json")
 	writeTestJSON(t, labelsPath, labels)
@@ -93,6 +96,13 @@ func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 	readTestJSON(t, scoredPath, &scored)
 	if scored.Summary.TruePositives != 1 || scored.Summary.FalseNegatives != 3 || scored.Evidence != "controlled" {
 		t.Fatal("incorrect scored evidence")
+	}
+	calibration := scored.SeverityCalibration
+	if calibration == nil || calibration.Policy != "first-adjudicated-match-v1" || calibration.ExactMatchRate == nil || calibration.ExactMatchRate.Denominator != 1 || calibration.ExactMatches != 1 || calibration.MissedIssues != 3 || calibration.ConfusionMatrix["HIGH"]["HIGH"] != 1 {
+		t.Fatal("CLI did not serialize severity calibration")
+	}
+	if calibration.Issues[0].FindingIndex == nil || *calibration.Issues[0].FindingIndex != 0 || calibration.Issues[1].FindingIndex != nil || calibration.Issues[1].ReportedSeverity != "" {
+		t.Fatal("CLI lost zero finding index or fabricated a missed prediction")
 	}
 	info, err := os.Stat(scoredPath)
 	if err != nil || info.Mode().Perm() != 0o600 {

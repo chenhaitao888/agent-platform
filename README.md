@@ -18,7 +18,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现切片见第 31～40 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现与评测切片见第 31～44 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -790,7 +790,7 @@ go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -
 
 扩展集包含税率单位与调用方不一致、模块迁移后的返回值契约破坏、删除租户写入检查、遗漏租户的缓存键、
 授权服务超时后错误放行，以及同时修改生产者和调用方的安全迁移对照。所有新增问题都有 base/head 行为回归证明；
-它仍是合成数据，本步只做离线和受控 Docker 验证，扩展集尚无真实模型质量结果。
+它仍是合成数据；第 43 步的真实采集及助手草稿见本节后文，尚无正式人工质量验收。
 
 只导出样例，不调用模型：
 
@@ -888,6 +888,16 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 未启动的 `skipped` 不参与延迟分位数；`durationSamples=0` 时延迟数值没有观测意义。
 无分母的比例为 `null`；这些小规模且有相关性的样例不能用来推断生产总体质量。
 
+第 44 步在评分报告中新增 `severityCalibration`，与问题命中和严重问题召回分别统计。
+`exactMatchRate` 为严重度完全一致数 / 已判定命中的问题数；`understatedIssues`、`overstatedIssues` 分别统计低估和高估。
+`confusionMatrix` 的行是基准严重度，列是模型严重度，固定包含 LOW/MEDIUM/HIGH/CRITICAL；只统计命中的问题。
+`issues` 按样例/问题顺序列出基准、matched/missed/pending 状态；命中时还包含原始 `findingIndex` 和模型严重度。
+每个问题沿用原 TP 规则，取捕获顺序中首条已判定命中的 Findings（`first-adjudicated-match-v1`），与标注数组顺序无关。
+重复 Findings、误报和提醒计入 `excludedFindings`，保留原 precision 分母；不能挑选后续重复项中更有利的严重度。
+漏检及失败/跳过结果中的问题计入 `missedIssues`，待判定样例的未命中问题计入 `pendingIssues`，两者均不虚构模型严重度。
+只要任意 Findings 尚未判定（包括无预植问题的样例），或没有已判定命中，`exactMatchRate` 就为 `null`。
+这是既有 score 命令的新增输出字段；旧报告缺少该字段表示尚未计算，不表示一致率为零。报告的其他字段与原口径保持兼容。
+
 捕获包含样例集摘要、实际 base/head、patch 摘要和 Runner 的 CLI/模型/镜像/策略身份；
 旧捕获不能套用修改后的样例集，旧标注不能套用不同的捕获。`deployment` 表示通过部署 Runner 采集，
 `controlled` 表示受控验证来源；这些标签和摘要用于可追溯性，不是外部身份或运行真实性的签名证明。
@@ -952,6 +962,11 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 估算 $0.05730306，未对账，来源为 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing/)。
 [证据清单](docs/evaluations/2026-10-22-extended/manifest.json)保留运行身份、文件摘要及验证结果；历史 16 个 JSON 文件未修改，
 离线重放评分逐字节一致。十二例均为合成样例，尚不能支持正式质量验收或工具行为安全结论。
+
+第 44 步复用上述 capture、助手标签与历史费率，另存[严重度校准报告](docs/evaluations/2026-10-22-severity/report.draft.json)
+及[来源清单](docs/evaluations/2026-10-22-severity/manifest.json)，没有新增模型调用。
+九个已命中问题中，严重度一致 5 个、低估 3 个、高估 1 个，`exactMatchRate=5/9`；一条注入提醒不参与严重度匹配。
+原有 precision=9/10、recall=9/9、严重问题召回=8/8 均未改变；这些值分别衡量不同方面，标签仍为助手草稿。
 
 普通离线验证（无真实凭据/模型调用）：
 

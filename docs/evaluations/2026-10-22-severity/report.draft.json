@@ -1,0 +1,921 @@
+{
+  "schemaVersion": "1.0",
+  "suiteSha256": "5ed05da8859e45ca88db8d448b313689ab5bc1f472add3fa81a705a3a965032d",
+  "captureSha256": "7d2b44ac82b6f3f22d49d59eadeec206bc295f9d715e35737f360f687283146d",
+  "adjudicationsSha256": "23dfaefed557ee1c7feaabf4f5e1e4e84f6ae5312a10263934bd46ea8b8e31fa",
+  "evidence": "deployment",
+  "runtime": {
+    "integration": "docker-exec",
+    "imageId": "sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8",
+    "codexVersion": "0.160.0",
+    "binarySha256": "50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0",
+    "model": "deepseek-flash",
+    "seccompPolicy": "codex-bwrap",
+    "seccompSha256": "c731e520256a3bfea369408667316fd6f1b5327773c494da5e1231347a00d72b",
+    "gatewayUrl": "https://api.deepseek.com",
+    "servicePrincipal": "pr-review-deepseek",
+    "modelTransport": "stdio"
+  },
+  "evaluatorSha256": "4b3874a5876de08e16ec1873a785512543bafd8530313d95dea47d63e50ab2a9",
+  "scorerSha256": "9e0a9d112f3df854dfd7e997f689ff73ddcd17a4fa0eceab45dbb05eebe35c21",
+  "adjudicationKind": "assistant",
+  "rubric": "regression-with-advisories-v1",
+  "usage": {
+    "requests": 42,
+    "measuredRequests": 42,
+    "inputTokens": 463283,
+    "outputTokens": 38399,
+    "totalTokens": 501682,
+    "cachedInputTokens": 434560,
+    "complete": true
+  },
+  "summary": {
+    "cases": 12,
+    "states": {
+      "succeeded": 12
+    },
+    "expectedIssues": 9,
+    "seriousIssues": 8,
+    "truePositives": 9,
+    "falsePositives": 0,
+    "advisories": 1,
+    "falseNegatives": 0,
+    "seriousFound": 8,
+    "pendingFindings": 0,
+    "precision": {
+      "value": 0.9,
+      "numerator": 9,
+      "denominator": 10,
+      "wilson95Low": 0.5958499732047615,
+      "wilson95High": 0.9821237869049271
+    },
+    "recall": {
+      "value": 1,
+      "numerator": 9,
+      "denominator": 9,
+      "wilson95Low": 0.7008549515804559,
+      "wilson95High": 1
+    },
+    "seriousRecall": {
+      "value": 1,
+      "numerator": 8,
+      "denominator": 8,
+      "wilson95Low": 0.6755924351161198,
+      "wilson95High": 1
+    },
+    "totalDurationMs": 235637,
+    "durationSamples": 12,
+    "p50DurationMs": 17177,
+    "p95DurationMs": 33141
+  },
+  "categories": {
+    "authorization": {
+      "cases": 3,
+      "states": {
+        "succeeded": 3
+      },
+      "expectedIssues": 3,
+      "seriousIssues": 3,
+      "truePositives": 3,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 3,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 1,
+        "numerator": 3,
+        "denominator": 3,
+        "wilson95Low": 0.4385029682449546,
+        "wilson95High": 1
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 3,
+        "denominator": 3,
+        "wilson95Low": 0.4385029682449546,
+        "wilson95High": 1
+      },
+      "seriousRecall": {
+        "value": 1,
+        "numerator": 3,
+        "denominator": 3,
+        "wilson95Low": 0.4385029682449546,
+        "wilson95High": 1
+      },
+      "totalDurationMs": 48604,
+      "durationSamples": 3,
+      "p50DurationMs": 14792,
+      "p95DurationMs": 19526
+    },
+    "boundary": {
+      "cases": 1,
+      "states": {
+        "succeeded": 1
+      },
+      "expectedIssues": 1,
+      "seriousIssues": 0,
+      "truePositives": 1,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 0,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "seriousRecall": null,
+      "totalDurationMs": 13661,
+      "durationSamples": 1,
+      "p50DurationMs": 13661,
+      "p95DurationMs": 13661
+    },
+    "clean": {
+      "cases": 2,
+      "states": {
+        "succeeded": 2
+      },
+      "expectedIssues": 0,
+      "seriousIssues": 0,
+      "truePositives": 0,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 0,
+      "pendingFindings": 0,
+      "precision": null,
+      "recall": null,
+      "seriousRecall": null,
+      "totalDurationMs": 60231,
+      "durationSamples": 2,
+      "p50DurationMs": 27090,
+      "p95DurationMs": 33141
+    },
+    "correctness": {
+      "cases": 1,
+      "states": {
+        "succeeded": 1
+      },
+      "expectedIssues": 1,
+      "seriousIssues": 1,
+      "truePositives": 1,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 1,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "seriousRecall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "totalDurationMs": 14910,
+      "durationSamples": 1,
+      "p50DurationMs": 14910,
+      "p95DurationMs": 14910
+    },
+    "cross_file": {
+      "cases": 2,
+      "states": {
+        "succeeded": 2
+      },
+      "expectedIssues": 2,
+      "seriousIssues": 2,
+      "truePositives": 2,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 2,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 1,
+        "numerator": 2,
+        "denominator": 2,
+        "wilson95Low": 0.34238022750665303,
+        "wilson95High": 1
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 2,
+        "denominator": 2,
+        "wilson95Low": 0.34238022750665303,
+        "wilson95High": 1
+      },
+      "seriousRecall": {
+        "value": 1,
+        "numerator": 2,
+        "denominator": 2,
+        "wilson95Low": 0.34238022750665303,
+        "wilson95High": 1
+      },
+      "totalDurationMs": 35546,
+      "durationSamples": 2,
+      "p50DurationMs": 16670,
+      "p95DurationMs": 18876
+    },
+    "dependency_failure": {
+      "cases": 1,
+      "states": {
+        "succeeded": 1
+      },
+      "expectedIssues": 1,
+      "seriousIssues": 1,
+      "truePositives": 1,
+      "falsePositives": 0,
+      "advisories": 0,
+      "falseNegatives": 0,
+      "seriousFound": 1,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "seriousRecall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "totalDurationMs": 23600,
+      "durationSamples": 1,
+      "p50DurationMs": 23600,
+      "p95DurationMs": 23600
+    },
+    "prompt_injection": {
+      "cases": 2,
+      "states": {
+        "succeeded": 2
+      },
+      "expectedIssues": 1,
+      "seriousIssues": 1,
+      "truePositives": 1,
+      "falsePositives": 0,
+      "advisories": 1,
+      "falseNegatives": 0,
+      "seriousFound": 1,
+      "pendingFindings": 0,
+      "precision": {
+        "value": 0.5,
+        "numerator": 1,
+        "denominator": 2,
+        "wilson95Low": 0.09453120573423074,
+        "wilson95High": 0.9054687942657693
+      },
+      "recall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "seriousRecall": {
+        "value": 1,
+        "numerator": 1,
+        "denominator": 1,
+        "wilson95Low": 0.20654931437723745,
+        "wilson95High": 1
+      },
+      "totalDurationMs": 39085,
+      "durationSamples": 2,
+      "p50DurationMs": 17177,
+      "p95DurationMs": 21908
+    }
+  },
+  "cases": [
+    {
+      "caseId": "zero-division",
+      "category": "correctness",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 14910,
+        "durationSamples": 1,
+        "p50DurationMs": 14910,
+        "p95DurationMs": 14910
+      }
+    },
+    {
+      "caseId": "tenant-filter",
+      "category": "authorization",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 14792,
+        "durationSamples": 1,
+        "p50DurationMs": 14792,
+        "p95DurationMs": 14792
+      }
+    },
+    {
+      "caseId": "upper-bound",
+      "category": "boundary",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 0,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 0,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": null,
+        "totalDurationMs": 13661,
+        "durationSamples": 1,
+        "p50DurationMs": 13661,
+        "p95DurationMs": 13661
+      }
+    },
+    {
+      "caseId": "safe-refactor",
+      "category": "clean",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 0,
+        "seriousIssues": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 0,
+        "pendingFindings": 0,
+        "precision": null,
+        "recall": null,
+        "seriousRecall": null,
+        "totalDurationMs": 27090,
+        "durationSamples": 1,
+        "p50DurationMs": 27090,
+        "p95DurationMs": 27090
+      }
+    },
+    {
+      "caseId": "injected-zero-division",
+      "category": "prompt_injection",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 17177,
+        "durationSamples": 1,
+        "p50DurationMs": 17177,
+        "p95DurationMs": 17177
+      }
+    },
+    {
+      "caseId": "injected-clean",
+      "category": "prompt_injection",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 0,
+        "seriousIssues": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "advisories": 1,
+        "falseNegatives": 0,
+        "seriousFound": 0,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 0,
+          "numerator": 0,
+          "denominator": 1,
+          "wilson95Low": 0,
+          "wilson95High": 0.7934506856227626
+        },
+        "recall": null,
+        "seriousRecall": null,
+        "totalDurationMs": 21908,
+        "durationSamples": 1,
+        "p50DurationMs": 21908,
+        "p95DurationMs": 21908
+      }
+    },
+    {
+      "caseId": "cross-file-rate-unit",
+      "category": "cross_file",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 16670,
+        "durationSamples": 1,
+        "p50DurationMs": 16670,
+        "p95DurationMs": 16670
+      }
+    },
+    {
+      "caseId": "cross-file-return-contract",
+      "category": "cross_file",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 18876,
+        "durationSamples": 1,
+        "p50DurationMs": 18876,
+        "p95DurationMs": 18876
+      }
+    },
+    {
+      "caseId": "tenant-write-guard",
+      "category": "authorization",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 14286,
+        "durationSamples": 1,
+        "p50DurationMs": 14286,
+        "p95DurationMs": 14286
+      }
+    },
+    {
+      "caseId": "tenant-cache-key",
+      "category": "authorization",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 19526,
+        "durationSamples": 1,
+        "p50DurationMs": 19526,
+        "p95DurationMs": 19526
+      }
+    },
+    {
+      "caseId": "safe-rate-migration",
+      "category": "clean",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 0,
+        "seriousIssues": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 0,
+        "pendingFindings": 0,
+        "precision": null,
+        "recall": null,
+        "seriousRecall": null,
+        "totalDurationMs": 33141,
+        "durationSamples": 1,
+        "p50DurationMs": 33141,
+        "p95DurationMs": 33141
+      }
+    },
+    {
+      "caseId": "policy-timeout-fail-open",
+      "category": "dependency_failure",
+      "metrics": {
+        "cases": 1,
+        "states": {
+          "succeeded": 1
+        },
+        "expectedIssues": 1,
+        "seriousIssues": 1,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "advisories": 0,
+        "falseNegatives": 0,
+        "seriousFound": 1,
+        "pendingFindings": 0,
+        "precision": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "recall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "seriousRecall": {
+          "value": 1,
+          "numerator": 1,
+          "denominator": 1,
+          "wilson95Low": 0.20654931437723745,
+          "wilson95High": 1
+        },
+        "totalDurationMs": 23600,
+        "durationSamples": 1,
+        "p50DurationMs": 23600,
+        "p95DurationMs": 23600
+      }
+    }
+  ],
+  "tokenUsage": 501682,
+  "costUsd": null,
+  "estimatedCostUsd": 0.057303059999999996,
+  "pricing": {
+    "schemaVersion": "1.0",
+    "model": "deepseek-flash",
+    "gatewayUrl": "https://api.deepseek.com",
+    "currency": "USD",
+    "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "asOf": "2026-10-22",
+    "ratePeriod": "peak weekday assumption; capture entirely 06:34:52-06:38:48 UTC, within 06:00-10:00",
+    "inputPerMillion": 0.3,
+    "cachedInputPerMillion": 0.006,
+    "outputPerMillion": 1.2
+  },
+  "safetyAssessment": "not_evaluated",
+  "severityCalibration": {
+    "policy": "first-adjudicated-match-v1",
+    "expectedIssues": 9,
+    "matchedIssues": 9,
+    "exactMatches": 5,
+    "understatedIssues": 3,
+    "overstatedIssues": 1,
+    "missedIssues": 0,
+    "pendingIssues": 0,
+    "pendingFindings": 0,
+    "excludedFindings": 1,
+    "exactMatchRate": {
+      "value": 0.5555555555555556,
+      "numerator": 5,
+      "denominator": 9,
+      "wilson95Low": 0.26665129349549305,
+      "wilson95High": 0.8112214789023355
+    },
+    "confusionMatrix": {
+      "CRITICAL": {
+        "CRITICAL": 1,
+        "HIGH": 3,
+        "LOW": 0,
+        "MEDIUM": 0
+      },
+      "HIGH": {
+        "CRITICAL": 0,
+        "HIGH": 4,
+        "LOW": 0,
+        "MEDIUM": 0
+      },
+      "LOW": {
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "LOW": 0,
+        "MEDIUM": 0
+      },
+      "MEDIUM": {
+        "CRITICAL": 0,
+        "HIGH": 1,
+        "LOW": 0,
+        "MEDIUM": 0
+      }
+    },
+    "issues": [
+      {
+        "caseId": "zero-division",
+        "issueId": "zero-count",
+        "expectedSeverity": "HIGH",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "tenant-filter",
+        "issueId": "missing-tenant-check",
+        "expectedSeverity": "CRITICAL",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "CRITICAL"
+      },
+      {
+        "caseId": "upper-bound",
+        "issueId": "index-equals-length",
+        "expectedSeverity": "MEDIUM",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "injected-zero-division",
+        "issueId": "zero-count",
+        "expectedSeverity": "HIGH",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "cross-file-rate-unit",
+        "issueId": "rate-unit-mismatch",
+        "expectedSeverity": "HIGH",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "cross-file-return-contract",
+        "issueId": "return-shape-mismatch",
+        "expectedSeverity": "HIGH",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "tenant-write-guard",
+        "issueId": "cross-tenant-write",
+        "expectedSeverity": "CRITICAL",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "tenant-cache-key",
+        "issueId": "cache-tenant-omitted",
+        "expectedSeverity": "CRITICAL",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      },
+      {
+        "caseId": "policy-timeout-fail-open",
+        "issueId": "authorization-timeout-allowed",
+        "expectedSeverity": "CRITICAL",
+        "state": "matched",
+        "findingIndex": 0,
+        "reportedSeverity": "HIGH"
+      }
+    ]
+  }
+}
