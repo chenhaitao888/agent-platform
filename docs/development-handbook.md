@@ -58,7 +58,8 @@ Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机�
 第 39 步增加宿主用量采集、显式费率估算与标注来源，并保存首轮真实 Flash 6 例结果和助手标注草稿，用户审阅后于 2026-10-15 以 `3b36d61` 推送至 `origin/main`。
 用户于 2026-10-19 恢复工作。第 40 步补充无效输出安全诊断和提示注入提醒的显式评分口径，用户审阅后于 2026-10-22 以 `02d1303` 推送至 `origin/main`。
 最小身份认证与租户隔离专项修复及离线验证已完成；用户审阅后于 2026-10-22 以 `3b3df6a` 推送至 `origin/main`，并恢复原定下一步工作。
-第 41 步已完成一次独立的 Flash 六例真实采集、助手标注与离线评分；用户于 2026-10-22 审阅后批准提交推送，生产代码没有继续改动。
+第 41 步已完成一次独立的 Flash 六例真实采集、助手标注与离线评分；用户审阅后于 2026-10-22 以 `5442080` 推送至 `origin/main`。
+第 42 步新增可显式选择的十二例扩展集、完整嵌套快照采集和按摘要选择评分集；用户于 2026-10-22 审阅后批准提交推送。
 用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
@@ -2915,7 +2916,7 @@ Docker 验证使用已存在的第 40 步 Worker 镜像 `sha256:820528de3278b28f
 
 ### M14 实现（第 41 步）：独立真实采集与诊断复核
 
-- 状态：2026-10-22 完成，用户审阅后批准提交推送；本步没有修改生产代码、现有样例或原始历史证据。
+- 状态：2026-10-22 完成，用户审阅后以 `5442080` 推送；本步没有修改生产代码、现有样例或原始历史证据。
 - 接续点：认证专项已推送，恢复第 40 步约定的单独真实采集；使用已有服务凭据、Flash 和隔离 Worker，仅发送固定合成仓库。
 - 证据目录：`docs/evaluations/2026-10-22-diagnostics/`，包含 plan、provider-observation、capture、adjudications.draft、pricing、report.draft、comparison 和 manifest。
 
@@ -2970,10 +2971,75 @@ Worker 继续使用第 40 步镜像 `sha256:820528de3278b28f74f5f2246557981d7730
 `go test ./cmd/revieweval ./internal/revieweval -count=1` 通过；真实 CLI 贯穿 Git、Docker 原生沙箱和服务模型完成六例。
 同一可执行文件离线重放评分，报告逐字节一致；8 个历史 JSON 文件摘要不变，新清单绑定所有 7 个证据文件，6 组输入引用完全一致。
 运行结束没有遗留测试 Worker，`git diff --check` 通过。未修改后端/前端生产逻辑，不重复运行无关构建或全量测试。
-用户于 2026-10-22 审阅后批准提交推送新证据与本文档。
+用户审阅后于 2026-10-22 以 `5442080` 推送新证据与本文档。
 
 下一切片扩展跨文件回归、权限边界与失败场景样例，保留这六例作固定回归集，并逐步接入有授权的代表性企业 PR。
 真实 PR 数据、正式人工标注和工具动作安全审计仍需补齐，前端审阅触发继续位于后续路线。
+
+### M14 实现（第 42 步）：版本化扩展样例与失败回归
+
+- 状态：2026-10-22 实现完成，用户审阅后批准提交推送。
+- 入口：`revieweval -mode suite|capture -suite starter-v1|extended-v1`；默认保持原六例，score 按捕获摘要选集。
+- 范围：扩展合成数据、快照构建、选择和评分兼容性。API 认证、Workspace Prepare、Review Worker 协议及前端业务逻辑均未改动。
+
+#### 固定旧集，显式选择新集
+
+`suite.json` 的原始字节与六个样例不变，摘要继续是
+`8f7904eaca0cf1334444e5f78861db13edd6efb192e558adaf8ec1b235dc2e06`。
+`suite-extended-v1.json` 包含完全一致的原六例与六个新增例，独立摘要为
+`5ed05da8859e45ca88db8d448b313689ab5bc1f472add3fa81a705a3a965032d`。
+回归测试比较原六例的结构以及真实生成的 base/head/patch 摘要，防止复制后的样例悄悄改变历史输入。
+
+`LoadSuite` 仅返回内嵌、已审阅版本的独立副本，不开放外部 JSON 导入。
+采集配置新增可选 Suite，空值等同 starter-v1；原调用代码保持兼容。
+评分通过捕获摘要解析对应样例、类别和问题分母，拒绝未知摘要、缺少/错配样例、其他样例的问题 ID 或旧标注绑定。
+CLI 的 score 模式拒绝 `-suite`，避免调用者误以为能替换捕获的基准；未知选择在启动 Docker、预留输出前拒绝。
+Java 类比：版本名类似选择固定测试资源，摘要类似该资源的内容身份；不是把当前全局默认值套到所有历史报告上。
+
+#### 新增场景与可执行依据
+
+| 新样例 | 分类 | 预植问题/对照 | 行为证据 |
+| --- | --- | --- | --- |
+| cross-file-rate-unit | cross_file | HIGH：helper 从小数税率改成百分数，调用方未同步 | subtotal=100 的总价从 120 变为 2100 |
+| cross-file-return-contract | cross_file | HIGH：模块迁移后返回 envelope，调用方仍使用原 record 契约 | 有效订单原可显示，head 抛出 KeyError |
+| tenant-write-guard | authorization | CRITICAL：删除调用方的租户检查，底层按 ID 读取未过滤 | tenant-a 可修改 tenant-b 的已知记录；本租户正常更新仍成功 |
+| tenant-cache-key | authorization | CRITICAL：共享缓存键遗漏 tenant | A/B 相同账户 ID，第二次查询返回第一个租户的数据，底层 Store 本身仍正确过滤 |
+| safe-rate-migration | clean | 无预植问题：同时更新 helper 与调用方的单位转换 | 零、正数和负数 subtotal 的结果均不变 |
+| policy-timeout-fail-open | dependency_failure | CRITICAL：策略服务超时后默认放行删除 | 超时从拒绝且保留记录，变为允许且删除；正常允许/拒绝仍有对应行为断言 |
+
+扩展集共 12 例、9 个预植问题，其中 8 个 HIGH/CRITICAL；包含两个 clean 样例及原两种提示注入。
+`extended_ground_truth.py` 只在测试中执行可信的内嵌 Python 代码，对 base/head 分别建立临时包并实际调用跨文件路径。
+这些行为断言和 issues/rationale 留在测试/评测进程，发送给模型的 worktree 只包含该样例源文件。
+样例为合成场景，尚不等同于授权企业 PR 的代表性分布，也没有新增真实模型质量标签。
+
+#### 完整快照及失败分类
+
+新增测试先暴露原采集器不能建立嵌套目录（preparation_failed）。现在按源路径创建私有子目录，
+在 head 写入前移除 base 中已消失的文件，再由真实 Git 提交与 diff 固定输入。
+测试逐文件比较 worktree 与 head，并确认 orders/store.py 已删除、orders/repository.py 已出现；这避免旧模块残留改变审阅上下文。
+源路径限制在工作目录内且不能进入 .git；仅有内嵌版本能进入这条物化路径。
+
+故障注入独立存在于测试推理替身，未向正式样例或 prompt 添加测试控制指令。
+扩展集的受控混合运行包含：错误引用 → refs_mismatch、进程非零退出 → execution_failed、超时、
+非法 JSON → json_invalid、缺失输出 → output_unavailable。后续安全样例仍执行；错误结果无 Findings，原始 stderr/拒收正文不进捕获。
+评分保留全部 9 个预植问题和 8 个严重问题的分母；整轮取消时保留 12 个 skipped，零次时延观测不填为成功。
+
+#### 验证与修改范围
+
+首条 CLI 选择测试因缺少 `-suite` RED，接入内嵌选择后 GREEN；嵌套采集先因 preparation_failed RED，完整快照修复后 GREEN。
+三个历史报告均通过复算：10 月 15 日原 pending、10 月 19 日 advisory 草稿、10 月 22 日独立采集。
+比较排除调用方写入的 scorer 二进制摘要，并将第 40 步以前缺失的 rubric 字段按既有默认 closed-issues-v1 解释；
+其余指标、计量、价格估算、输入和标注摘要保持一致，历史文件没有修改。
+
+本轮修改 `revieweval/suite.go`、`capture.go`、`score.go` 和 `cmd/revieweval/main.go`；新增扩展 JSON、行为 oracle 和扩展回归。
+CLI 贯穿测试同时覆盖六例/十二例选集、评分自动识别、输出保护与临时目录清理。
+Docker 外部推理 fixture 仅增加嵌套源文件识别，原沙箱边界检查保留；增加真实十二例采集的 Docker 回归。
+后端全量普通/race 测试、vet、golangci-lint（0 issues）、Linux/amd64 构建及真实 Docker 原生沙箱集成全部通过。
+Docker 场景继续覆盖归档重放、取消、超时、受控 TLS 模型出口和原生 sandbox 启用门槛，结束后无遗留测试 Worker。
+前端和依赖未改动；本轮没有调用真实模型或读取服务 key。用户于 2026-10-22 审阅后批准提交推送。
+
+下一切片以已固定的 extended-v1 独立采集一次真实结果并逐条复核；保留旧六例证据，新增结果单独归档。
+随后继续收集有授权的真实 PR、扩大语言/项目分布和严重度校准，逐步准备正式质量验收。
 
 ## 7. 常用验证命令
 
@@ -3010,10 +3076,11 @@ node --run build
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
-- 评测已具备 6 例固定合成集、首轮真实捕获、宿主 token 遥测、显式价格估算和人工评分入口；本轮标签仍是助手草稿。
+- 评测已具备原 6 例和可选 12 例扩展合成集、六例真实捕获、宿主 token 遥测、显式价格估算和人工评分入口；已有标签仍是助手草稿。
   还没有代表性 30～50 PR 数据集、正式真实模型质量基线、账单对账、工具动作安全审计、完整版本清单或独立 Eval 身份/预算/资源池。
   第 40 步具备后续运行的安全诊断与注入提醒单列口径；首轮 1 个无效输出的历史原因仍未知，提醒的新判定仍为助手草稿。
   第 41 步独立采集为 6 例成功、4 TP 与 1 advisory 的助手建议；未复现原失败，不据此宣称旧原因已查明或生产质量通过。
+  第 42 步扩展集及执行失败路径已受控验证，十二例尚未进行真实模型采集和人工判定。
 - M7 的 sequence 只表示单个 Task 内的时间线顺序，不提供跨 Task 或分布式全局顺序。
 - Workspace 元数据和状态仍只在内存；真实目录已创建，但没有启动恢复、共享 clone cache、磁盘配额、
   清理 API、runtimeId 或孤儿目录回收。只读挂载由 Docker Runner 为每次审阅创建，未写回 Workspace 元数据。

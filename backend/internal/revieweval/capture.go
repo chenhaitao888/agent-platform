@@ -22,6 +22,7 @@ type Config struct {
 	GitBinary     string
 	Timeout       time.Duration
 	Evidence      string
+	Suite         string
 }
 
 type ProfiledRunner interface {
@@ -34,6 +35,10 @@ type ProfiledRunner interface {
 // evidence and marks all remaining cases skipped, rather than silently dropping
 // them from the denominator. Raw diagnostics never enter the capture.
 func Record(ctx context.Context, runner ProfiledRunner, config Config) (Capture, error) {
+	suite, suiteDigest, err := LoadSuite(config.Suite)
+	if err != nil {
+		return Capture{}, err
+	}
 	if runner == nil || config.Timeout < time.Millisecond || config.Timeout > 2*time.Minute || (config.Evidence != "controlled" && config.Evidence != "deployment") || !filepath.IsAbs(config.WorkspaceRoot) {
 		return Capture{}, ErrInvalidEvaluation
 	}
@@ -57,8 +62,8 @@ func Record(ctx context.Context, runner ProfiledRunner, config Config) (Capture,
 	if err != nil {
 		return Capture{}, ErrInvalidEvaluation
 	}
-	capture := Capture{SchemaVersion: "1.0", SuiteSHA256: SuiteSHA256(), Evidence: config.Evidence, StartedAt: time.Now().UTC(), CaseTimeoutMS: config.Timeout.Milliseconds(), Runtime: runner.RuntimeIdentity()}
-	for i, c := range DefaultSuite().Cases {
+	capture := Capture{SchemaVersion: "1.0", SuiteSHA256: suiteDigest, Evidence: config.Evidence, StartedAt: time.Now().UTC(), CaseTimeoutMS: config.Timeout.Milliseconds(), Runtime: runner.RuntimeIdentity()}
+	for i, c := range suite.Cases {
 		result := Result{CaseID: c.ID, State: "skipped"}
 		if ctx.Err() == nil {
 			caseCtx, cancel := context.WithTimeout(ctx, config.Timeout)
@@ -142,9 +147,27 @@ func prepareCase(ctx context.Context, git, worktree string, c Case, reader *gitw
 		return input, err
 	}
 	for i, files := range []map[string]string{c.Base, c.Head} {
+		if i == 1 {
+			// Each map is a complete snapshot. Files absent from head must not
+			// survive a module move and silently change the evaluated code.
+			for name := range c.Base {
+				if _, exists := files[name]; !exists {
+					if err := os.Remove(filepath.Join(worktree, name)); err != nil {
+						return input, err
+					}
+				}
+			}
+		}
 		for name, content := range files {
 			// Only embedded, reviewed files can be materialized by this version.
-			if err := os.WriteFile(filepath.Join(worktree, name), []byte(content), 0o600); err != nil {
+			if !filepath.IsLocal(name) || filepath.ToSlash(filepath.Clean(name)) != name || strings.ContainsAny(name, "\\:") || strings.Split(name, "/")[0] == ".git" {
+				return input, ErrInvalidEvaluation
+			}
+			filename := filepath.Join(worktree, name)
+			if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
+				return input, err
+			}
+			if err := os.WriteFile(filename, []byte(content), 0o600); err != nil {
 				return input, err
 			}
 		}

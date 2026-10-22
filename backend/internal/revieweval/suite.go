@@ -13,6 +13,9 @@ import (
 //go:embed suite.json
 var suiteJSON []byte
 
+//go:embed suite-extended-v1.json
+var extendedSuiteJSON []byte
+
 type Suite struct {
 	SchemaVersion string `json:"schemaVersion"`
 	Name          string `json:"name"`
@@ -47,5 +50,35 @@ func DefaultSuite() Suite {
 }
 
 func SuiteSHA256() string { return digest(suiteJSON) }
+
+// LoadSuite selects reviewed, embedded input only. The default stays pinned to
+// the original six cases; adding a suite cannot invalidate historical captures.
+// The digest identifies the exact source bytes, not a re-serialized export.
+func LoadSuite(name string) (Suite, string, error) {
+	var data []byte
+	switch name {
+	case "", "starter-v1":
+		data = suiteJSON
+	case "extended-v1":
+		data = extendedSuiteJSON
+	default:
+		return Suite{}, "", ErrInvalidEvaluation
+	}
+	var suite Suite
+	if json.Unmarshal(data, &suite) != nil {
+		return Suite{}, "", ErrInvalidEvaluation
+	}
+	return suite, digest(data), nil
+}
+
+func suiteForDigest(expected string) (Suite, error) {
+	for _, name := range []string{"starter-v1", "extended-v1"} {
+		suite, sum, err := LoadSuite(name)
+		if err == nil && sum == expected {
+			return suite, nil
+		}
+	}
+	return Suite{}, ErrInvalidEvaluation
+}
 
 func digest(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }

@@ -233,7 +233,11 @@ func checkBoundary() {
 	}
 	// Both the API fixture and fixed evaluation cases have known mounted input.
 	readable := false
-	for name, marker := range map[string]string{"feature.txt": "feature-only change", "divider.py": "def average(", "records.py": "def find_record(", "paging.py": "def item_at(", "label.py": "def label("} {
+	for name, marker := range map[string]string{
+		"feature.txt": "feature-only change", "divider.py": "def average(", "records.py": "def find_record(", "paging.py": "def item_at(", "label.py": "def label(",
+		"billing/invoice.py": "def invoice_total(", "orders/view.py": "def order_view(", "documents/update.py": "def update_title(",
+		"accounts/service.py": "class AccountService:", "checkout/invoice.py": "def invoice_total(", "permissions/delete.py": "def delete_resource(",
+	} {
 		data, err := os.ReadFile(filepath.Join(cwd, name))
 		if err == nil && strings.Contains(string(data), marker) {
 			readable = true

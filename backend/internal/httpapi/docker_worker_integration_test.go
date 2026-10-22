@@ -191,6 +191,33 @@ func TestDockerWorkerIntegration(t *testing.T) {
 			t.Fatalf("failed outputs changed evaluation evidence: %v", err)
 		}
 	})
+	t.Run("extended_evaluation_nested_snapshots", func(t *testing.T) {
+		root := t.TempDir()
+		runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-diagnostics", Timeout: 20 * time.Second, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway, ModelRelay: modelRelay, ModelHTTPClient: modelClient})
+		if err != nil {
+			t.Fatal(err)
+		}
+		capture, err := revieweval.Record(context.Background(), runner, revieweval.Config{WorkspaceRoot: root, GitBinary: "git", Timeout: 20 * time.Second, Evidence: "controlled", Suite: "extended-v1"})
+		if err != nil || len(capture.Results) != 12 {
+			t.Fatal("extended capture failed", err)
+		}
+		for _, result := range capture.Results[6:] {
+			if result.State != "succeeded" || result.Report == nil || len(result.Report.Findings) != 0 {
+				t.Fatalf("nested worktree failed real sandbox checks: %+v report=%+v", result, result.Report)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(root, "workspace-8", "worktree", "orders", "store.py")); !os.IsNotExist(err) {
+			t.Fatal("module deletion was not materialized")
+		}
+		report, err := revieweval.Score(capture, nil)
+		if err != nil || report.Summary.States["invalid_output"] != 3 || report.Summary.States["succeeded"] != 9 || report.Summary.FalseNegatives != 9 || report.Summary.SeriousRecall.Denominator != 8 {
+			t.Fatal("extended denominators changed", err)
+		}
+		encoded, _ := json.Marshal(capture)
+		if strings.Contains(string(encoded), "private-diagnostic") || strings.Contains(string(encoded), "docker-fixture-service-key") {
+			t.Fatal("raw model output/credential entered extended capture")
+		}
+	})
 	for _, cancelCall := range []bool{true, false} {
 		name := "timeout"
 		if cancelCall {

@@ -29,14 +29,22 @@ else:
     assert not os.path.exists("suite.json")
     if MODE == "timeout-tenant" and os.path.exists("records.py"):
         time.sleep(30)
+    if MODE == "extended-mixed" and os.path.exists("documents/update.py"):
+        time.sleep(30)
+    if MODE == "extended-mixed" and os.path.exists("orders/repository.py"):
+        print("private-diagnostic", file=sys.stderr)
+        sys.exit(23)
+    if MODE == "extended-mixed" and os.path.exists("permissions/policy.py"):
+        sys.exit(0)  # Missing output must not become a successful empty review.
     report = dict(schemaVersion="1.0", baseSha=request["baseSha"], headSha=request["headSha"], findings=[])
-    if os.path.exists("divider.py"):
+    if os.path.exists("divider.py") and MODE != "extended-mixed":
         report["findings"].append(dict(title="Zero count regression", description="average(10, 0) now raises ZeroDivisionError.", severity="HIGH", confidence=0.95, path="divider.py", startLine=2, endLine=2))
-    if MODE == "wrong-refs":
+    if MODE == "wrong-refs" or (MODE == "extended-mixed" and os.path.exists("billing/rates.py")):
         report["headSha"] = "f" * 40
     if MODE == "nonzero":
         print("private-diagnostic", file=sys.stderr)
         sys.exit(23)
     output = args[args.index("--output-last-message")+1]
     with open(output, "w") as f:
-        f.write("private-diagnostic" if MODE == "invalid-json" else json.dumps(report))
+        malformed = MODE == "invalid-json" or (MODE == "extended-mixed" and os.path.exists("accounts/service.py"))
+        f.write("private-diagnostic" if malformed else json.dumps(report))

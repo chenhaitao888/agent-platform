@@ -32,6 +32,7 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("revieweval", flag.ContinueOnError)
 	mode := flags.String("mode", "score", "suite, capture (model calls), or score (offline)")
+	suiteName := flags.String("suite", "", "suite/capture: starter-v1 (default) or extended-v1; score selects by capture digest")
 	out := flags.String("out", "", "new JSON output file (0600, never overwritten)")
 	capturePath := flags.String("capture", "", "capture file to score")
 	labelsPath := flags.String("adjudications", "", "optional human labels bound to the capture SHA-256")
@@ -53,6 +54,10 @@ func run(ctx context.Context, args []string) error {
 	if flags.NArg() != 0 || *out == "" || (*mode != "suite" && *mode != "score" && *mode != "capture") {
 		return errors.New("choose -mode suite|score|capture and a new -out file")
 	}
+	selected, _, selectionErr := revieweval.LoadSuite(*suiteName)
+	if selectionErr != nil || (*mode == "score" && *suiteName != "") {
+		return errors.New("suite/capture accepts starter-v1 or extended-v1; score selects only by capture digest")
+	}
 	// Reserve the output before any inference; a typo cannot discard paid results
 	// or silently replace an earlier capture or adjudications file.
 	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -69,7 +74,7 @@ func run(ctx context.Context, args []string) error {
 	var output any
 	switch *mode {
 	case "suite":
-		output = revieweval.DefaultSuite()
+		output = selected
 	case "score":
 		var capture revieweval.Capture
 		if err := readJSON(*capturePath, &capture); err != nil {
@@ -116,7 +121,7 @@ func run(ctx context.Context, args []string) error {
 		if hashErr != nil {
 			return errors.New("cannot identify evaluation executable")
 		}
-		captured, err = revieweval.Record(ctx, runner, revieweval.Config{WorkspaceRoot: root, GitBinary: *git, Timeout: config.Timeout, Evidence: "deployment"})
+		captured, err = revieweval.Record(ctx, runner, revieweval.Config{WorkspaceRoot: root, GitBinary: *git, Timeout: config.Timeout, Evidence: "deployment", Suite: *suiteName})
 		captured.EvaluatorSHA256 = digest
 		output = captured
 	}

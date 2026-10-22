@@ -127,7 +127,10 @@ func Score(capture Capture, labels *Adjudications) (Report, error) {
 }
 
 func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) (Report, error) {
-	suite := DefaultSuite()
+	suite, err := suiteForDigest(capture.SuiteSHA256)
+	if err != nil {
+		return Report{}, err
+	}
 	if err := validateCapture(capture, suite); err != nil {
 		return Report{}, err
 	}
@@ -215,7 +218,7 @@ func validateCapture(c Capture, suite Suite) error {
 	if c.EvaluatorSHA256 != "" && !validHex(c.EvaluatorSHA256, 64) {
 		return ErrInvalidEvaluation
 	}
-	if c.SchemaVersion != "1.0" || c.SuiteSHA256 != SuiteSHA256() || (c.Evidence != "controlled" && c.Evidence != "deployment") || c.StartedAt.IsZero() || c.CaseTimeoutMS < 1 || c.CaseTimeoutMS > 120000 || len(c.Results) != len(suite.Cases) || c.Runtime.Model == "" || c.Runtime.CodexVersion == "" || !validHex(c.Runtime.BinarySHA256, 64) {
+	if c.SchemaVersion != "1.0" || (c.Evidence != "controlled" && c.Evidence != "deployment") || c.StartedAt.IsZero() || c.CaseTimeoutMS < 1 || c.CaseTimeoutMS > 120000 || len(c.Results) != len(suite.Cases) || c.Runtime.Model == "" || c.Runtime.CodexVersion == "" || !validHex(c.Runtime.BinarySHA256, 64) {
 		return ErrInvalidEvaluation
 	}
 	for i, r := range c.Results {

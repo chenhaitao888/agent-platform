@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -12,6 +13,37 @@ import (
 	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/revieweval"
 )
+
+func TestExtendedSuiteCanBeSelectedWithoutChangingTheDefault(t *testing.T) {
+	for _, choice := range []struct {
+		name  string
+		cases int
+	}{{"starter-v1", 6}, {"extended-v1", 12}} {
+		output := filepath.Join(t.TempDir(), "suite.json")
+		if err := run(context.Background(), []string{"-mode", "suite", "-suite", choice.name, "-out", output}); err != nil {
+			t.Fatal(err)
+		}
+		var suite revieweval.Suite
+		readTestJSON(t, output, &suite)
+		if len(suite.Cases) != choice.cases {
+			t.Fatalf("%s: got %d cases", choice.name, len(suite.Cases))
+		}
+	}
+	for _, args := range [][]string{
+		{"-mode", "capture", "-suite", "../untrusted.json", "-docker", "/must-not-run"},
+		{"-mode", "suite", "-suite", "future-version"},
+		{"-mode", "score", "-suite", "extended-v1"},
+	} {
+		output := filepath.Join(t.TempDir(), "rejected.json")
+		err := run(context.Background(), append(args, "-out", output))
+		if err == nil || !strings.Contains(err.Error(), "score selects only by capture digest") {
+			t.Fatal("suite selection was not rejected before execution", err)
+		}
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatal("invalid suite reserved an output or started capture")
+		}
+	}
+}
 
 func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 	directory := t.TempDir()
@@ -85,36 +117,50 @@ func TestExecutableOfflineScoreAndOutputProtection(t *testing.T) {
 	if len(scored.ScorerSHA256) != 64 {
 		t.Fatal("scoring binary identity missing")
 	}
-	t.Run("capture_uses_deployment_runner", func(t *testing.T) {
-		docker := dockerFixture(t, directory)
-		credential := filepath.Join(directory, "dummy-credential.json")
-		writeTestJSON(t, credential, map[string]string{"servicePrincipal": "evaluation-test", "token": "dummy-evaluation-key"})
-		capturedPath := filepath.Join(directory, "deployment-capture.json")
-		run(true, "-mode", "capture", "-out", capturedPath, "-docker", docker, "-docker-host", "unix:///tmp/evaluation-fixture.sock", "-image", "sha256:"+strings.Repeat("a", 64), "-model", "controlled-model", "-gateway-base-url", "https://model.example.invalid", "-service-principal", "evaluation-test", "-credential-file", credential, "-timeout", "5s")
-		var captured revieweval.Capture
-		readTestJSON(t, capturedPath, &captured)
-		if captured.Runtime.ModelTransport != "stdio" || captured.Runtime.ImageID == "" || len(captured.Results) != 6 || len(captured.EvaluatorSHA256) != 64 {
-			t.Fatal("missing Docker deployment identity")
-		}
-		for _, result := range captured.Results {
-			if result.State != "succeeded" || result.Report == nil || result.Usage == nil || !result.Usage.Complete || result.Usage.Requests != 0 {
-				t.Fatal("CLI capture failed", result)
+	for _, selection := range []struct {
+		name   string
+		cases  int
+		misses int
+	}{{"starter-v1", 6, 4}, {"extended-v1", 12, 9}} {
+		t.Run("capture_uses_deployment_runner/"+selection.name, func(t *testing.T) {
+			directory := t.TempDir()
+			docker := dockerFixture(t, directory)
+			credential := filepath.Join(directory, "dummy-credential.json")
+			writeTestJSON(t, credential, map[string]string{"servicePrincipal": "evaluation-test", "token": "dummy-evaluation-key"})
+			capturedPath := filepath.Join(directory, "deployment-capture.json")
+			run(true, "-mode", "capture", "-suite", selection.name, "-out", capturedPath, "-docker", docker, "-docker-host", "unix:///tmp/evaluation-fixture.sock", "-image", "sha256:"+strings.Repeat("a", 64), "-model", "controlled-model", "-gateway-base-url", "https://model.example.invalid", "-service-principal", "evaluation-test", "-credential-file", credential, "-timeout", "5s")
+			var captured revieweval.Capture
+			readTestJSON(t, capturedPath, &captured)
+			if captured.Runtime.ModelTransport != "stdio" || captured.Runtime.ImageID == "" || len(captured.Results) != selection.cases || len(captured.EvaluatorSHA256) != 64 {
+				t.Fatal("missing Docker deployment identity")
 			}
-		}
-		paths, err := os.ReadFile(filepath.Join(directory, "worktrees"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, path := range strings.Fields(string(paths)) {
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				t.Fatal("temporary evaluation workspace remains")
+			for _, result := range captured.Results {
+				if result.State != "succeeded" || result.Report == nil || result.Usage == nil || !result.Usage.Complete || result.Usage.Requests != 0 {
+					t.Fatal("CLI capture failed", result)
+				}
 			}
-		}
-		data, _ := os.ReadFile(capturedPath)
-		if strings.Contains(string(data), "dummy-evaluation-key") {
-			t.Fatal("credential escaped into capture")
-		}
-	})
+			paths, err := os.ReadFile(filepath.Join(directory, "worktrees"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range strings.Fields(string(paths)) {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatal("temporary evaluation workspace remains")
+				}
+			}
+			data, _ := os.ReadFile(capturedPath)
+			if strings.Contains(string(data), "dummy-evaluation-key") {
+				t.Fatal("credential escaped into capture")
+			}
+			scoredPath := filepath.Join(directory, "scored.json")
+			run(true, "-capture", capturedPath, "-out", scoredPath)
+			var result revieweval.Report
+			readTestJSON(t, scoredPath, &result)
+			if result.Summary.Cases != selection.cases || result.Summary.FalseNegatives != selection.misses {
+				t.Fatal("score did not resolve the captured suite")
+			}
+		})
+	}
 }
 
 // External Docker/Worker transport fixture; no network or real model calls.

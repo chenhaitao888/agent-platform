@@ -781,12 +781,24 @@ go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -
 以及诱导漏报和诱导误报的两类提示注入。共有 4 个预植问题，其中 3 个为 HIGH/CRITICAL。
 这是评测流程的起始集。第 38 步通过受控验证；第 39 步完成一次真实 Flash 采集，仍待人工复核，尚未形成正式质量基线。
 
+第 42 步增加按版本选择的扩展集，默认仍运行原六例：
+
+| `-suite` | 样例数 | 预植问题 | 范围 |
+| --- | --- | --- | --- |
+| `starter-v1`（默认） | 6 | 4，其中 3 个 HIGH/CRITICAL | 原始固定回归集，摘要与历史捕获保持一致 |
+| `extended-v1` | 12 | 9，其中 8 个 HIGH/CRITICAL | 原六例加[跨文件、写入授权、缓存隔离和故障授权样例](backend/internal/revieweval/suite-extended-v1.json) |
+
+扩展集包含税率单位与调用方不一致、模块迁移后的返回值契约破坏、删除租户写入检查、遗漏租户的缓存键、
+授权服务超时后错误放行，以及同时修改生产者和调用方的安全迁移对照。所有新增问题都有 base/head 行为回归证明；
+它仍是合成数据，本步只做离线和受控 Docker 验证，扩展集尚无真实模型质量结果。
+
 只导出样例，不调用模型：
 
 ```bash
 cd backend
 go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
 /tmp/agent-platform-revieweval -mode suite -out /tmp/review-suite.json
+/tmp/agent-platform-revieweval -mode suite -suite extended-v1 -out /tmp/review-suite-extended.json
 ```
 
 以下 `capture` 会逐个执行全部 6 个样例并调用配置的模型，使用既有 Docker 隔离和 stdio 出口。
@@ -804,6 +816,12 @@ go build -o /tmp/agent-platform-revieweval ./cmd/revieweval
   -credential-file "$AGENT_PLATFORM_MODEL_CREDENTIAL_FILE" \
   -timeout 90s -out /tmp/review-capture.json
 ```
+
+要采集扩展集，在上述命令中增加 `-suite extended-v1`，并为 `-out` 选择新的文件名。
+只接受内嵌的两个版本名，不读取外部 suite 文件；未知版本在创建输出和启动 Worker 前拒绝。
+采集器按完整快照建立嵌套目录、移除 head 已删除的源文件，模块迁移的补丁不会残留旧文件。
+评分自动根据捕获中的 `suiteSha256` 选择已知版本，不接受 score 模式的 `-suite` 覆盖；旧六例捕获和标注继续可用。
+`suiteSha256` 是内嵌源 JSON 的摘要，导出的 JSON 经过重新序列化，不应把导出文件的字节摘要当作该身份。
 
 每个样例有独立的 1 秒～2 分钟预算，涵盖 Git 准备、diff 与推理；Docker 清理保留原有独立时限。
 一个样例超时仍执行后续样例；Ctrl-C 会保留已完成结果并把剩余样例记为 `skipped`。
