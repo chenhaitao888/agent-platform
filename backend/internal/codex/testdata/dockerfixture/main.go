@@ -126,6 +126,17 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	for i, arg := range args {
+		if arg == "--model" && i+1 < len(args) && args[i+1] == "offline-diagnostics" {
+			// Controlled malformed model outputs, after all real sandbox checks.
+			if _, err := os.Stat("records.py"); err == nil {
+				content = []byte("private-diagnostic: do not persist this body")
+			} else if _, err := os.Stat("divider.py"); err == nil {
+				report["headSha"] = "private-diagnostic"
+				content, _ = json.Marshal(report)
+			}
+		}
+	}
 	if err := os.WriteFile(output, content, 0o600); err != nil {
 		panic(err)
 	}
@@ -220,8 +231,15 @@ func checkBoundary() {
 	if err != nil {
 		panic(err)
 	}
-	data, err := os.ReadFile(filepath.Join(cwd, "feature.txt"))
-	if err != nil || !strings.Contains(string(data), "feature-only change") {
+	// Both the API fixture and fixed evaluation cases have known mounted input.
+	readable := false
+	for name, marker := range map[string]string{"feature.txt": "feature-only change", "divider.py": "def average(", "records.py": "def find_record(", "paging.py": "def item_at(", "label.py": "def label("} {
+		data, err := os.ReadFile(filepath.Join(cwd, name))
+		if err == nil && strings.Contains(string(data), marker) {
+			readable = true
+		}
+	}
+	if !readable {
 		panic("workspace input")
 	}
 	mounts, err := os.ReadFile("/proc/self/mountinfo")

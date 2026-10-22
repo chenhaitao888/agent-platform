@@ -17,6 +17,7 @@ type workerResponse struct {
 	Profile             *Profile        `json:"profile,omitempty"`
 	Report              json.RawMessage `json:"report,omitempty"`
 	ErrorCode           string          `json:"errorCode,omitempty"`
+	DiagnosticCode      string          `json:"diagnosticCode,omitempty"`
 	SandboxVerified     bool            `json:"sandboxVerified,omitempty"`
 	GatewaySupported    bool            `json:"gatewaySupported,omitempty"`
 	ModelRelaySupported bool            `json:"modelRelaySupported,omitempty"`
@@ -30,6 +31,31 @@ type workerGatewayRequest struct {
 }
 
 func decodeWorkerResponse(data []byte) (workerResponse, error) {
+	// The envelope carries diagnostics across a trust boundary. Reject duplicate,
+	// case-confused and null fields instead of encoding/json's last-value wins.
+	fields := json.NewDecoder(bytes.NewReader(data))
+	start, err := fields.Token()
+	if err != nil || start != json.Delim('{') {
+		return workerResponse{}, review.ErrInvalidFindings
+	}
+	seen := map[string]bool{}
+	for fields.More() {
+		token, err := fields.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return workerResponse{}, review.ErrInvalidFindings
+		}
+		switch key {
+		case "profile", "report", "errorCode", "diagnosticCode", "sandboxVerified", "gatewaySupported", "modelRelaySupported":
+		default:
+			return workerResponse{}, review.ErrInvalidFindings
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if fields.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return workerResponse{}, review.ErrInvalidFindings
+		}
+	}
 	var message workerResponse
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -37,6 +63,11 @@ func decodeWorkerResponse(data []byte) (workerResponse, error) {
 		return workerResponse{}, err
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
+		return workerResponse{}, review.ErrInvalidFindings
+	}
+	if message.DiagnosticCode != "" && (!review.ValidOutputDiagnostic(message.DiagnosticCode) ||
+		message.ErrorCode == "" || message.Report != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported ||
+		!errors.Is(review.NewOutputError(message.DiagnosticCode), workerError(message.ErrorCode))) {
 		return workerResponse{}, review.ErrInvalidFindings
 	}
 	return message, nil
@@ -96,6 +127,7 @@ func ServeWorker(ctx context.Context, config ExecConfig, probe bool, input io.Re
 		report, runErr := runner.Run(ctx, request)
 		if runErr != nil {
 			message.ErrorCode = workerErrorCode(runErr)
+			message.DiagnosticCode = review.OutputDiagnostic(runErr)
 		} else {
 			message.Report, err = json.Marshal(report)
 			if err != nil {

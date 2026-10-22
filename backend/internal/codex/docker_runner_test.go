@@ -388,6 +388,8 @@ elif args[0] == "start":
         elif mode == "invalid": print('{"report":{}}')
         elif mode == "mismatch": print(json.dumps(dict(report=dict(schemaVersion="1.0",baseSha="d"*40,headSha=request["headSha"],findings=[]))))
         elif mode == "worker-error": print('{"errorCode":"review_output_unavailable"}')
+        elif mode == "diagnostic":
+            with open(directory+"/diagnostic.json") as source: print(source.read())
         else: print(json.dumps(dict(report=dict(schemaVersion="1.0",baseSha=request["baseSha"],headSha=request["headSha"],findings=[]))))
 elif args[0] == "rm":
     if os.path.exists(directory+"/fail-cleanup"): sys.exit(24)

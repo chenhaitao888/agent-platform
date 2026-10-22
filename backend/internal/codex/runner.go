@@ -216,7 +216,7 @@ func (r *ExecRunner) Run(ctx context.Context, input review.RunInput) (review.Fin
 		return review.FindingsReport{}, err
 	}
 	if findingsContainCredential(report, credential.Token) {
-		return review.FindingsReport{}, review.ErrInvalidFindings
+		return review.FindingsReport{}, review.NewOutputError("credential_in_output")
 	}
 	if execution.Err() != nil {
 		return review.FindingsReport{}, execution.Err()

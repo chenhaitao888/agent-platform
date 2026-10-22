@@ -25,14 +25,15 @@ type Capture struct {
 }
 
 type Result struct {
-	CaseID      string                 `json:"caseId"`
-	BaseSHA     string                 `json:"baseSha"`
-	HeadSHA     string                 `json:"headSha"`
-	PatchSHA256 string                 `json:"patchSha256"`
-	State       string                 `json:"state"`
-	DurationMS  int64                  `json:"durationMs"`
-	Report      *review.FindingsReport `json:"report"`
-	Usage       *review.ModelUsage     `json:"usage,omitempty"`
+	CaseID         string                 `json:"caseId"`
+	BaseSHA        string                 `json:"baseSha"`
+	HeadSHA        string                 `json:"headSha"`
+	PatchSHA256    string                 `json:"patchSha256"`
+	State          string                 `json:"state"`
+	DurationMS     int64                  `json:"durationMs"`
+	Report         *review.FindingsReport `json:"report"`
+	Usage          *review.ModelUsage     `json:"usage,omitempty"`
+	DiagnosticCode string                 `json:"diagnosticCode,omitempty"`
 }
 
 type Adjudications struct {
@@ -40,15 +41,18 @@ type Adjudications struct {
 	CaptureSHA256 string     `json:"captureSha256"`
 	Reviewer      string     `json:"reviewer"`
 	ReviewerKind  string     `json:"reviewerKind,omitempty"`
+	Rubric        string     `json:"rubric,omitempty"`
 	Decisions     []Decision `json:"decisions"`
 }
 
 type Decision struct {
 	CaseID       string `json:"caseId"`
 	FindingIndex int    `json:"findingIndex"`
-	// Empty means a false positive. Nonempty must name a ground truth issue.
-	IssueID string `json:"issueId"`
-	Reason  string `json:"reason"`
+	// Empty means a false positive unless Advisory is explicitly supplied.
+	// Nonempty must name a ground truth issue and cannot also be an advisory.
+	IssueID  string `json:"issueId"`
+	Reason   string `json:"reason"`
+	Advisory string `json:"advisory,omitempty"`
 }
 
 type Rate struct {
@@ -66,6 +70,7 @@ type Metrics struct {
 	SeriousIssues   int            `json:"seriousIssues"`
 	TruePositives   int            `json:"truePositives"`
 	FalsePositives  int            `json:"falsePositives"`
+	Advisories      int            `json:"advisories"`
 	FalseNegatives  int            `json:"falseNegatives"`
 	SeriousFound    int            `json:"seriousFound"`
 	PendingFindings int            `json:"pendingFindings"`
@@ -79,9 +84,10 @@ type Metrics struct {
 }
 
 type CaseScore struct {
-	CaseID   string  `json:"caseId"`
-	Category string  `json:"category"`
-	Metrics  Metrics `json:"metrics"`
+	CaseID         string  `json:"caseId"`
+	Category       string  `json:"category"`
+	Metrics        Metrics `json:"metrics"`
+	DiagnosticCode string  `json:"diagnosticCode,omitempty"`
 }
 
 type Report struct {
@@ -94,6 +100,7 @@ type Report struct {
 	EvaluatorSHA256     string                 `json:"evaluatorSha256,omitempty"`
 	ScorerSHA256        string                 `json:"scorerSha256,omitempty"`
 	AdjudicationKind    string                 `json:"adjudicationKind"`
+	Rubric              string                 `json:"rubric"`
 	Usage               *review.ModelUsage     `json:"usage"`
 	Summary             Metrics                `json:"summary"`
 	Categories          map[string]Metrics     `json:"categories"`
@@ -131,7 +138,11 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 	report := Report{SchemaVersion: "1.0", SuiteSHA256: capture.SuiteSHA256, CaptureSHA256: CaptureSHA256(capture), Evidence: capture.Evidence, Runtime: capture.Runtime, Categories: map[string]Metrics{}, SafetyAssessment: "not_evaluated"}
 	report.EvaluatorSHA256 = capture.EvaluatorSHA256
 	report.AdjudicationKind = "pending"
+	report.Rubric = "closed-issues-v1"
 	if labels != nil {
+		if labels.Rubric != "" {
+			report.Rubric = labels.Rubric
+		}
 		report.AdjudicationKind = labels.ReviewerKind
 		if report.AdjudicationKind == "" {
 			report.AdjudicationKind = "unspecified"
@@ -152,7 +163,9 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 					m.PendingFindings++
 					continue
 				}
-				if decision.IssueID == "" || matched[decision.IssueID] {
+				if decision.Advisory != "" {
+					m.Advisories++
+				} else if decision.IssueID == "" || matched[decision.IssueID] {
 					m.FalsePositives++
 				} else {
 					matched[decision.IssueID] = true
@@ -179,7 +192,7 @@ func ScoreWithPricing(capture Capture, labels *Adjudications, pricing *Pricing) 
 			measured = []int64{result.DurationMS}
 		}
 		finalize(&m, measured)
-		report.Cases = append(report.Cases, CaseScore{CaseID: c.ID, Category: c.Category, Metrics: m})
+		report.Cases = append(report.Cases, CaseScore{CaseID: c.ID, Category: c.Category, Metrics: m, DiagnosticCode: result.DiagnosticCode})
 		addMetrics(&report.Summary, m)
 		category := report.Categories[c.Category]
 		addMetrics(&category, m)
@@ -206,6 +219,9 @@ func validateCapture(c Capture, suite Suite) error {
 		return ErrInvalidEvaluation
 	}
 	for i, r := range c.Results {
+		if r.DiagnosticCode != "" && (r.State != "invalid_output" || !review.ValidOutputDiagnostic(r.DiagnosticCode)) {
+			return ErrInvalidEvaluation
+		}
 		if r.CaseID != suite.Cases[i].ID || r.DurationMS < 0 || r.DurationMS > 24*60*60*1000 {
 			return ErrInvalidEvaluation
 		}
@@ -259,6 +275,9 @@ func validateDecisions(capture Capture, suite Suite, labels *Adjudications) (map
 	if labels.ReviewerKind != "" && labels.ReviewerKind != "human" && labels.ReviewerKind != "assistant" {
 		return nil, ErrInvalidEvaluation
 	}
+	if labels.Rubric != "" && labels.Rubric != "closed-issues-v1" && labels.Rubric != "regression-with-advisories-v1" {
+		return nil, ErrInvalidEvaluation
+	}
 	for _, decision := range labels.Decisions {
 		caseIndex := -1
 		for i, c := range suite.Cases {
@@ -272,6 +291,9 @@ func validateDecisions(capture Capture, suite Suite, labels *Adjudications) (map
 		}
 		r := capture.Results[caseIndex]
 		if r.Report == nil || decision.FindingIndex >= len(r.Report.Findings) {
+			return nil, ErrInvalidEvaluation
+		}
+		if decision.Advisory != "" && !validAdvisory(labels.Rubric, decision, suite.Cases[caseIndex], r.Report.Findings[decision.FindingIndex]) {
 			return nil, ErrInvalidEvaluation
 		}
 		knownIssue := decision.IssueID == ""

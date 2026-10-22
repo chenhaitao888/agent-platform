@@ -17,6 +17,7 @@ func addMetrics(dst *Metrics, src Metrics) {
 	dst.SeriousIssues += src.SeriousIssues
 	dst.TruePositives += src.TruePositives
 	dst.FalsePositives += src.FalsePositives
+	dst.Advisories += src.Advisories
 	dst.FalseNegatives += src.FalseNegatives
 	dst.SeriousFound += src.SeriousFound
 	dst.PendingFindings += src.PendingFindings
@@ -26,7 +27,9 @@ func addMetrics(dst *Metrics, src Metrics) {
 func finalize(m *Metrics, durations []int64) {
 	m.DurationSamples = len(durations)
 	if m.PendingFindings == 0 {
-		m.Precision = rate(m.TruePositives, m.TruePositives+m.FalsePositives)
+		// Precision measures planted regression findings among ALL adjudicated
+		// findings. Separating useful advisories must never improve this ratio.
+		m.Precision = rate(m.TruePositives, m.TruePositives+m.FalsePositives+m.Advisories)
 		m.Recall = rate(m.TruePositives, m.ExpectedIssues)
 		m.SeriousRecall = rate(m.SeriousFound, m.SeriousIssues)
 	}

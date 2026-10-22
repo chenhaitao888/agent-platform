@@ -92,6 +92,9 @@ func Record(ctx context.Context, runner ProfiledRunner, config Config) (Capture,
 					}
 				}
 				result.State = resultState(runErr)
+				if result.State == "invalid_output" {
+					result.DiagnosticCode = review.OutputDiagnostic(runErr)
+				}
 				if runErr == nil {
 					result.Report = &report
 				}

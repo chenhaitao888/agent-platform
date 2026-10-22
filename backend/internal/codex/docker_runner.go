@@ -249,9 +249,12 @@ func (r *DockerRunner) run(ctx context.Context, input review.RunInput, usage *us
 	}
 	message, err := decodeWorkerResponse(data)
 	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported || (message.Report == nil) == (message.ErrorCode == "") {
-		return review.FindingsReport{}, review.ErrInvalidFindings
+		return review.FindingsReport{}, review.NewOutputError("worker_protocol_invalid")
 	}
 	if message.ErrorCode != "" {
+		if message.DiagnosticCode != "" {
+			return review.FindingsReport{}, review.NewOutputError(message.DiagnosticCode)
+		}
 		return review.FindingsReport{}, workerError(message.ErrorCode)
 	}
 	// Reapply the platform contract after crossing the Docker process boundary.
@@ -260,7 +263,7 @@ func (r *DockerRunner) run(ctx context.Context, input review.RunInput, usage *us
 		return review.FindingsReport{}, err
 	}
 	if findingsContainCredential(report, credential.Token) {
-		return review.FindingsReport{}, review.ErrInvalidFindings
+		return review.FindingsReport{}, review.NewOutputError("credential_in_output")
 	}
 	if err := execution.Err(); err != nil {
 		return review.FindingsReport{}, err

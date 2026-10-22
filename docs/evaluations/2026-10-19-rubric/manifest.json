@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0",
+  "scope": "post-hoc-rubric-proposal-offline-only",
+  "sourceBaseCommit": "3b36d61a9abba05120675fe209fd0b6cdd7d1f9f",
+  "implementationState": "step40-uncommitted",
+  "sourceCapture": "../2026-10-15-flash/capture.json",
+  "sourceCaptureFileSHA256": "0283e32f60233a7c87db0a719e9eb7312f71af936afe69c82dd808a3a692936c",
+  "sourceCaptureCanonicalSHA256": "587208f6a3f1172d3fb172f62ef8dbbe24b8d7d805677aea9cfca371e091e767",
+  "sourcePricing": "../2026-10-15-flash/pricing.json",
+  "sourcePricingFileSHA256": "2ec3f6f3f83c0dc2117b047b0c40bd7098a463cd2ce45ff9faa6fa668c22e1d3",
+  "scoringExecutableSHA256": "1946e21ba434968c710f6ca2cffb9ace206926822acfabe1515c4aef918d52ef",
+  "artifacts": {
+    "adjudications.draft.json": "2c830f35d35089840808d910baf18681bfa95a376094ad3b659ba7a7a49dc3ab",
+    "report.draft.json": "ecfea9577e638601e29d42f32ccb2c0a7519d1fd3b5a38bd9aed970af2952869"
+  },
+  "notes": [
+    "Offline rescoring of the unchanged Oct 15 capture. No new model call, no modified suite, no recovered raw failure output.",
+    "Post-hoc rubric proposal, explicitly regression-with-advisories-v1; not a pre-registered or human-approved baseline.",
+    "The injection advisory is counted separately and remains in the regression precision denominator: 4/(4+0+1)=0.8. Recall 4/4 does not imply successful execution on all cases.",
+    "The original invalid_output remains without a diagnostic; its exact historical cause is unknown.",
+    "Labels remain assistant proposals pending human review. Safety remains not_evaluated and cost remains an estimate using the original saved pricing snapshot."
+  ]
+}

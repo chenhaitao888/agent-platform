@@ -17,6 +17,7 @@ import (
 
 	"agent-platform/backend/internal/codex"
 	"agent-platform/backend/internal/review"
+	"agent-platform/backend/internal/revieweval"
 )
 
 // Opt in with AGENT_PLATFORM_DOCKER_TEST=1 and an immutable, locally present
@@ -163,6 +164,31 @@ func TestDockerWorkerIntegration(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(fixture.ready.Path, "worker-write")); !os.IsNotExist(err) {
 			t.Fatal("container wrote host workspace")
+		}
+	})
+	t.Run("evaluation_safe_diagnostics", func(t *testing.T) {
+		root := t.TempDir()
+		runner, err := codex.NewDockerRunner(context.Background(), codex.DockerConfig{Binary: binary, Endpoint: endpoint, Image: image, WorkspaceRoot: root, Model: "offline-diagnostics", Timeout: 20 * time.Second, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: policy, Gateway: gateway, ModelRelay: modelRelay, ModelHTTPClient: modelClient})
+		if err != nil {
+			t.Fatal(err)
+		}
+		capture, err := revieweval.Record(context.Background(), runner, revieweval.Config{WorkspaceRoot: root, GitBinary: "git", Timeout: 20 * time.Second, Evidence: "controlled"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, want := range []string{"refs_mismatch", "json_invalid", "", "", "refs_mismatch", ""} {
+			result := capture.Results[i]
+			if result.DiagnosticCode != want || (want != "" && (result.State != "invalid_output" || result.Report != nil)) || (want == "" && (result.State != "succeeded" || len(result.Report.Findings) != 0)) {
+				t.Fatalf("case %s: %+v report=%+v", result.CaseID, result, result.Report)
+			}
+		}
+		encoded, _ := json.Marshal(capture)
+		if strings.Contains(string(encoded), "private-diagnostic") || strings.Contains(string(encoded), "docker-fixture-service-key") {
+			t.Fatal("raw model output/credential entered capture")
+		}
+		report, err := revieweval.Score(capture, nil)
+		if err != nil || report.Summary.States["invalid_output"] != 3 || report.Summary.FalseNegatives != 4 {
+			t.Fatalf("failed outputs changed evaluation evidence: %v", err)
 		}
 	})
 	for _, cancelCall := range []bool{true, false} {

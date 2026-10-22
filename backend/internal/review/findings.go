@@ -42,21 +42,39 @@ type FindingsReport struct {
 
 // ParseFindings binds model output to the commits selected by the platform.
 func ParseFindings(content []byte, baseSHA, headSHA string) (FindingsReport, error) {
-	if len(content) > MaxFindingsBytes || !utf8.Valid(content) || !validFindingsCommit(baseSHA) || !validFindingsCommit(headSHA) || !validFindingsJSONShape(content) {
-		return FindingsReport{}, ErrInvalidFindings
+	if len(content) > MaxFindingsBytes {
+		return FindingsReport{}, NewOutputError("findings_too_large")
+	}
+	if !utf8.Valid(content) {
+		return FindingsReport{}, NewOutputError("encoding_invalid")
+	}
+	if !validFindingsCommit(baseSHA) || !validFindingsCommit(headSHA) {
+		return FindingsReport{}, NewOutputError("expected_refs_invalid")
+	}
+	if !json.Valid(content) {
+		return FindingsReport{}, NewOutputError("json_invalid")
+	}
+	if !validFindingsJSONShape(content) {
+		return FindingsReport{}, NewOutputError("shape_invalid")
 	}
 	var report FindingsReport
 	if err := json.Unmarshal(content, &report); err != nil {
-		return FindingsReport{}, ErrInvalidFindings
+		return FindingsReport{}, NewOutputError("types_invalid")
 	}
-	if report.SchemaVersion != "1.0" || report.BaseSHA != baseSHA || report.HeadSHA != headSHA || report.Findings == nil || len(report.Findings) > 50 {
-		return FindingsReport{}, ErrInvalidFindings
+	if report.SchemaVersion != "1.0" {
+		return FindingsReport{}, NewOutputError("version_invalid")
+	}
+	if report.BaseSHA != baseSHA || report.HeadSHA != headSHA {
+		return FindingsReport{}, NewOutputError("refs_mismatch")
+	}
+	if len(report.Findings) > 50 {
+		return FindingsReport{}, NewOutputError("too_many_findings")
 	}
 	unique := make([]Finding, 0, len(report.Findings))
 	seen := make(map[Finding]bool)
 	for _, finding := range report.Findings {
-		if !validFinding(finding) {
-			return FindingsReport{}, ErrInvalidFindings
+		if code := findingDiagnostic(finding); code != "" {
+			return FindingsReport{}, NewOutputError(code)
 		}
 		if !seen[finding] {
 			seen[finding] = true
@@ -67,22 +85,28 @@ func ParseFindings(content []byte, baseSHA, headSHA string) (FindingsReport, err
 	return report, nil
 }
 
-func validFinding(finding Finding) bool {
+func findingDiagnostic(finding Finding) string {
 	if strings.TrimSpace(finding.Title) == "" || utf8.RuneCountInString(finding.Title) > 256 || strings.TrimSpace(finding.Description) == "" || utf8.RuneCountInString(finding.Description) > 4096 {
-		return false
+		return "text_invalid"
 	}
 	switch finding.Severity {
 	case "LOW", "MEDIUM", "HIGH", "CRITICAL":
 	default:
-		return false
+		return "severity_invalid"
 	}
-	if finding.Confidence < 0 || finding.Confidence > 1 || finding.StartLine < 1 || finding.EndLine < finding.StartLine || finding.EndLine > 2147483647 {
-		return false
+	if finding.Confidence < 0 || finding.Confidence > 1 {
+		return "confidence_invalid"
+	}
+	if finding.StartLine < 1 || finding.EndLine < finding.StartLine || finding.EndLine > 2147483647 {
+		return "location_invalid"
 	}
 	if finding.Path == "" || utf8.RuneCountInString(finding.Path) > 1024 || finding.Path == "." || path.Clean(finding.Path) != finding.Path || strings.HasPrefix(finding.Path, "/") || strings.ContainsAny(finding.Path, "\\:") || finding.Path == ".." || strings.HasPrefix(finding.Path, "../") {
-		return false
+		return "location_invalid"
 	}
-	return strings.IndexFunc(finding.Path, unicode.IsControl) == -1
+	if strings.IndexFunc(finding.Path, unicode.IsControl) != -1 {
+		return "location_invalid"
+	}
+	return ""
 }
 
 func validFindingsCommit(value string) bool {
