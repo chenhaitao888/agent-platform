@@ -149,7 +149,15 @@ elif args[0]=="start":
             response=json.loads(line)
             if response["type"]=="end": break
         request=initial["input"]
-        print(json.dumps(dict(type="result",result=dict(report=dict(schemaVersion="1.0",baseSha=request["baseSha"],headSha=request["headSha"],findings=[])))),flush=True)
+        with open(directory+"/review-inputs.jsonl","a") as capture: capture.write(json.dumps(request)+"\n")
+        findings=[]
+        if os.path.exists(directory+"/pilot-findings.json"):
+            with open(directory+"/pilot-findings.json") as source: findings=json.load(source)
+        report=dict(schemaVersion="1.0",baseSha=request["baseSha"],headSha=request["headSha"],findings=findings)
+        if os.path.exists(directory+"/pilot-invalid-first"):
+            os.remove(directory+"/pilot-invalid-first")
+            report["headSha"]="0"*40
+        print(json.dumps(dict(type="result",result=dict(report=report))),flush=True)
 elif args[0]=="rm":
     os.remove(directory+"/"+args[-1])
 `

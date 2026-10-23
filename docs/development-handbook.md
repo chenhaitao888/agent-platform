@@ -41,7 +41,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
-当前阶段（2026-10-22）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-23）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -64,7 +64,8 @@ Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机�
 第 43 步完成十二例真实 Flash 采集、逐条助手标注、同样例分组比较与离线复算，用户审阅后于 2026-10-22 以 `2f06875` 推送至 `origin/main`。
 第 44 步完成独立的严重度校准指标、边界回归及历史捕获离线复算，用户审阅后于 2026-10-22 以 `db963e0` 推送至 `origin/main`。
 第 45 步完成前端只读审阅触发、执行状态、Findings 校验展示与真实 HTTP 贯穿测试，用户审阅后于 2026-10-22 以 `ba8d8f7` 推送至 `origin/main`。
-第 46 步完成本机凭据初始化命令、认证启动提示及真实进程恢复演练，改动尚未提交，待用户审阅。
+第 46 步完成本机凭据初始化命令、认证启动提示及真实进程恢复演练，用户审阅后于 2026-10-23 以 `668adf2` 推送至 `origin/main`。
+第 47 步完成从空 Task 列表开始的前端完整 HTTP 验收、响应丢失恢复及无效 Findings 恢复回归，改动尚未提交，待用户审阅。
 用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
@@ -3251,7 +3252,7 @@ GET、POST 和 Artifact 内容请求沿用 `useAPI` 的 Bearer 认证；模型�
 
 ### M14 本机试点（第 46 步）：凭据初始化与认证恢复演练
 
-- 状态：2026-10-22 实现及验证完成，改动尚未提交，待用户审阅。
+- 状态：2026-10-22 实现及验证完成，用户审阅后于 2026-10-23 以 `668adf2` 推送至 `origin/main`。
 - 接续点：用户首次打开登录页时不清楚 API 凭据来源；检查发现本机后端未配置认证文件。此前 README 只有内联生成脚本，启动日志也未说明业务 API 处于拒绝状态。
 - 范围：增加 `cmd/authinit`、启动时认证配置状态与登录页说明，补齐本机使用/恢复步骤和真实进程回归。认证协议、授权范围、HTTP 监听约束及 Workspace Prepare 均保持现有实现。
 
@@ -3308,6 +3309,70 @@ race 运行同时启用第 45 步的前端真实 HTTP 贯穿用例。前端 91 �
 
 下一切片补齐前端从创建 Task、准入和准备 Workspace 到 Findings 的完整受控 HTTP 验收；
 第 45 步的前端贯穿用例目前从已经准备的 Workspace 开始。授权企业 PR 接入和正式质量验收继续单独安排。
+
+### M14 本机试点（第 47 步）：前端完整 HTTP 验收与故障恢复
+
+- 状态：2026-10-23 完成实现，验证结果见下；改动尚未提交，待用户审阅。
+- 接续点：第 45 步的真实 HTTP 前端回归从预置 READY Workspace 开始，第 46 步补齐了首次身份配置；本步把前端与实际部署装配连接起来，从空存储完成业务闭环。
+- 范围：新增跨进程验收和受控故障场景，扩展已有外部测试夹具。不修改前后端生产业务、认证策略、监听范围、Workspace Prepare 或依赖。
+
+#### 实际执行链路
+
+`TestFrontendPilotFromEmptyStoreOverHTTP` 在显式设置 `AGENT_PLATFORM_FRONTEND_INTEGRATION=1` 时执行，
+实际构建 API 二进制，为三个场景分别启动新的 loopback 服务与空内存存储。
+React/jsdom 子进程只接收测试 API 地址、固定 base/head、场景名与最少运行环境，不继承后端的 GitLab/模型服务配置。
+正常业务变更由现有页面操作发起，另通过 HTTP 负向请求探测跨租户写入；Go 测试不提前创建 Task 或准备 Workspace。
+
+复用 `apiapp` 部署夹具的本机 TLS GitLab API、`git-http-backend`、真实 Git 仓库与 CA 信任配置，
+经过真实创建、准入、登记、bare clone、detached worktree、固定 diff、Artifact 归档及受控模型转发。
+只有 Docker/Worker 外部进程和模型推理使用替身；本步验证装配及协议，不作为真实 Docker/原生 sandbox 验证。
+页面未模拟成功响应；故障注入仅在实际服务端成功响应到达后丢弃交付，或由外部 Worker 替身输出无效引用。
+
+共用操作顺序为：登录 → 空 Task 列表 → 未授权项目创建被拒 → 授权项目创建 → 准入 →
+Workspace 登记与准备 → diff 展示/归档/认证内容读取 → 显式审阅 → Findings 校验展示 → 事件时间线 → 退出并切换身份。
+查询状态、读取 Artifact 和展示页面均不自动触发模型。
+
+#### 三种验收场景
+
+| 场景 | 故障与恢复 | 关键结果 |
+| --- | --- | --- |
+| success | 无故障，返回合法空 Findings | 一个 Task、一个 READY Workspace、一次模型请求、9 条事件；空结果提示仍需人工审阅 |
+| response-loss | Task 创建、准入、Workspace 登记/准备、diff 归档和 Review 六处成功响应各丢失一次 | 创建/准入/diff/Review 沿用原 key 重试并返回 200；Workspace 通过 GET 恢复已保存状态；仍只有一次模型请求及 9 条事件 |
+| invalid-findings | 首轮 Worker 返回错误 head SHA；同键重试重放 502，刷新失败记录后显式开始新一轮 | 首轮无 Findings Artifact，第二轮合法非空结果可读取；两次模型请求、11 条事件，同键重试不追加执行 |
+
+正常与响应丢失场景的事件顺序均为 task.created、task.queued、workspace.registered、workspace.preparing、
+workspace.ready、artifact.created（diff）、review.started、artifact.created（Findings）、review.succeeded。
+无效输出场景只额外增加一次 review.started / review.failed，事件序号连续。
+通过服务端最终查询与受控模型计数，核对重放没有复制 Task、Workspace 状态迁移或模型调用；
+通过 Git HEAD/干净工作树、捕获的 Worker 输入和最终执行投影，核对 path、base/head 与实际 patch 一致。
+
+切换到另一个真实认证租户后，列表为空；对原 Task、Workspace、Review 和 Findings 内容的读取返回 404。
+对原 Task 的准入、Workspace 登记/准备、diff 归档和 Review 写入也返回 404，冒用原租户创建 Task 返回 403。
+拒绝后事件列表逐项保持一致，模型计数没有增加。退出清除旧页面，localStorage/sessionStorage 保持空。
+API 日志不包含测试身份、GitLab 或模型 token。
+
+#### 验证与后续边界
+
+先确认原前端 91 个用例和第 45 步的专项 HTTP 回归通过，再逐步接入正常流程、丢失响应及无效输出场景；
+完整场景均在现有业务实现上通过，新增测试与夹具即可覆盖。
+可复跑命令已加入 README，普通测试仍跳过需要 Node/Go 共同启动的用例，显式入口运行三个独立场景。
+
+| 检查 | 结果 |
+| --- | --- |
+| 新增前端完整 HTTP 验收 | success / response-loss / invalid-findings 三种场景全部通过 |
+| 原 Review 专项 HTTP 回归 | 通过 |
+| `go test ./... -count=1` | 全部通过 |
+| `AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test -race ./... -count=1` | 全部通过，含两套前端 HTTP 入口 |
+| `go vet ./...` / golangci-lint 配置和检查 | 通过，0 issues |
+| 前端普通测试 | 11 个文件、91 个用例通过；两个需 Go 服务的用例在普通运行中跳过 |
+| 前端 lint / typecheck / build | 全部通过 |
+| gofmt / diff / 历史证据 | 通过，26 个历史评测 JSON 与已推送 HEAD 逐字节一致 |
+
+所有场景使用临时端口、仓库与测试身份，未读取长期模型凭据、产生付费模型请求或重启当前开发服务。
+
+后续可进入有授权项目的实际试用验收：需要真实 GitLab HTTPS 地址、项目 ID、可审阅 head SHA 和本地服务凭据，
+并由人工确认 Findings。当前已覆盖的合成/受控流程不能代表企业项目分布、生产质量或故障持久恢复能力；
+真实浏览器视觉验收、正式人工标注、工具动作安全审计和持久化仍是独立待办。
 
 ## 7. 常用验证命令
 

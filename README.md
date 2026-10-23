@@ -18,7 +18,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～46 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -1063,16 +1063,22 @@ node --run test
 node --run build
 ```
 
-安装前端依赖后，可从仓库根目录运行前后端 HTTP 贯穿测试（Node 22 需在 PATH 中）：
+安装前端依赖后，可从仓库根目录运行前后端 HTTP 贯穿测试（Node 22、Go、Git 和 Python 3 需在 PATH 中）：
 
 ```bash
 cd backend
+AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test ./internal/apiapp -run '^TestFrontendPilotFromEmptyStoreOverHTTP$' -count=1 -v
 AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test ./internal/httpapi -run '^TestFrontendReviewFlowOverAuthenticatedHTTP$' -count=1
 ```
 
-该测试使用真实 loopback Go HTTP 服务、React/jsdom、临时 Git 仓库和受控 CLI，验证认证、
-审阅、响应丢失后的幂等重试及跨租户拒绝；不调用真实模型，也不需要 Docker 或服务凭据。
-普通前端测试会跳过这个需要 Go 启动服务的用例，普通 Go 测试也不要求安装 Node。
+第一条运行三种场景：正常闭环、六处写操作响应丢失后的恢复、首轮 Findings 无效后的同键重放与新一轮审阅。
+每轮都启动空存储的真实 API 可执行文件，从 React 页面登录、创建 Task、准入、登记/准备 Workspace、
+查看和归档 diff，再到审阅与 Findings/事件展示。使用本机 TLS GitLab 接口、Git smart HTTP、真实 clone/worktree/diff；
+Docker/Worker 进程和模型推理使用受控替身，同时检查事件不重复、固定引用、模型请求次数及跨租户读写拒绝。
+第二条保留从已准备 Workspace 开始的 Review 专项回归，使用真实 HTTP 和受控 Codex CLI。
+两者均在独立临时端口运行，不需要真实模型凭据或 Docker，也不会重启当前开发服务。
+这些是 React/jsdom 与实际 HTTP 验证，未替代真实浏览器视觉、真实 Docker 隔离或企业 GitLab/模型质量验收。
+普通前端测试跳过这两个需由 Go 提供服务的用例；普通 Go 测试也不要求安装 Node。
 
 `node --run` 是 Node.js 22 支持的 package script 运行方式；也可使用对应的 `npm run` 命令。
 前端使用固定版本 ESLint 10.12.0，检查 JS/TS 推荐规则、核心 React Hooks 规则和 Vite Fast Refresh
