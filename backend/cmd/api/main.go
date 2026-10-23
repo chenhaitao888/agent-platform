@@ -37,7 +37,10 @@ func main() {
 	}
 	// 信号只用于通知主流程停止接新请求；不要把已取消的 signalContext
 	// 直接传给 Shutdown，否则在途请求没有收尾时间。
-	log.Printf("agent-platform API listening on %s; Review enabled=%t", listener.Addr(), application.ReviewEnabled)
+	if !application.AuthenticationConfigured {
+		log.Print("API authentication is not configured; business APIs return 401. Use authinit to generate credentials, set AGENT_PLATFORM_AUTH_FILE, then restart the API.")
+	}
+	log.Printf("agent-platform API listening on %s; Review enabled=%t; Authentication configured=%t", listener.Addr(), application.ReviewEnabled, application.AuthenticationConfigured)
 	if err := serveUntilShutdownWithGrace(signalContext, server, listener, application.ShutdownGrace); err != nil {
 		log.Fatalf("serve API requests: %v", err)
 	}

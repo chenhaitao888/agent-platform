@@ -18,7 +18,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
-M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现与评测切片见第 31～45 步。
+M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～46 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
 Harness 负责模型循环、上下文与工具调用。已有版本化 Findings schema、平台输出校验、CLI 能力预检、
 容器隔离探针、只读进程 adapter，以及连接 Task/READY Workspace、执行投影和结果归档的 HTTP 链路。
@@ -40,6 +40,7 @@ go run ./cmd/runtimecheck
 agent-platform/
 ├── backend/
 │   ├── cmd/api/                 # Go 进程入口，类似 Java 的 main 启动类
+│   ├── cmd/authinit/            # 首次本机 API 凭据初始化，不输出 token
 │   ├── cmd/runtimecheck/        # 不调用模型的 CLI 预检
 │   └── internal/
 │       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
@@ -90,33 +91,41 @@ token 格式为 32～256 位字母、数字及 `_-`，应使用至少 32 个随�
 认证文件只保存摘要；服务启动时加载并冻结策略，修改文件后需重启。轮换时使用不同 subject 配置新 token，
 确认迁移后移除旧条目并重启。旧进程内的身份不会因文件修改立即失效。
 
-首次本机使用可执行以下示例生成文件；先将 `repository_ids` 和后续创建 Task 示例的 `repositoryId`
-一起改成允许访问的真实 GitLab 项目 ID，优先使用数字项目 ID。
-文件使用独占创建，已有文件不会被覆盖；命令不输出 token。配置文件和客户端 token 都不要放入仓库或 Workspace。
+首次本机使用可运行 `authinit` 生成凭据。以下命令先创建可登录的身份，仓库白名单为空；
+已有授权项目时，在初始化命令追加 `-repository 你的实际GitLab项目ID`，多个项目可重复该参数，优先使用数字项目 ID。
+Task 的 `repositoryId` 必须与白名单一致。`-tenant` 和 `-subject` 默认分别为 `tenant-local` 与 `local-developer`。
+
+输出目录必须是新目录，父目录需已存在；现有目录（包括空目录）和文件一律不覆盖。
+命令生成 32 字节安全随机数，以 64 位十六进制字符串作为 token；目录权限为 `0700`，三个文件均为 `0600`。
+它复用 API 身份/白名单校验，并拒绝 Git checkout 内和已配置 Workspace 内的输出路径，包含父路径符号链接。
+Workspace 根目录默认取 `AGENT_PLATFORM_WORKSPACE_ROOT`，也可用 `-workspace-root` 指定尚未创建的计划路径。
+终端只输出文件路径与授权项目数，不输出 token。I/O 失败可能留下私有的未完成目录，修复原因后应使用新目录；不会自动删除或覆盖它。
+
+从仓库根目录执行：
 
 ```bash
-python3 - <<'PY'
-import hashlib, json, os, secrets
-from pathlib import Path
-directory = Path.home() / '.config' / 'agent-platform'
-directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-repository_ids = ['platform/project-7']  # 与创建 Task 的 repositoryId 保持一致
-token = secrets.token_urlsafe(32)
-config = {'identities': [{'subject': 'local-developer', 'tenantId': 'tenant-local',
-    'tokenSha256': hashlib.sha256(token.encode()).hexdigest(), 'repositoryIds': repository_ids}]}
-files = {'api-auth.json': json.dumps(config, indent=2) + '\n',
-         'api-token.txt': token + '\n',
-         'api-curl.conf': 'header = "Authorization: Bearer ' + token + '"\n'}
-for name, content in files.items():
-    with os.fdopen(os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
-        file.write(content)
-PY
+mkdir -p "$HOME/.config"
+cd backend
+go run ./cmd/authinit -dir "$HOME/.config/agent-platform"
 export AGENT_PLATFORM_AUTH_FILE="$HOME/.config/agent-platform/api-auth.json"
 export AGENT_PLATFORM_API_CURL_CONFIG="$HOME/.config/agent-platform/api-curl.conf"
+go run ./cmd/api
 ```
 
-API 启动后，用 `curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" http://127.0.0.1:8080/api/v1/session` 验证身份。
-前端输入 `api-token.txt` 中的原始 token；页面通过 `/api/v1/session` 取得租户，所有业务请求携带 Authorization，
+已有后端进程时，在其启动终端配置并重启，新的终端环境变量不会更新旧进程；重启会丢失当前内存中的任务与结果。
+认证配置缺失时，启动日志会明确说明业务 API 返回 401，并提示使用 `authinit`；配置成功时显示 `Authentication configured=true`。
+初始化命令不启动服务，也不自动修改现有身份或配置 GitLab/模型连接。没有仓库授权时仍可登录和查询本租户已有资源。
+
+API 启动后，另开终端验证身份并复制登录 token（`pbcopy` 用于 macOS）：
+
+```bash
+export AGENT_PLATFORM_API_CURL_CONFIG="$HOME/.config/agent-platform/api-curl.conf"
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" http://127.0.0.1:8080/api/v1/session
+pbcopy < "$HOME/.config/agent-platform/api-token.txt"
+```
+
+前端粘贴 `api-token.txt` 中的完整原始 token，不加 `Bearer` 前缀，不使用配置里的 SHA-256 摘要。
+页面通过 `/api/v1/session` 取得租户，所有业务请求携带 Authorization，
 退出时取消在途请求并清除页面状态。token 只存页面内存，不写 URL、cookie、localStorage 或 sessionStorage；刷新后需重新输入。
 Artifact 内容也通过认证请求读取，页面展示最多 65,536 字符预览。
 
@@ -131,6 +140,34 @@ repositoryIds 为空数组时不能创建 Task 或发起仓库 I/O；非空时�
 这仍是本机试点方案：同租户身份具有相同权限，尚无角色、自动过期/热撤销、限流或持久审计。
 token 泄漏等同该身份被使用；同一 OS 用户或 root 仍能读取本地凭据/进程内存。上线网络服务需另行设计 TLS、
 可信身份源、仓库授权同步和运营控制，本次不放宽监听限制。
+
+#### 本机试点验收与故障恢复
+
+| 检查 / 现象 | 预期与处理 |
+| --- | --- |
+| `/healthz` 为 200，但登录为 401 | 健康检查不代表认证已配置；检查 API 启动日志、`AGENT_PLATFORM_AUTH_FILE` 与启动终端 |
+| 已配置认证，仍无法登录 | 粘贴原始 token；检查是否误填模型 key、摘要或 `Bearer` 前缀。配置改变后需重启 |
+| `invalid API authentication configuration`，服务未监听 | 检查文件归属、0600 权限、普通文件/硬链接/符号链接与 JSON 格式；修复后重启，日志不回显文件正文 |
+| 登录成功但创建 Task 返回 403 | 检查该租户 `repositoryIds`；默认空白名单拒绝仓库操作，不要用 `*` |
+| 授权项目创建 Task 返回 `repository_resolution_unavailable` | 身份有效，但 GitLab/Workspace 部署尚未完成；按下节补齐三项配置 |
+| READY Workspace 审阅返回 `review_unavailable` | 按“启用 API 审阅执行”补齐部署并显式启用；登录成功不代表 Review 可运行 |
+| 审阅提交后断连 | 保留本页面，先刷新状态或使用“重试本次请求”；只有明确要重新执行时才开始新一轮 |
+| 修改认证配置后旧 token 仍有效 | 当前进程保留启动策略；重启后重新登录验证旧 token 为 401、新 token 为 200 |
+| 页面刷新 / 服务重启 | 页面凭据和重试键会丢失；服务重启还会丢失 Task/执行/Artifact。重新登录后先查看最新状态 |
+
+独立临时端口上的初始化与恢复演练，不需要真实凭据、GitLab、Docker 或模型：
+
+```bash
+cd backend
+go test ./cmd/authinit -count=1
+go test ./internal/apiapp -run '^TestLocalAuthInitializationAndRecoveryOverHTTP$' -count=1 -v
+```
+
+完整业务试点还需逐项验证：登录 → 创建 Task → 准入 → 准备 READY Workspace → 查看固定 diff →
+查询/显式开始审阅 → 读取 Findings → 人工复核。前端受控 HTTP 贯穿测试命令见“启动前端”，
+真实 GitLab/PR 及模型质量验收仍需单独执行。
+
+### GitLab 与 Workspace 配置
 
 Workspace 登记和准备需要同时配置 GitLab 地址、只读服务令牌和一个绝对路径的 Workspace 根目录。
 Base URL 必须使用 HTTPS，不能包含用户名、密码、query 或 fragment，也不包含 `/api/v4`；平台会

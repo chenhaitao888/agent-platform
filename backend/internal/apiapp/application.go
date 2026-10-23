@@ -18,10 +18,11 @@ import (
 )
 
 type Application struct {
-	Handler       http.Handler
-	ListenAddress string
-	ShutdownGrace time.Duration
-	ReviewEnabled bool
+	Handler                  http.Handler
+	ListenAddress            string
+	ShutdownGrace            time.Duration
+	ReviewEnabled            bool
+	AuthenticationConfigured bool
 }
 
 type deployment struct {
@@ -93,7 +94,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled}
+	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled, AuthenticationConfigured: authentication != nil}
 	if config.gitlabURL == "" {
 		app.Handler = authentication.Wrap(app.Handler)
 		return app, nil

@@ -58,9 +58,10 @@ export default function Authentication() {
 
   return (
     <form onSubmit={(event) => { void login(event) }}>
+      <p id="api-token-help">这里填写本平台生成的登录 token，粘贴完整内容即可，无需 Bearer 前缀。DeepSeek API Key 和 GitLab token 用于服务端连接，不用于此处登录。</p>
       <p>输入本机 API 凭据后开始操作。凭据仅在当前页面内存中使用，刷新后需重新输入。</p>
       <label htmlFor="api-token">API 凭据</label>
-      <input id="api-token" type="password" autoComplete="off" value={token}
+      <input id="api-token" type="password" autoComplete="off" aria-describedby="api-token-help" value={token}
         onChange={(event) => setToken(event.target.value)} disabled={pending} required />
       <button type="submit" disabled={pending}>{pending ? '认证中…' : '验证身份'}</button>
       {error && <p role="alert">{error}</p>}
