@@ -37,7 +37,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件，
-前端已支持显式审阅、手动刷新状态与带认证的 Findings 读取。
+前端已支持显式审阅、手动刷新状态、从事件回看某次执行与带认证的 Findings 读取。
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
@@ -65,8 +65,10 @@ Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机�
 第 44 步完成独立的严重度校准指标、边界回归及历史捕获离线复算，用户审阅后于 2026-10-22 以 `db963e0` 推送至 `origin/main`。
 第 45 步完成前端只读审阅触发、执行状态、Findings 校验展示与真实 HTTP 贯穿测试，用户审阅后于 2026-10-22 以 `ba8d8f7` 推送至 `origin/main`。
 第 46 步完成本机凭据初始化命令、认证启动提示及真实进程恢复演练，用户审阅后于 2026-10-23 以 `668adf2` 推送至 `origin/main`。
-第 47 步完成从空 Task 列表开始的前端完整 HTTP 验收、响应丢失恢复及无效 Findings 恢复回归，改动尚未提交，待用户审阅。
-用户选择先用受控接口验证；真实企业 GitLab 身份/仓库联调、完整质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
+第 47 步完成从空 Task 列表开始的前端完整 HTTP 验收、响应丢失恢复及无效 Findings 恢复回归，用户审阅后于 2026-10-23 以 `afdb722` 推送至 `origin/main`。
+第 48 步补充按执行 ID 查询原审阅记录、从事件时间线回看 Findings 及隔离回归，改动尚未提交，待用户审阅。
+前期用户选择先用受控接口验证；2026-10-23 已授权在本机 GitLab 创建专用测试项目，项目准备与直接 API/Git 验证已完成，详见第 48 步后的试点准备记录。
+平台与本机 GitLab 的 HTTPS 全链路联调、真实企业项目质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -3312,7 +3314,7 @@ race 运行同时启用第 45 步的前端真实 HTTP 贯穿用例。前端 91 �
 
 ### M14 本机试点（第 47 步）：前端完整 HTTP 验收与故障恢复
 
-- 状态：2026-10-23 完成实现，验证结果见下；改动尚未提交，待用户审阅。
+- 状态：2026-10-23 完成实现，用户审阅后以 `afdb722` 推送至 `origin/main`。
 - 接续点：第 45 步的真实 HTTP 前端回归从预置 READY Workspace 开始，第 46 步补齐了首次身份配置；本步把前端与实际部署装配连接起来，从空存储完成业务闭环。
 - 范围：新增跨进程验收和受控故障场景，扩展已有外部测试夹具。不修改前后端生产业务、认证策略、监听范围、Workspace Prepare 或依赖。
 
@@ -3374,6 +3376,94 @@ API 日志不包含测试身份、GitLab 或模型 token。
 并由人工确认 Findings。当前已覆盖的合成/受控流程不能代表企业项目分布、生产质量或故障持久恢复能力；
 真实浏览器视觉验收、正式人工标注、工具动作安全审计和持久化仍是独立待办。
 
+### M14 本机试点（第 48 步）：按执行 ID 回看审阅记录与 Findings
+
+- 状态：2026-10-23 完成实现，改动尚未提交，待用户审阅。
+- 问题：原 `GET /tasks/{id}/review` 只返回最近执行。开始新一轮后，原记录仍用于幂等重放，但页面无法通过事件打开它，影响人工复核与失败追溯。
+- 范围：增加历史记录读取接口和事件入口，复用现有执行记录、Artifact 校验与认证；执行流程和最新状态接口保持原有行为。
+
+#### 服务端读取与隔离
+
+新增 `GET /api/v1/tasks/{id}/reviews/{executionId}?tenantId=...`。
+Handler 通过既有认证中间件和 `queryTenant` 取得可信租户，再调用 `review.Service.GetExecutionByID`。
+服务先验证 Task 属于该租户，再校验执行索引的租户和原记录的 Task 绑定；读锁保护索引与记录，返回不可变副本。
+未认证为 401、冒用租户为 403、缺失/重复租户声明为 400；跨租户、错误 Task 绑定及不存在的执行均使用同一 404 响应。
+历史读取与已有 Task/Artifact 读取遵循相同策略：同租户可读，不新增细粒度角色或仓库权限撤销语义。
+
+新索引仅保存 `executionId → 原幂等记录键`，原记录仍是执行状态来源。
+RUNNING 更新到终态时，按 ID 查询随之返回终态；开始新一轮不会替换旧终态或改变它的 Artifact。
+读取不访问 Workspace 目录、Git 或模型，不追加事件，也不改变最新执行投影。
+Java 类比：在已有内存 Repository 外加一个 ID 索引，读取同一条领域记录，而不是复制第二套历史状态。
+这仍是进程内追溯入口，尚未具备持久化历史、审计存储或重启恢复。
+
+#### 前端回看
+
+Task 事件的“查看本次审阅”打开 `ReviewRecord`；用户选中之前不会请求记录。
+它按事件绑定的 executionId、Workspace ID/version，以及 Task 的 tenant/ID/base/head 校验服务端返回；
+终态事件带 Artifact ID 时也要求一致。开始事件可以查询到该执行之后更新的终态。
+该入口不依赖当前 READY Workspace 面板，成功记录复用 `ReviewFindings` 的认证读取、字节数、SHA-256、引用和 schema 校验。
+失败/取消只显示已知错误原因；HTTP 异常使用固定文案，服务端正文和未知异常不会直接显示。
+
+刷新所选记录只发 GET；关闭、切换执行或 Task、退出身份后中止旧请求，迟到 JSON/Artifact 不会写回页面。
+时间线样式限定到直接事件节点，避免覆盖嵌套 Findings 的排版与严重度样式。
+
+#### 回归证据
+
+先在原接口上观察到新增按 ID 查询测试返回 404、前端缺少事件打开按钮，再接入实现。
+HTTP 回归覆盖新一轮后旧结果保持原样、Workspace 目录移走仍能读、同键重放与按 ID 查询一致，
+以及失败后成功、运行到成功/取消、401/403/400/404 与 Task/租户双重绑定。
+前端新增 21 个用例覆盖原 Findings 读取、身份/引用错配、已知错误、只读刷新与迟到响应隔离。
+已有真实 Go HTTP/React 联调扩展为两轮审阅后回看第一轮；原 Artifact 内容校验通过，
+仍只产生两次 CLI 推理和 11 条事件，退出后另一租户不能读取原执行或 Findings。
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test ./... -count=1` | 全部通过 |
+| `AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test -race ./... -count=1` | 全部通过，含专项 Review HTTP 与三个完整试点场景 |
+| `go vet ./...` / golangci-lint | 通过，0 issues |
+| 前端普通测试 | 12 个文件、112 个用例通过；两个由 Go 提供服务的用例按约定跳过 |
+| 前端 lint / typecheck / build | 全部通过 |
+| gofmt / diff / 历史证据 | 通过，26 个历史评测 JSON 与已推送 HEAD 逐字节一致 |
+
+本步回归使用临时仓库、受控外部模型进程与真实 HTTP，不读取长期模型 key，也未产生付费模型请求。
+用户已授权在本机 GitLab 创建专用测试项目；连接及实际项目试用准备单独记录，不能将受控回归算作真实模型质量验收。
+
+第一次全量 race 运行发现原 Review 专项 HTTP 测试在 READY 面板刚挂载、被动 effect 尚未完成时立即点击，
+导致本次模拟点击未发起查询。用 `await act(async () => {})` 等待 React 完成挂载后再模拟下一次交互；
+专项 race 连续五轮通过，随后全量 race（包含完整 HTTP 场景）通过。没有以延长超时或重复点击掩盖失败。
+
+#### 本机真实 GitLab 项目准备（HTTPS 联调待执行）
+
+用户于 2026-10-23 告知本机已部署 GitLab，并授权建立测试项目。
+已在现有 `gitlab` 容器（18.11.1）创建独立私有项目，未改动其他仓库或 GitLab 全局配置：
+
+| 项目 | 当前值 |
+| --- | --- |
+| 浏览器入口 | `http://127.0.0.1:8929/root/agent-platform-pilot-20261023` |
+| 项目 ID / 路径 | `2` / `root/agent-platform-pilot-20261023` |
+| 默认分支 | `master` |
+| 基线 SHA | `6762d4b6bb277debaac18a12d8b3df0b4057c9aa` |
+| 审阅分支 | `review/simplify-average` |
+| Head SHA | `9ce4c65d38c6c9c713902744e168887b3dee0624` |
+| 固定 diff SHA-256 | `259734fcb007b2c0c2f0daedd384a5a4fb277fb48f11b4e8871cd15a09d8bd87` |
+
+项目包含 `pricing.py` 与两个 unittest。基线支持空列表，审阅分支移除空列表保护。
+已通过真实 GitLab HTTP API 验证项目和两个 commit 可读；未认证访问私有项目返回 404。
+使用项目只读凭据实际 clone 并 detached checkout 两个固定 SHA：基线两个测试通过，
+head 的正常列表测试通过、空列表测试按预期出现 `ZeroDivisionError`，工作树干净。
+新项目禁用 CI 与共享 Runner，本次仅验证这一合成案例的输入准备，尚未调用模型或产出 Findings。
+
+通过本机 GitLab 标准 service 创建项目级 Reporter token，只含 `read_api` / `read_repository`，2026-10-30 到期。
+凭据只保存于工作区外 `/private/tmp/agent-platform-gitlab-pilot-20261023/gitlab-credential.json`，权限 0600；
+该目录权限 0700，还包含非敏感 manifest、验证报告、测试日志和 patch，token 未写入仓库、命令行或聊天。
+这是临时试点目录，清理或到期后需重新配置凭据，不是长期密钥存储。
+
+当前实际入口只有 HTTP，GitLab 公布的 clone URL 为 `http://localhost/root/agent-platform-pilot-20261023.git`，
+还缺少宿主映射端口。生产 Connector 要求 HTTPS 且 API/clone 同源，当前部署尚不满足。
+下一步先配置有效的 HTTPS 入口、GitLab external URL 和可信 CA，使 API 返回的 clone URL 与平台配置一致，
+再使用此项目和受限服务身份执行 Task → Workspace → Review → Findings 联调。
+调整 external URL 或重载 GitLab 会影响现有实例，部署前需核对现有客户端和 Runner 使用的地址；本次完成测试项目准备。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -3405,7 +3495,7 @@ node --run build
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
   它们还不是事务 Outbox，也没有发布到 Event Bus。
-- Review 执行及幂等记录也只在单进程内存中；GET 只返回每个 Task 最近执行，暂无按 executionId 查询的历史接口。
+- Review 执行及幂等记录也只在单进程内存中；已支持最近执行及按 executionId 读取原记录，前端可从事件回看，重启仍全部丢失。
   Review、Artifact 与事件提交不是持久事务，尚无崩溃恢复、持久调度、完整 Task 执行状态机或统一执行 deadline。
   API 已具备显式部署装配，默认关闭 Review，所有模式只接受 loopback 监听；已实现 Docker 只读 Worker、受控转发与真实 Flash 联调。
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
@@ -3433,7 +3523,8 @@ node --run build
   分片、大文件引用、内容分类与保留策略。
 - Artifact 当前是单进程内存 Store，已经具备不可变副本、checksum、幂等和 tenant 范围读取，但进程
   重启即丢失，也没有对象存储、数据库索引、加密、保留期、分页列表或垃圾回收。
-- Repository Connector 目前只支持 GitLab；真实企业 GitLab 凭据联调尚未执行。
+- Repository Connector 目前只支持 GitLab；本机真实 GitLab 专用项目已完成直接 API/Git 验证，
+  平台 HTTPS Connector 联调尚待补齐服务入口和公布的 clone URL，真实企业项目验收仍未执行。
 - Task 目前只支持 `CREATED → QUEUED`；`QUEUED` 只是状态投影，还没有真实队列、调度器或
   工作流执行。
 - 列表一次返回进程内的全部 Task，尚无分页协议。

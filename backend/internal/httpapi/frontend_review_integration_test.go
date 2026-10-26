@@ -42,4 +42,7 @@ func TestFrontendReviewFlowOverAuthenticatedHTTP(t *testing.T) {
 	if operation := fixture.latest(t); operation.Artifact == nil || string(operation.State) != "SUCCEEDED" {
 		t.Fatal("frontend flow did not save a successful Findings artifact")
 	}
+	if len(preparationEventsForTest(t, fixture.handler, fixture.ready)) != 11 {
+		t.Fatal("replay and historical reads must not append execution events")
+	}
 }

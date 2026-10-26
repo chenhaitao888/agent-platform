@@ -624,6 +624,17 @@ curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i 'http://127.0.0.1:8080/api/v1
 已装配 Runner 时，首次成功返回 `201` 与 `SUCCEEDED` 执行投影，其中包含
 `PR_REVIEW_FINDINGS / application/json` Artifact 元数据；内容仍使用现有 Artifact 读取接口。
 GET 返回该 Task 最近一次执行的 `RUNNING / SUCCEEDED / FAILED / CANCELED` 投影。
+按事件中的 executionId 回看某次执行，可使用
+`GET /api/v1/tasks/{id}/reviews/{executionId}?tenantId=...`，例如：
+
+```bash
+curl --config "$AGENT_PLATFORM_API_CURL_CONFIG" -i 'http://127.0.0.1:8080/api/v1/tasks/task-1/reviews/review-1?tenantId=tenant-local'
+```
+
+查询须通过 Bearer 认证，声明的 tenantId 须与身份一致；跨租户、错误 Task 绑定和不存在的执行统一返回 404。
+读取原执行不要求 Workspace 目录仍可访问，不读取 Git、调用模型或追加事件；最新执行查询仍保持原有语义。
+RUNNING 记录可以手动刷新到终态，终态记录及其 Findings Artifact 不会被新一轮执行替换。进程重启仍会丢失记录。
+
 内置 Runner 还会记录 `runtime`：集成方式、实际 Codex 版本/二进制 SHA-256、部署模型名，
 Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 SHA-256；
 配置模型连接时还记录 `gatewayUrl` 与部署 `servicePrincipal`，这些字段不包含凭据。
@@ -1042,6 +1053,9 @@ GitLab。每次提交都有新的 request ID；同一份未修改的 Task 表单
 显示在对应区域。列表请求晚到时，前端按 Task ID 和 version 合并，不让旧快照覆盖新状态。
 每个 Task 卡片的“查看事件”按钮会按需加载事件时间线，不会在列表加载时为每个 Task 自动
 发起额外请求。时间线支持审阅执行状态、执行 ID、Findings Artifact ID 与稳定失败码。
+审阅事件旁的“查看本次审阅”可打开那次执行，成功时可读取其原始 Findings；失败/取消时显示原因。
+“刷新执行记录”只查询所选执行；关闭记录、切换 Task 或退出身份后，旧响应不会重新显示。
+该入口不依赖当前 Workspace 面板，可以回看新一轮执行之前的结果。
 `QUEUED` Task 还会显示“查看 Workspace”：已有记录时展示仓库和 SHA；尚未
 登记时展示 Task 已固定的仓库引用和一个登记按钮，不会让用户重复输入。REGISTERED Workspace
 会显示“准备 Workspace”；成功后页面展示 READY、后端记录的真实工作目录，并允许按需查看固定
@@ -1075,7 +1089,8 @@ AGENT_PLATFORM_FRONTEND_INTEGRATION=1 go test ./internal/httpapi -run '^TestFron
 每轮都启动空存储的真实 API 可执行文件，从 React 页面登录、创建 Task、准入、登记/准备 Workspace、
 查看和归档 diff，再到审阅与 Findings/事件展示。使用本机 TLS GitLab 接口、Git smart HTTP、真实 clone/worktree/diff；
 Docker/Worker 进程和模型推理使用受控替身，同时检查事件不重复、固定引用、模型请求次数及跨租户读写拒绝。
-第二条保留从已准备 Workspace 开始的 Review 专项回归，使用真实 HTTP 和受控 Codex CLI。
+第二条保留从已准备 Workspace 开始的 Review 专项回归，使用真实 HTTP 和受控 Codex CLI；
+还验证第二轮完成后从第一轮事件读取原 Findings，且不增加模型调用或事件。
 两者均在独立临时端口运行，不需要真实模型凭据或 Docker，也不会重启当前开发服务。
 这些是 React/jsdom 与实际 HTTP 验证，未替代真实浏览器视觉、真实 Docker 隔离或企业 GitLab/模型质量验收。
 普通前端测试跳过这两个需由 Go 提供服务的用例；普通 Go 测试也不要求安装 Node。

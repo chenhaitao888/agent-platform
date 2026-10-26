@@ -332,6 +332,7 @@ h1 {
 
 .task-list-footer button,
 .task-event-timeline > button,
+.task-event-timeline > ol > li > button,
 .workspace-details > button,
 .workspace-registration > button,
 .workspace-details [role='group'] > button,
@@ -348,6 +349,7 @@ h1 {
 
 .task-list-footer button:hover:not(:disabled),
 .task-event-timeline > button:hover:not(:disabled),
+.task-event-timeline > ol > li > button:hover:not(:disabled),
 .workspace-details > button:hover:not(:disabled),
 .workspace-registration > button:hover:not(:disabled),
 .workspace-details [role='group'] > button:hover:not(:disabled),
@@ -358,6 +360,7 @@ h1 {
 
 .task-list-footer button:focus-visible,
 .task-event-timeline > button:focus-visible,
+.task-event-timeline > ol > li > button:focus-visible,
 .workspace-details > button:focus-visible,
 .workspace-registration > button:focus-visible,
 .workspace-details [role='group'] > button:focus-visible,
@@ -368,6 +371,7 @@ h1 {
 
 .task-list-footer button:disabled,
 .task-event-timeline > button:disabled,
+.task-event-timeline > ol > li > button:disabled,
 .workspace-details > button:disabled,
 .workspace-registration > button:disabled,
 .workspace-details [role='group'] > button:disabled,
@@ -462,7 +466,7 @@ h1 {
   font-weight: 700;
 }
 
-.task-event-timeline ol {
+.task-event-timeline > ol {
   display: grid;
   gap: 0;
   margin: 12px 0 0;
@@ -470,7 +474,7 @@ h1 {
   list-style: none;
 }
 
-.task-event-timeline li {
+.task-event-timeline > ol > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 14px;
@@ -481,24 +485,29 @@ h1 {
   background: transparent;
 }
 
-.task-event-timeline li + li {
+.task-event-timeline > ol > li + li {
   border-top: 1px solid rgb(24 32 39 / 7%);
 }
 
-.task-event-timeline li strong {
+.task-event-timeline > ol > li > strong {
   color: #287a5b;
   font-size: 0.82rem;
 }
 
-.task-event-timeline li span {
+.task-event-timeline > ol > li > span {
   color: #4d5953;
   font-size: 0.82rem;
 }
 
-.task-event-timeline li time {
+.task-event-timeline > ol > li > time {
   grid-column: 1 / -1;
   color: #77817c;
   font-size: 0.72rem;
+}
+
+.task-event-timeline > ol > li > button {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .task-review {

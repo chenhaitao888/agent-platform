@@ -161,6 +161,7 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 	mux.HandleFunc("POST /api/v1/tasks/{id}/artifacts/diff", h.archiveWorkspaceDiff)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/review", h.executeReview)
 	mux.HandleFunc("GET /api/v1/tasks/{id}/review", h.getReviewExecution)
+	mux.HandleFunc("GET /api/v1/tasks/{id}/reviews/{executionId}", h.getReviewExecutionByID)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.getArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.getArtifactContent)
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)

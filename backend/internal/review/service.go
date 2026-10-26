@@ -51,6 +51,7 @@ type Service struct {
 	mu              sync.RWMutex
 	nextExecutionID uint64
 	executions      map[executionScope]executionRecord
+	executionIDs    map[string]executionScope
 	latest          map[string]Execution
 }
 
@@ -64,7 +65,7 @@ func NewServiceWithArtifactStore(workspaces *workspace.Manager, source repositor
 
 func NewServiceWithRunner(workspaces *workspace.Manager, source repository.DiffReader, artifacts *artifact.Store, tasks *task.Store, runner Runner) *Service {
 	return &Service{workspaces: workspaces, source: source, artifacts: artifacts, tasks: tasks, runner: runner,
-		executions: make(map[executionScope]executionRecord), latest: make(map[string]Execution)}
+		executions: make(map[executionScope]executionRecord), executionIDs: make(map[string]executionScope), latest: make(map[string]Execution)}
 }
 
 func (s *Service) Get(ctx context.Context, input GetInput) (Diff, error) {

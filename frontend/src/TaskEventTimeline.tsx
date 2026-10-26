@@ -1,5 +1,6 @@
 import { useAPI } from './api'
 import { useEffect, useRef, useState } from 'react'
+import ReviewRecord, { type ReviewReference } from './ReviewRecord'
 
 import type { Task, TaskEvent } from './task'
 
@@ -50,11 +51,13 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
 
   const [state, setState] = useState<TimelineState>({ kind: 'idle' })
   const controllerRef = useRef<AbortController | null>(null)
+  const [selected, setSelected] = useState<{ taskId: string; tenantId: string; reference: ReviewReference } | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
     controllerRef.current = controller
     setState({ kind: 'idle' })
+    setSelected(null)
     // 类似 Java 请求作用域结束时关闭资源：Task 一换，旧请求的结果就失效。
     return () => controller.abort()
   }, [task.id, task.tenantId])
@@ -63,6 +66,7 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
     const signal = controllerRef.current?.signal
     if (!signal || signal.aborted) return
     setState({ kind: 'loading' })
+    setSelected(null)
 
     try {
       const query = new URLSearchParams({ tenantId: task.tenantId })
@@ -115,10 +119,19 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
               <strong>{event.eventType}</strong>
               <span>{eventSummary(event)}</span>
               <time dateTime={event.occurredAt}>{event.occurredAt}</time>
+              {'review' in event.payload && <button type="button"
+                aria-label={`查看执行 ${event.payload.review.executionId}（事件 ${event.sequence}）`}
+                onClick={() => {
+                  if ('review' in event.payload) setSelected({ taskId: task.id, tenantId: task.tenantId, reference: event.payload.review })
+                }}>查看本次审阅</button>}
             </li>
           ))}
         </ol>
       )}
+      {selected && selected.taskId === task.id && selected.tenantId === task.tenantId && <>
+        <button type="button" onClick={() => setSelected(null)}>关闭审阅记录</button>
+        <ReviewRecord key={JSON.stringify([task.tenantId, task.id, selected.reference])} task={task} reference={selected.reference} />
+      </>}
     </section>
   )
 }

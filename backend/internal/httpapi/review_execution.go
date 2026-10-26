@@ -33,6 +33,19 @@ func (h *handler) getReviewExecution(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, current)
 }
 
+func (h *handler) getReviewExecutionByID(w http.ResponseWriter, r *http.Request) {
+	tenantID, authorized := queryTenant(w, r)
+	if !authorized {
+		return
+	}
+	current, ok := h.reviews.GetExecutionByID(review.GetInput{TaskID: r.PathValue("id"), TenantID: tenantID}, r.PathValue("executionId"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "review execution not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, current)
+}
+
 func (h *handler) executeReview(w http.ResponseWriter, r *http.Request) {
 	var request executeReviewRequest
 	if !decodeStrictRequest(w, r, &request) {

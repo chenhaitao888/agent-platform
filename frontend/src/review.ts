@@ -42,7 +42,7 @@ const object = (value: unknown): value is Record<string, unknown> => typeof valu
 const nonempty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
-export function parseReviewExecution(value: unknown, workspace: Workspace): ReviewExecution {
+export function parseReviewExecution(value: unknown, workspace: Pick<Workspace, 'id' | 'tenantId' | 'taskId' | 'version' | 'baseSha' | 'headSha'>): ReviewExecution {
   const invalid = () => new ReviewResponseError('审阅记录与当前 Workspace 不一致或格式无效，请重新加载。')
   if (!object(value) || !nonempty(value.id) || value.tenantId !== workspace.tenantId ||
     value.taskId !== workspace.taskId || value.workspaceId !== workspace.id || value.workspaceVersion !== workspace.version ||

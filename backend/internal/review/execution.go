@@ -79,6 +79,25 @@ func (s *Service) GetExecution(input GetInput) (Execution, bool) {
 	return current.clone(), true
 }
 
+// GetExecutionByID reads the same saved record used for idempotent replay. The
+// index contains no second copy of execution state; task and tenant bind every read.
+func (s *Service) GetExecutionByID(input GetInput, executionID string) (Execution, bool) {
+	if _, ok := s.tasks.Get(input.TaskID, input.TenantID); !ok {
+		return Execution{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	scope, ok := s.executionIDs[executionID]
+	if !ok || scope.tenantID != input.TenantID {
+		return Execution{}, false
+	}
+	record, ok := s.executions[scope]
+	if !ok || record.taskID != input.TaskID || record.execution.TenantID != input.TenantID {
+		return Execution{}, false
+	}
+	return record.execution.clone(), true
+}
+
 func (s *Service) Execute(ctx context.Context, input ExecuteInput) (ExecuteResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ExecuteResult{}, err
@@ -136,6 +155,7 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput) (ExecuteResul
 		operation.Runtime = &identity
 	}
 	s.executions[scope] = executionRecord{taskID: input.TaskID, expectedWorkspaceVersion: input.ExpectedWorkspaceVersion, execution: operation}
+	s.executionIDs[operation.ID] = scope
 	s.latest[input.TaskID] = operation
 	s.appendReviewEvent(operation, task.EventTypeReviewStarted, input.RequestID, operation.StartedAt)
 	s.mu.Unlock()
