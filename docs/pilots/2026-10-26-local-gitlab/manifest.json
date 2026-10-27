@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "kind": "live-gitlab-synthetic-pilot",
+  "runDate": "2026-10-26",
+  "evidenceFiledDate": "2026-10-27",
+  "productionSourceCommit": "97e0f5accd20e1d06d07a29befe4944f38455459",
+  "integrationTest": "backend/internal/apiapp/gitlab_live_integration_test.go",
+  "integrationTestSHA256": "c409a5e6d94c922f2f4b2d20c70ce7b8b7e1ed2e667e22eef6f052aa59f90465",
+  "gitlabVersion": "18.11.1",
+  "gitlabBaseURL": "https://localhost:8929",
+  "projectId": "2",
+  "projectPath": "root/agent-platform-pilot-20261023",
+  "reviewBranch": "review/simplify-average",
+  "tls": {
+    "customCATrustVerified": true,
+    "withoutCARejected": true,
+    "cloneURL": "https://localhost:8929/root/agent-platform-pilot-20261023.git",
+    "serverCertificateSHA256": "e93815e3f98cfd3c029cca847ae23f30a8a2195d1ff13ef4593bb44db5de923d",
+    "serverCertificateNotAfter": "2027-01-24T06:48:05Z"
+  },
+  "gitlabCredential": {
+    "accessLevel": "Reporter",
+    "scopes": [
+      "read_api",
+      "read_repository"
+    ],
+    "expiresAt": "2026-10-30"
+  },
+  "evidenceCredentialScanPassed": true,
+  "files": {
+    "task.json": "910a1f0e8987394035ade80b97e751cdfd730fc56221fd25270d7c0d8dfbcc1e",
+    "workspace.json": "81f9953eaddae1a4b064b466142957eed4fdd61c4adaa3edd3aab0ba19d83f96",
+    "diff.json": "2519a3cc9d97ead612407e767bbe9f0bf8273e96930d8c21b7378a780ce00bdf",
+    "execution.json": "6f1782dbf692168a685d56e90448fd14787254badf4f1ee8c7d90d30071960af",
+    "findings.json": "38a151f480c0ede7a2289548264d5bf6a4972de76b4fdcabdfd27aac041c1d13",
+    "events.json": "00484dde6ea2742cc1d51226d2d8dbcf0363488f657f0cdf658b2161113fb11c",
+    "verification.json": "303497c76ceed2107465e2f7c5d6a7d064fb9e01f59083ef5906a86ef53613c5"
+  },
+  "limits": [
+    "Synthetic case; no production quality acceptance",
+    "No independent upstream request count or billing measurement",
+    "API, auth identities and Workspace were temporary and stopped after verification",
+    "Checksums are local integrity records, not third-party attestations"
+  ]
+}

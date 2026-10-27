@@ -41,7 +41,7 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
-当前阶段（2026-10-23）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
+当前阶段（2026-10-27）：M13.1 已完成已知交接要求的阶段复核；用户随后确认持续准备 M14，
 范围为只读 Codex exec 与结构化 Findings。第 26～28 步已补齐输入贯穿回归、输出契约和环境预检；
 第 29 步按用户要求取消 0.154.0 的硬编码限制，改为能力预检与实际版本/摘要记录。
 第 30 步修正帮助文本的能力误判，并明确两条检查命令共用 10 秒预算。
@@ -66,9 +66,10 @@ Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机�
 第 45 步完成前端只读审阅触发、执行状态、Findings 校验展示与真实 HTTP 贯穿测试，用户审阅后于 2026-10-22 以 `ba8d8f7` 推送至 `origin/main`。
 第 46 步完成本机凭据初始化命令、认证启动提示及真实进程恢复演练，用户审阅后于 2026-10-23 以 `668adf2` 推送至 `origin/main`。
 第 47 步完成从空 Task 列表开始的前端完整 HTTP 验收、响应丢失恢复及无效 Findings 恢复回归，用户审阅后于 2026-10-23 以 `afdb722` 推送至 `origin/main`。
-第 48 步补充按执行 ID 查询原审阅记录、从事件时间线回看 Findings 及隔离回归，改动尚未提交，待用户审阅。
+第 48 步补充按执行 ID 查询原审阅记录、从事件时间线回看 Findings 及隔离回归，用户审阅后于 2026-10-26 以 `97e0f5a` 推送至 `origin/main`。
+第 49 步完成本机 GitLab HTTPS 配置、真实 API/Docker/模型全链路联调与证据留存；2026-10-26 实跑通过，10 月 27 日中断恢复后完成文档，用户同日审阅通过并批准提交推送。
 前期用户选择先用受控接口验证；2026-10-23 已授权在本机 GitLab 创建专用测试项目，项目准备与直接 API/Git 验证已完成，详见第 48 步后的试点准备记录。
-平台与本机 GitLab 的 HTTPS 全链路联调、真实企业项目质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
+平台与本机 GitLab 的 HTTPS 全链路已通过专用合成项目验证；真实企业项目质量验收、企业代理/Broker 和场景 Skills 仍待后续接入。
 
 ## 3. 当前目录与职责
 
@@ -3378,7 +3379,7 @@ API 日志不包含测试身份、GitLab 或模型 token。
 
 ### M14 本机试点（第 48 步）：按执行 ID 回看审阅记录与 Findings
 
-- 状态：2026-10-23 完成实现，改动尚未提交，待用户审阅。
+- 状态：2026-10-23 完成实现，用户审阅后于 2026-10-26 以 `97e0f5a` 推送至 `origin/main`。
 - 问题：原 `GET /tasks/{id}/review` 只返回最近执行。开始新一轮后，原记录仍用于幂等重放，但页面无法通过事件打开它，影响人工复核与失败追溯。
 - 范围：增加历史记录读取接口和事件入口，复用现有执行记录、Artifact 校验与认证；执行流程和最新状态接口保持原有行为。
 
@@ -3432,7 +3433,7 @@ HTTP 回归覆盖新一轮后旧结果保持原样、Workspace 目录移走仍�
 导致本次模拟点击未发起查询。用 `await act(async () => {})` 等待 React 完成挂载后再模拟下一次交互；
 专项 race 连续五轮通过，随后全量 race（包含完整 HTTP 场景）通过。没有以延长超时或重复点击掩盖失败。
 
-#### 本机真实 GitLab 项目准备（HTTPS 联调待执行）
+#### 本机真实 GitLab 项目准备（10 月 23 日；HTTPS 联调已在第 49 步完成）
 
 用户于 2026-10-23 告知本机已部署 GitLab，并授权建立测试项目。
 已在现有 `gitlab` 容器（18.11.1）创建独立私有项目，未改动其他仓库或 GitLab 全局配置：
@@ -3458,11 +3459,66 @@ head 的正常列表测试通过、空列表测试按预期出现 `ZeroDivisionE
 该目录权限 0700，还包含非敏感 manifest、验证报告、测试日志和 patch，token 未写入仓库、命令行或聊天。
 这是临时试点目录，清理或到期后需重新配置凭据，不是长期密钥存储。
 
-当前实际入口只有 HTTP，GitLab 公布的 clone URL 为 `http://localhost/root/agent-platform-pilot-20261023.git`，
+当时实际入口只有 HTTP，GitLab 公布的 clone URL 为 `http://localhost/root/agent-platform-pilot-20261023.git`，
 还缺少宿主映射端口。生产 Connector 要求 HTTPS 且 API/clone 同源，当前部署尚不满足。
 下一步先配置有效的 HTTPS 入口、GitLab external URL 和可信 CA，使 API 返回的 clone URL 与平台配置一致，
 再使用此项目和受限服务身份执行 Task → Workspace → Review → Findings 联调。
 调整 external URL 或重载 GitLab 会影响现有实例，部署前需核对现有客户端和 Runner 使用的地址；本次完成测试项目准备。
+
+### M14 本机试点（第 49 步）：真实 GitLab HTTPS 与模型全链路
+
+- 状态：2026-10-26 实跑完成，2026-10-27 恢复中断后整理证据；用户同日审阅通过，新增测试、证据和文档随本次提交收录。
+- 接续点：用户授权本机 GitLab 专用项目后，需要解决原 HTTP/错误 clone URL 与平台 HTTPS 同源约束的冲突。
+- 范围：调整本机 GitLab 部署配置、增加显式实跑测试并留存结果；不修改生产 Handler、Workspace Prepare、Runner、认证策略或依赖。
+
+#### 部署与可信输入
+
+按 GitLab 18.11.1 的配置方式，把 external URL 改为 `https://localhost:8929`，
+使用内置 NGINX 和原有 `8929 → 80` 端口映射终止 TLS。
+准备独立 CA 和含 localhost/loopback SAN 的服务器证书；平台与 Git 显式传入部署 CA，未关闭证书校验或修改系统信任。
+原 `gitlab.rb` 已备份，配置应用前核对摘要和 Ruby 语法，应用后容器健康检查通过。
+带 CA 的 GitLab API 读取成功、未带 CA 的连接被拒；API 公布的 clone URL 与 base URL 同源且含正确端口。
+
+项目仍使用 `2 / root/agent-platform-pilot-20261023`，保持第 48 步的固定 base/head 和 patch 摘要。
+只读 Reporter 凭据复制到工作区外私有部署目录，仍在 2026-10-30 到期。
+服务器证书有效期至 2027-01-24；HTTPS 入口、CA、备份、旧客户端迁移和回滚步骤详见
+[实跑记录](pilots/2026-10-26-local-gitlab/README.md)。现有 Runner 缺少配置文件，本轮不构成 CI 验收。
+
+#### 实际执行与测试
+
+新增 `TestLiveGitLabPilotThroughAPI`，只有 `AGENT_PLATFORM_GITLAB_LIVE_TEST=1` 时执行。
+复用真实 API 编译/启动 helper，使用随机双租户身份和独立临时 Workspace，监听 `127.0.0.1:0`。
+GitLab、Git、Docker、Codex 原生沙箱和 DeepSeek 均为实际服务/进程，不使用替身。
+先通过 HTTPS 解析固定 master/head/merge-base、创建与准入 Task、登记并准备 Workspace，校验固定 diff 和 Git HEAD/干净状态，
+再执行一个新的只读 Review，读取与校验 Findings Artifact，验证幂等重放、历史查询及跨租户拒绝。
+
+实际 Worker 镜像为 `sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8`，
+能力与原生 sandbox 预检通过，记录到的 Codex 版本为 0.160.0；这是本次观测值，没有增加固定版本门槛。
+模型使用 `deepseek-flash`，通过现有 stdio 受控转发，模型 key 留在宿主。
+Review 执行约 18.33 秒，整个实跑测试 21.50 秒，成功归档一条 `pricing.py:2` 的 HIGH Finding：
+移除空列表保护使 `average_price([])` 出现除零异常，与准备阶段的回归测试相符。
+
+同键 POST 返回 200，与第一次 201 及按 ID 读取逐字节一致；事件保持 8 条，工作区前后干净。
+未认证请求返回 401；冒用租户创建为 403；另一租户读取 Task/Workspace/Review/历史执行/Findings 或发起评审均为 404，拒绝不改变事件。
+临时 API 正常关闭，检查时未遗留平台 Worker 容器。运行日志中的 API/GitLab token 检查及归档证据的真实凭据检查均通过。
+
+七份原始 JSON、manifest 和说明已保存至 `docs/pilots/2026-10-26-local-gitlab/`。
+manifest 绑定生产源提交、测试源码摘要、API 可执行文件摘要所在记录及各证据摘要；不会改写之前 26 个评测 JSON。
+一次 Review 可能包含多次模型 HTTP 请求；本次没有独立保存上游请求数、用量或账单，不能据此计算费用。
+助手核对的问题描述不等同于正式人工标注，本案例仍不能代表真实企业 PR 分布或生产质量。
+
+| 验证 | 结果 |
+| --- | --- |
+| 改动前 apiapp / GitLab Connector / HTTP API 普通回归 | 通过 |
+| 真实 GitLab HTTPS API、证书信任与 clone URL | 通过 |
+| Worker 能力与原生只读沙箱预检 | 通过 |
+| `TestLiveGitLabPilotThroughAPI` 显式实跑 | 通过；只发起一次新 Review，未因中断重跑模型 |
+| `go test -race ./... -count=1` | 全部通过；需要显式外部环境的用例按约定跳过 |
+| `go vet ./...` / golangci-lint | 通过，0 issues |
+
+本步未改前端，沿用第 48 步已通过的前端验证；新增的是实际后端链路验收，不声称完成真实浏览器验收。
+实跑使用临时 API 和内存存储，结果由文件留存；它不是常驻试用环境。
+后续先把前端接到真实试点部署、由用户复核 Findings，再扩展代表性样例和正式质量判定。
 
 ## 7. 常用验证命令
 
@@ -3523,8 +3579,8 @@ node --run build
   分片、大文件引用、内容分类与保留策略。
 - Artifact 当前是单进程内存 Store，已经具备不可变副本、checksum、幂等和 tenant 范围读取，但进程
   重启即丢失，也没有对象存储、数据库索引、加密、保留期、分页列表或垃圾回收。
-- Repository Connector 目前只支持 GitLab；本机真实 GitLab 专用项目已完成直接 API/Git 验证，
-  平台 HTTPS Connector 联调尚待补齐服务入口和公布的 clone URL，真实企业项目验收仍未执行。
+- Repository Connector 目前只支持 GitLab；本机专用合成项目已通过真实 HTTPS Connector / Docker / 模型 / API 全链路。
+  实跑使用临时 API，常驻前端试用、真实企业项目质量验收与长期部署运维仍未完成。
 - Task 目前只支持 `CREATED → QUEUED`；`QUEUED` 只是状态投影，还没有真实队列、调度器或
   工作流执行。
 - 列表一次返回进程内的全部 Task，尚无分页协议。

@@ -812,7 +812,8 @@ go test ./internal/httpapi -run '^TestDeepSeekWorkerLiveIntegration$' -count=1 -
 默认测试模型是 `deepseek-flash`，可通过 `AGENT_PLATFORM_DEEPSEEK_MODEL=deepseek-v4-pro` 选择用户指定的另一模型。
 本轮实际验证了 Flash：固定 diff → 原生只读 Codex → 模型 → Findings Artifact → 幂等重放，
 并检测出合成代码中的除零回归。这是一个联通和基本质量样例，尚不能代表真实仓库的整体审阅质量；
-API 可按启动说明显式启用审阅；真实 GitLab 服务身份/仓库联调与整体质量验收仍待后续进行。
+API 可按启动说明显式启用审阅；本机真实 GitLab 专用项目的 HTTPS 全链路联调已于 2026-10-26 通过，
+见下面的实跑入口；企业项目整体质量验收仍待后续进行。
 
 API 可执行文件与真实 Docker 的离线联调仅使用受控 HTTPS GitLab/模型接口、临时 Git 仓库和测试凭据：
 
@@ -827,6 +828,21 @@ go test ./internal/apiapp -run '^TestAPIExecutableDockerIntegration$' -count=1 -
 这条测试实际启动编译后的 API，执行 Task → HTTPS clone → READY Workspace → 原生隔离 Worker →
 模型 HTTPS 流 → Findings Artifact → 重放，并验证 SIGINT 时在途审阅按预算失败、响应送达和容器清理。
 普通测试还覆盖默认关闭、部署拒绝、无凭据启动/执行失败、TLS 信任与不兼容镜像；真实 Docker 测试需显式启用。
+
+真实 GitLab + Docker + 模型的完整试点另有显式入口 `TestLiveGitLabPilotThroughAPI`。
+它实际创建 Task、准备 HTTPS Workspace、执行一次新的 Review，并验证 Findings 摘要、幂等重放、
+历史读取、双租户隔离和工作区未改动；普通测试默认跳过，不自动调用付费模型。
+使用已有完整部署环境后，设置 `AGENT_PLATFORM_GITLAB_LIVE_TEST=1`、`AGENT_PLATFORM_PILOT_PROJECT`、
+`AGENT_PLATFORM_PILOT_BASE`、`AGENT_PLATFORM_PILOT_HEAD` 与新建证据目录 `AGENT_PLATFORM_PILOT_EVIDENCE_DIR`，执行：
+
+```bash
+cd backend
+go test ./internal/apiapp -run '^TestLiveGitLabPilotThroughAPI$' -count=1 -v
+```
+
+本机 GitLab 现使用 `https://localhost:8929`，需要部署 CA 文件验证；旧 HTTP 入口已切换为 HTTPS。
+本次合成案例返回一条 `pricing.py:2` 的除零回归 Finding，不代表生产质量验收。
+配置、证据、凭据到期时间和回滚方法见[本机 GitLab 实跑记录](docs/pilots/2026-10-26-local-gitlab/README.md)。
 
 ### 固定样例评测与人工判定
 
