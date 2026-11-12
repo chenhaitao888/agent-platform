@@ -76,9 +76,9 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
 
   return (
     <section className="task-creator" aria-labelledby="create-task-title">
-      <h2 id="create-task-title">创建 Task</h2>
+      <div className="creator-heading"><span className="creator-icon" aria-hidden="true">＋</span><h2 id="create-task-title">新建审阅任务</h2></div>
       <p className="task-creator-description">
-        提交一个最小研发任务，当前数据只保存在 Go 进程内存中。
+        选择代码版本，告诉审阅者需要关注什么。
       </p>
 
       <form onSubmit={handleSubmit}>
@@ -98,21 +98,21 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           required
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
-          rows={4}
+          rows={3}
+          placeholder="例如：检查这次改动是否引入边界条件问题"
         />
-
-        <p className="task-creator-fixed-value">Git provider：gitlab</p>
 
         <label htmlFor="task-repository-id">仓库 ID</label>
         <input
           id="task-repository-id"
           required
           value={repositoryID}
+          placeholder="GitLab 项目 ID"
           onChange={(event) => setRepositoryID(event.target.value)}
         />
 
         <p className="task-creator-fixed-value">
-          目标分支：master；Review Base（merge-base）由平台计算并固定。
+          使用 GitLab 仓库，与 master 的共同基线由平台计算。
         </p>
 
         <label htmlFor="task-head-sha">Head SHA</label>
@@ -120,10 +120,11 @@ export default function TaskCreator({ onCreated }: TaskCreatorProps) {
           id="task-head-sha"
           required
           value={headSHA}
+          placeholder="粘贴完整的提交 SHA"
           onChange={(event) => setHeadSHA(event.target.value)}
         />
 
-        <button type="submit" disabled={isSubmitting}>
+        <button className="button-primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? '创建中…' : '创建 Task'}
         </button>
       </form>

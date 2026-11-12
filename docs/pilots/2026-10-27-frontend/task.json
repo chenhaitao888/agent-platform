@@ -1,0 +1,18 @@
+{
+  "id": "task-1",
+  "tenantId": "tenant-local",
+  "idempotencyKey": "task-create:e58a5c19-d623-422f-8958-2a000355f4fa",
+  "type": "PR_REVIEW",
+  "goal": "第 50 步：真实浏览器只读审阅试用",
+  "repository": {
+    "provider": "gitlab",
+    "repositoryId": "2",
+    "targetBranch": "master",
+    "targetSha": "6762d4b6bb277debaac18a12d8b3df0b4057c9aa",
+    "baseSha": "6762d4b6bb277debaac18a12d8b3df0b4057c9aa",
+    "headSha": "9ce4c65d38c6c9c713902744e168887b3dee0624"
+  },
+  "status": "QUEUED",
+  "version": 2,
+  "createdAt": "2026-10-27T10:23:54.96676Z"
+}

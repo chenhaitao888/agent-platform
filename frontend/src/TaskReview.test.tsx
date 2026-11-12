@@ -29,7 +29,7 @@ it('starts an authenticated review for a ready workspace and displays its bound 
   const token = 'test-review-token-12345678901234567890'
   const api = { tenantId: reviewTask.tenantId, fetch: authenticatedFetch(token, new AbortController().signal) }
   render(<APIContext.Provider value={api}><WorkspaceDetails task={reviewTask} /></APIContext.Provider>)
-  fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的 Workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   await screen.findByText('READY')
   expect(fetchMock).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的审阅状态' }))

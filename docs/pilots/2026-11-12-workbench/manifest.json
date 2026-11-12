@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-12",
+  "baselineCommit": "15466899e6e7ed345c6bee8c3f6149dda3eaf024",
+  "workingTreeUncommitted": true,
+  "sourceSHA256": {
+    "frontend/src/App.tsx": "d2ed7434047949d3ffa126d1974f0007b1d54b937807fdcc053b676cfb63e5ca",
+    "frontend/src/Authentication.tsx": "e28ffc23e9269d3356a352324caaecae09d0f70cd6ad43b53799a303c2a1c1ac",
+    "frontend/src/PilotFlow.http.test.tsx": "79c356f2c341217f5188b944e9589f7481257d701d553d0c574619b326dac924",
+    "frontend/src/ReviewFindings.tsx": "cd4e0febc2307297bcb887e3f8de87ec686f45faa070298696e44712e641a7dd",
+    "frontend/src/ReviewRecord.tsx": "80808274657932555320ab11e5fe36a9bf902ef5127bd7139ce217b51c4818b9",
+    "frontend/src/TaskCreator.tsx": "7bd14627cf2753a0b2c293c0138b1ec0b5a567077e17e0ede79939b194832d1e",
+    "frontend/src/TaskEventTimeline.tsx": "64530d133e61162291eba430ba356cfdf4d28d6e415dc670aceda6bcb132c5d7",
+    "frontend/src/TaskReview.http.test.tsx": "1908ae55e9f64913d6341232e9dc5af8859f2f18f775d0606d73acc75b2db01c",
+    "frontend/src/TaskReview.test.tsx": "d837d2c143b32725150b34b72fa121bb548ddb5ff991c5ff51c8a53af46af646",
+    "frontend/src/TaskReview.tsx": "764185374abb5953c6b6fe43a58e289d3fc960de00531047d861b4c66aa12fb6",
+    "frontend/src/TaskWorkspace.review.test.tsx": "dd7358e62bb5c4f3e3aef65fd3dcfbc98b30acc5b940a9411b94447cbce345d5",
+    "frontend/src/TaskWorkspace.test.tsx": "42836649c47905e8a91c06bfe5ae5e30789d884fbcdbfc3a4257dcc00f8dc743",
+    "frontend/src/TaskWorkspace.tsx": "950d85693d1ea3bf8e3898bf865e249c454a8d6c5784d45145102ac15e185f30",
+    "frontend/src/WorkspaceDetails.test.tsx": "0c086d1c7411b666b305512318a22198818ffecc51df1847a699ad5d32497786",
+    "frontend/src/WorkspaceDetails.tsx": "501d2f5cacee26694c0c01a94fc9d362945eac3b76c31b8f397e6f3056a268e2",
+    "frontend/src/styles.css": "d2091f4d5402dd2ebe1d8222c753b53d7c58f7e77b861227d81aace3e24344ea",
+    "frontend/tsconfig.json": "2d10df5c2a856a2ecd64f715b731eee12d361b77c9e5e0c8d5034232d3ae71db",
+    "frontend/vite.config.ts": "2e1b0b2cd18487de9bdc4e0aa176816a63c95400c4f3e04df22ea62362e296ac"
+  },
+  "files": {
+    "README.md": "35648bb509aaef3c50ab65cd94662f45681e63c7cf149bf7c04b21be1f2fe446",
+    "desktop.png": "1c59ee6f0a90e5ecece2b35887de70f2f55e4bf310ab4f2c6d61c416c6488538",
+    "login.png": "e08f9dfe3dd99445687dfdebeff47ac5ec7d95402b885b54e19ba5d92bb7e64c",
+    "mobile.png": "0272b51bf521385f389b78f6dc9a251e6b4bfd5a220a49d8f65130b34ab81ada",
+    "verification.json": "f6964fc2ba38ad36fc6cbb98472b84d3e7095397ea7015c2da18e224feebac00"
+  },
+  "apiCredentialScanPassed": true,
+  "checks": {
+    "frontendTestsPassed": 123,
+    "goHostedHTTPScenariosPassed": [
+      "success",
+      "response-loss",
+      "invalid-findings",
+      "authenticated review and history"
+    ],
+    "newLiveReviews": 0
+  }
+}

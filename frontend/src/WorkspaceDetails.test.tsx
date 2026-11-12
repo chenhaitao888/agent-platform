@@ -74,14 +74,14 @@ describe('WorkspaceDetails', () => {
 
     const { rerender } = render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('READY')
     fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
 
     rerender(<WorkspaceDetails task={{ ...queuedTask, id: 'task-2' }} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-2 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-2' }),
     )
     await screen.findByText('READY')
     fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
@@ -136,7 +136,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
 
     const details = await screen.findByRole('group', {
@@ -214,7 +214,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
 
     const repositoryReference = await screen.findByRole('group', {
@@ -235,7 +235,7 @@ describe('WorkspaceDetails', () => {
     fireEvent.click(screen.getByRole('button', { name: '登记 Workspace' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('response lost')
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByRole('group', { name: 'task-1 的仓库引用' })
     fireEvent.click(screen.getByRole('button', { name: '登记 Workspace' }))
@@ -312,13 +312,13 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('REGISTERED')
     fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('response lost')
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('REGISTERED')
     fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
@@ -396,13 +396,13 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('REGISTERED')
     fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
     await screen.findByRole('alert')
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('REGISTERED')
     fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
@@ -474,7 +474,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('READY')
     fireEvent.click(
@@ -528,7 +528,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('READY')
     fireEvent.click(screen.getByRole('button', { name: '查看固定版本差异' }))
@@ -621,7 +621,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByText('READY')
     fireEvent.click(
@@ -712,7 +712,7 @@ describe('WorkspaceDetails', () => {
 
     render(<WorkspaceDetails task={queuedTask} />)
     fireEvent.click(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     )
     await screen.findByRole('group', { name: 'task-1 的仓库引用' })
     fireEvent.click(screen.getByRole('button', { name: '登记 Workspace' }))

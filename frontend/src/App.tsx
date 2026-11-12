@@ -52,51 +52,37 @@ export default function App() {
   const isHealthy = pageState.kind === 'healthy'
 
   return (
-    <main className="page-shell">
-      <section className="status-card" aria-labelledby="page-title">
-        <p className="eyebrow">ENTERPRISE AGENT CONTROL PLANE</p>
-        <h1 id="page-title">Agent Platform</h1>
-        <p className="intro">
-          {pageState.kind === 'loading' && '正在检查 API 连接…'}
-          {pageState.kind === 'healthy' &&
-            'API 连接正常，验证身份后可创建 Task 并查看记录。'}
-          {pageState.kind === 'unavailable' &&
-            'API 健康检查未通过，请查看下方错误信息。'}
-        </p>
-
-        <div className={`status-panel status-panel--${pageState.kind}`}>
-          <span className="status-dot" aria-hidden="true" />
-          <div>
-            <p className="status-label">API 状态</p>
-            <p className="status-value" role="status" aria-label="API 状态">
+    <div className="app-shell">
+      <header className="app-header">
+        <a className="brand" href="#main-content" aria-label="Agent Platform 审阅工作台">
+          <span className="brand-mark" aria-hidden="true">a<span>·</span></span>
+          <span>Agent Platform<small>代码审阅工作台</small></span>
+        </a>
+        <div className="header-tools">
+          <span className="pilot-badge">本机试点</span>
+          <div className={`status-panel status-panel--${pageState.kind}`}>
+            <span className="status-dot" aria-hidden="true" />
+            <span role="status" aria-label="API 状态">
               {pageState.kind === 'loading' && '检查中…'}
               {pageState.kind === 'healthy' && '运行正常'}
               {pageState.kind === 'unavailable' && '暂时不可用'}
-            </p>
+            </span>
           </div>
+          <details className="connection-details">
+            <summary>连接详情</summary>
+            <dl className="metadata">
+              <div><dt>服务</dt><dd>{isHealthy ? pageState.health.service : 'agent-platform-api'}</dd></div>
+              <div><dt>健康接口</dt><dd>/healthz</dd></div>
+            </dl>
+          </details>
         </div>
-
-        <dl className="details">
-          <div>
-            <dt>服务</dt>
-            <dd>{isHealthy ? pageState.health.service : 'agent-platform-api'}</dd>
-          </div>
-          <div>
-            <dt>健康接口</dt>
-            <dd>/healthz</dd>
-          </div>
-          <div>
-            <dt>本步范围</dt>
-            <dd>Task 创建与列表</dd>
-          </div>
-        </dl>
-
+      </header>
+      <main className="page-shell" id="main-content">
         {pageState.kind === 'unavailable' && (
-          <p className="error-message">连接失败：{pageState.message}</p>
+          <p className="error-message" role="alert">连接失败：{pageState.message}</p>
         )}
-
         <Authentication />
-      </section>
-    </main>
+      </main>
+    </div>
   )
 }

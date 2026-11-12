@@ -1,0 +1,152 @@
+{
+  "items": [
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-1",
+      "eventType": "task.created",
+      "occurredAt": "2026-10-27T10:23:54.96676Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 1,
+      "correlationId": "task-1",
+      "causationId": "req_596d1cd6-3764-4a0d-9179-314a52d76b8e",
+      "payload": {
+        "task": {
+          "status": "CREATED",
+          "version": 1
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-2",
+      "eventType": "task.queued",
+      "occurredAt": "2026-10-27T10:23:55.02241Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 2,
+      "correlationId": "task-1",
+      "causationId": "req_00118407-737f-4d2c-b0aa-2737f7f1abaf",
+      "payload": {
+        "task": {
+          "status": "QUEUED",
+          "version": 2
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-3",
+      "eventType": "workspace.registered",
+      "occurredAt": "2026-10-27T10:23:56.420487Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 3,
+      "correlationId": "task-1",
+      "causationId": "req_d1681ce4-23b5-4bf9-bdb2-057d36ff1439",
+      "payload": {
+        "workspace": {
+          "workspaceId": "workspace-1",
+          "state": "REGISTERED",
+          "version": 1
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-4",
+      "eventType": "workspace.preparing",
+      "occurredAt": "2026-10-27T10:23:56.469234Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 4,
+      "correlationId": "task-1",
+      "causationId": "req_0deef4af-36e9-4107-9183-8a635b2d7c86",
+      "payload": {
+        "workspace": {
+          "workspaceId": "workspace-1",
+          "state": "PREPARING",
+          "version": 2
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-5",
+      "eventType": "workspace.ready",
+      "occurredAt": "2026-10-27T10:23:57.827191Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 5,
+      "correlationId": "task-1",
+      "causationId": "req_0deef4af-36e9-4107-9183-8a635b2d7c86",
+      "payload": {
+        "workspace": {
+          "workspaceId": "workspace-1",
+          "state": "READY",
+          "version": 3
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-6",
+      "eventType": "review.started",
+      "occurredAt": "2026-10-27T10:23:58.454296Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 6,
+      "correlationId": "task-1",
+      "causationId": "req_2c5806bb-18e5-42a1-86b0-4a24702d3082",
+      "payload": {
+        "review": {
+          "executionId": "review-1",
+          "workspaceId": "workspace-1",
+          "workspaceVersion": 3,
+          "state": "RUNNING"
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-7",
+      "eventType": "artifact.created",
+      "occurredAt": "2026-10-27T10:24:19.983244Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 7,
+      "correlationId": "task-1",
+      "causationId": "req_2c5806bb-18e5-42a1-86b0-4a24702d3082",
+      "payload": {
+        "artifact": {
+          "artifactId": "artifact-1",
+          "workspaceId": "workspace-1",
+          "type": "PR_REVIEW_FINDINGS",
+          "mediaType": "application/json",
+          "sha256": "e3fb2374bca6a26db376043a029ef3e72633840639af37cf9c3f0678e5751f35",
+          "sizeBytes": 552
+        }
+      }
+    },
+    {
+      "schemaVersion": "2.0",
+      "eventId": "evt-8",
+      "eventType": "review.succeeded",
+      "occurredAt": "2026-10-27T10:24:19.983264Z",
+      "tenantId": "tenant-local",
+      "taskId": "task-1",
+      "sequence": 8,
+      "correlationId": "task-1",
+      "causationId": "req_2c5806bb-18e5-42a1-86b0-4a24702d3082",
+      "payload": {
+        "review": {
+          "executionId": "review-1",
+          "workspaceId": "workspace-1",
+          "workspaceVersion": 3,
+          "state": "SUCCEEDED",
+          "artifactId": "artifact-1"
+        }
+      }
+    }
+  ]
+}

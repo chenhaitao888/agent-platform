@@ -6,6 +6,7 @@ import type { Task, TaskEvent } from './task'
 
 type TaskEventTimelineProps = {
   task: Task
+  autoReadFindings?: boolean
 }
 
 type TaskEventListResponse = {
@@ -46,7 +47,7 @@ function eventSummary(event: TaskEvent): string {
   }
 }
 
-export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
+export default function TaskEventTimeline({ task, autoReadFindings = false }: TaskEventTimelineProps) {
   const api = useAPI()
 
   const [state, setState] = useState<TimelineState>({ kind: 'idle' })
@@ -98,7 +99,7 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
   return (
     <section className="task-event-timeline">
       <button
-        type="button"
+        type="button" className="button-quiet"
         aria-label={`查看 ${task.id} 的事件`}
         disabled={state.kind === 'loading'}
         onClick={() => void loadEvents()}
@@ -130,7 +131,7 @@ export default function TaskEventTimeline({ task }: TaskEventTimelineProps) {
       )}
       {selected && selected.taskId === task.id && selected.tenantId === task.tenantId && <>
         <button type="button" onClick={() => setSelected(null)}>关闭审阅记录</button>
-        <ReviewRecord key={JSON.stringify([task.tenantId, task.id, selected.reference])} task={task} reference={selected.reference} />
+        <ReviewRecord key={JSON.stringify([task.tenantId, task.id, selected.reference])} task={task} reference={selected.reference} autoReadFindings={autoReadFindings} />
       </>}
     </section>
   )

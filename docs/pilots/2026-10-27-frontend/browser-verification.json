@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-27T10:26:24.874Z",
+  "browser": "155.0.8059.85",
+  "taskId": "task-1",
+  "executionId": "review-1",
+  "reviewPosts": 0,
+  "unauthenticatedStatus": 401,
+  "tenantMismatchStatus": 403,
+  "artifactTenantMismatchStatus": 403,
+  "historyFindingsMatch": true,
+  "logoutClearsResults": true,
+  "reloadRequiresLogin": true,
+  "webStorageEntries": 0,
+  "mobileLayout": {
+    "viewport": 390,
+    "scrollWidth": 390
+  },
+  "pageErrors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/healthz",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/session",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/workspace",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/workspace/diff",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/review",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/events",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/reviews/review-1",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/healthz",
+      "status": 200
+    }
+  ]
+}

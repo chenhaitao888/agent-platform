@@ -1,0 +1,17 @@
+{
+  "projectId": "2",
+  "retiredCredentialStatus": 401,
+  "replacementCredentialStatus": 200,
+  "replacementExpiresAt": "2026-11-26",
+  "scopes": [
+    "read_api",
+    "read_repository"
+  ],
+  "accessLevel": "Reporter",
+  "artifactBytes": 552,
+  "artifactSHA256Verified": true,
+  "eventCount": 8,
+  "reviewStartedCount": 1,
+  "reviewSucceededCount": 1,
+  "historyExecutionMatches": true
+}

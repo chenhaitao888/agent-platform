@@ -37,7 +37,7 @@ it.skipIf(!endpoint)('reviews through the real authenticated Go API, replays a l
   fireEvent.change(screen.getByLabelText('API 凭据'), { target: { value: tokenA } })
   fireEvent.click(screen.getByRole('button', { name: '验证身份' }))
   await screen.findByText('Review feature')
-  fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的 Workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   await screen.findByText('READY')
   // Native HTTP can commit the new panel before its passive effects flush.
   // Finish mounting it before simulating the next user interaction.
@@ -52,7 +52,6 @@ it.skipIf(!endpoint)('reviews through the real authenticated Go API, replays a l
   expect(posts[0].idempotencyKey).toBe(posts[1].idempotencyKey)
   expect(posts[0].tenantId).toBe('tenant-review')
   expect(posts[0].expectedWorkspaceVersion).toBe(3)
-  fireEvent.click(screen.getByRole('button', { name: '读取审阅结果' }))
   await screen.findByText('Unchecked error')
   expect(screen.getByText('feature.txt:1')).toBeInTheDocument()
 
@@ -69,7 +68,7 @@ it.skipIf(!endpoint)('reviews through the real authenticated Go API, replays a l
   fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的事件' }))
   fireEvent.click(await screen.findByRole('button', { name: `查看执行 ${previous.id}（事件 8）` }))
   const record = screen.getByRole('region', { name: `执行 ${previous.id} 的记录` })
-  fireEvent.click(await within(record).findByRole('button', { name: '读取审阅结果' }))
+  // Selecting a historical execution automatically reads its bound artifact.
   await within(record).findByText('Unchecked error')
   expect(reads).toContain(`/api/v1/tasks/task-1/reviews/${previous.id}?tenantId=tenant-review`)
   expect(reads.at(-1)).toBe(`/api/v1/artifacts/${previous.artifact!.id}/content?tenantId=tenant-review`)

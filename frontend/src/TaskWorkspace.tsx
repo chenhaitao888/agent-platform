@@ -151,11 +151,16 @@ export default function TaskWorkspace() {
   }, [api])
 
   return (
+    <>
+    <div className="workspace-heading">
+      <div><span className="eyebrow">REVIEW WORKSPACE</span><h1>代码审阅</h1><p>查看改动，理解问题，让最终判断有据可依。</p></div>
+      <span className="readonly-badge"><span aria-hidden="true">◇</span> 只读分析 · 人工复核</span>
+    </div>
     <div className="task-workspace">
-      <TaskCreator onCreated={handleTaskCreated} />
-
       <section className="task-list" aria-labelledby="task-list-title">
-        <h2 id="task-list-title">最近 Task</h2>
+        <div className="section-heading"><div><h2 id="task-list-title">最近 Task</h2><p>打开任务，即可查看代码快照和已有审阅结果。</p></div>
+          {listState.kind === 'ready' && <span className="count-badge">{listState.items.length} 个任务</span>}
+        </div>
 
         {listState.kind === 'loading' && (
           <p className="task-list-message" role="status">
@@ -170,25 +175,27 @@ export default function TaskWorkspace() {
         )}
 
         {listState.kind === 'ready' && listState.items.length === 0 && (
-          <p className="task-list-message">暂无 Task</p>
+          <div className="empty-state"><span className="empty-symbol" aria-hidden="true">↗</span><h3>暂无 Task</h3><p>创建第一个任务，从一份具体的代码改动开始。</p></div>
         )}
 
         {listState.kind === 'ready' && listState.items.length > 0 && (
           <ul aria-label="最近 Task">
             {listState.items.map((task) => (
-              <li key={task.id}>
-                <div className="task-list-metadata">
-                  <span>{task.type}</span>
-                  <strong>{task.status}</strong>
+              <li key={task.id} className="task-card">
+                <div className="task-card-heading">
+                <div>
+                  <div className="task-list-metadata"><span className="task-type">{task.type === 'PR_REVIEW' ? 'PR REVIEW' : task.type}</span><small>{task.id} · version {task.version}</small></div>
+                  <h3 className="task-goal">{task.goal}</h3>
                 </div>
-                <p>{task.goal}</p>
+                <span className="task-status" title="任务准入状态；审阅结果在任务内单独展示">{task.status === 'QUEUED' ? '已准入' : '待准入'}<small>{task.status}</small></span>
+                </div>
                 <div className="task-list-footer">
                   <small>
-                    {task.id} · version {task.version}
+                    {task.repository && <>GitLab · {task.repository.repositoryId} <span aria-hidden="true">/</span> {task.repository.targetBranch}</>}
                   </small>
                   {task.status === 'CREATED' && (
                     <button
-                      type="button"
+                      type="button" className="button-primary"
                       aria-label={`将 ${task.id} 加入队列`}
                       disabled={updatingTaskIDs.has(task.id)}
                       onClick={() => void queueTask(task)}
@@ -197,18 +204,23 @@ export default function TaskWorkspace() {
                     </button>
                   )}
                 </div>
+                {task.status === 'CREATED' && <p className="next-step">下一步：加入队列后，准备代码快照并开始审阅。</p>}
                 {updateErrors.has(task.id) && (
                   <p className="error-message" role="alert">
                     Task 更新失败：{updateErrors.get(task.id)}
                   </p>
                 )}
-                {task.status === 'QUEUED' && <WorkspaceDetails task={task} />}
-                <TaskEventTimeline task={task} />
+                {task.status === 'QUEUED' && <WorkspaceDetails task={task} autoReadReview />}
+                <TaskEventTimeline task={task} autoReadFindings />
               </li>
             ))}
           </ul>
         )}
       </section>
+      <aside className="create-panel" aria-label="新建任务"><TaskCreator onCreated={handleTaskCreated} />
+        <div className="pilot-note"><strong>关于本次试用</strong><p>打开任务只会读取已有信息。点击开始审阅后才会调用模型。</p><p>服务重启后，任务和结果会清空。</p></div>
+      </aside>
     </div>
+    </>
   )
 }

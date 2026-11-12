@@ -10,6 +10,7 @@ import type { Workspace } from './workspace'
 
 type WorkspaceDetailsProps = {
   task: Task
+  autoReadReview?: boolean
 }
 
 type ErrorResponse = {
@@ -39,7 +40,7 @@ type ArtifactState =
 
 const maxDiffPreviewCharacters = 64 * 1024
 
-export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
+export default function WorkspaceDetails({ task, autoReadReview = false }: WorkspaceDetailsProps) {
   const api = useAPI()
 
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
@@ -255,210 +256,82 @@ export default function WorkspaceDetails({ task }: WorkspaceDetailsProps) {
     }
   }
 
+  const current = state.kind === 'loaded' ? state.workspace : null
+  const busy = state.kind === 'loading' || state.kind === 'registering' || state.kind === 'preparing'
+
   return (
     <section className="workspace-details">
-      <button
-        type="button"
-        aria-label={`查看 ${task.id} 的 Workspace`}
-        disabled={
-          state.kind === 'loading' ||
-          state.kind === 'registering' ||
-          state.kind === 'preparing'
-        }
-        onClick={() => void loadWorkspace()}
-      >
-        {state.kind === 'loading' ? '加载 Workspace 中…' : '查看 Workspace'}
-      </button>
-
-      {state.kind === 'failed' && (
-        <p className="error-message" role="alert">
-          Workspace 操作失败：{state.message}
-        </p>
-      )}
-
-      {state.kind === 'absent' && (
-        <div
-          className="workspace-registration"
-          role="group"
-          aria-label={`${task.id} 的仓库引用`}
-        >
-          <p>将使用 Task 创建时固定的仓库引用登记：</p>
-          <dl>
-            <div>
-              <dt>仓库</dt>
-              <dd>
-                {task.repository.provider} / {task.repository.repositoryId}
-              </dd>
-            </div>
-            <div>
-              <dt>目标分支</dt>
-              <dd>{task.repository.targetBranch}</dd>
-            </div>
-            <div>
-              <dt>目标提交 SHA</dt>
-              <dd>{task.repository.targetSha}</dd>
-            </div>
-            <div>
-              <dt>Base SHA</dt>
-              <dd>{task.repository.baseSha}</dd>
-            </div>
-            <div>
-              <dt>Head SHA</dt>
-              <dd>{task.repository.headSha}</dd>
-            </div>
-          </dl>
-          <button type="button" onClick={() => void registerWorkspace()}>
-            登记 Workspace
-          </button>
+      <div className="workspace-entry">
+        <div><strong>{current?.state === 'READY' ? '代码快照已就绪' : '审阅工作区'}</strong>
+          {current?.state !== 'READY' && <p>准备代码快照，或读取这项任务已有的审阅。</p>}</div>
+        <button type="button" className={current ? 'button-quiet' : 'button-primary'}
+          aria-label={`打开审阅工作区：${task.id}`} disabled={busy} onClick={() => void loadWorkspace()}>
+          {state.kind === 'loading' ? '正在读取…' : current ? '刷新工作区' : '打开审阅工作区'}
+        </button>
+      </div>
+      {state.kind === 'failed' && <p className="error-message" role="alert">Workspace 操作失败：{state.message}</p>}
+      {state.kind === 'absent' && <div className="workspace-registration" role="group" aria-label={`${task.id} 的仓库引用`}>
+        <p className="next-step">这项任务尚未登记代码快照。先登记，再准备工作区。</p>
+        <details className="technical-details"><summary>查看固定仓库版本</summary><dl className="metadata">
+          <div><dt>仓库</dt><dd>{task.repository.provider} / {task.repository.repositoryId}</dd></div>
+          <div><dt>目标分支</dt><dd>{task.repository.targetBranch}</dd></div>
+          <div><dt>目标提交 SHA</dt><dd>{task.repository.targetSha}</dd></div>
+          <div><dt>Base SHA</dt><dd>{task.repository.baseSha}</dd></div>
+          <div><dt>Head SHA</dt><dd>{task.repository.headSha}</dd></div>
+        </dl></details>
+        <button className="button-primary" type="button" onClick={() => void registerWorkspace()}>登记 Workspace</button>
+      </div>}
+      {state.kind === 'registering' && <p className="loading-message" role="status">正在登记 Workspace…</p>}
+      {state.kind === 'preparing' && <p className="loading-message" role="status">正在 clone 仓库并创建 worktree…</p>}
+      {current && <div role="group" aria-label={`${task.id} 的 Workspace`}>
+        <div className="workspace-reference">
+          <span className={`workspace-state state-${current.state.toLowerCase()}`}>
+            {current.state === 'READY' ? '快照就绪' : current.state === 'PREPARING' ? '准备中' : '待准备'} <code>{current.state}</code>
+          </span>
+          <span>{current.targetBranch} <span aria-hidden="true">←</span> <code>{current.headSha.slice(0, 8)}</code></span>
+          <details className="technical-details"><summary>版本与工作目录</summary><dl className="metadata">
+            <div><dt>仓库</dt><dd>{current.repository.provider} / {current.repository.repositoryId}</dd></div>
+            <div><dt>目标分支</dt><dd>{current.targetBranch}</dd></div>
+            <div><dt>目标提交 SHA</dt><dd>{current.targetSha}</dd></div>
+            <div><dt>Base SHA</dt><dd>{current.baseSha}</dd></div>
+            <div><dt>Head SHA</dt><dd>{current.headSha}</dd></div>
+            {current.state === 'READY' && current.path && <div><dt>工作目录</dt><dd>{current.path}</dd></div>}
+          </dl></details>
         </div>
-      )}
-
-      {state.kind === 'registering' && (
-        <p className="task-list-message" role="status">
-          正在登记 Workspace…
-        </p>
-      )}
-
-
-      {state.kind === 'preparing' && (
-        <p className="task-list-message" role="status">
-          正在 clone 仓库并创建 worktree…
-        </p>
-      )}
-
-      {state.kind === 'loaded' && (
-        <div role="group" aria-label={`${task.id} 的 Workspace`}>
-          <dl>
-            <div>
-              <dt>状态</dt>
-              <dd>{state.workspace.state}</dd>
-            </div>
-            <div>
-              <dt>仓库</dt>
-              <dd>
-                {state.workspace.repository.provider} /{' '}
-                {state.workspace.repository.repositoryId}
-              </dd>
-            </div>
-            <div>
-              <dt>目标分支</dt>
-              <dd>{state.workspace.targetBranch}</dd>
-            </div>
-            <div>
-              <dt>目标提交 SHA</dt>
-              <dd>{state.workspace.targetSha}</dd>
-            </div>
-            <div>
-              <dt>Base SHA</dt>
-              <dd>{state.workspace.baseSha}</dd>
-            </div>
-            <div>
-              <dt>Head SHA</dt>
-              <dd>{state.workspace.headSha}</dd>
-            </div>
-            {state.workspace.state === 'READY' && state.workspace.path && (
-              <div>
-                <dt>工作目录</dt>
-                <dd>{state.workspace.path}</dd>
-              </div>
-            )}
-          </dl>
-          {state.workspace.state === 'REGISTERED' && (
-            <button
-              type="button"
-              onClick={() => void prepareWorkspace(state.workspace)}
-            >
-              准备 Workspace
-            </button>
-          )}
-          {state.workspace.state === 'PREPARING' && (
-            <p className="task-list-message">
-              Workspace 正在准备中，请稍后刷新。
-            </p>
-          )}
-          {state.workspace.state === 'READY' && (
-            <button
-              type="button"
-              disabled={diffState.kind === 'loading'}
-              onClick={() => void loadDiff()}
-            >
-              {diffState.kind === 'loading'
-                ? '加载固定版本差异中…'
-                : '查看固定版本差异'}
-            </button>
-          )}
-          <TaskReview task={task} workspace={state.workspace} />
-          {diffState.kind === 'failed' && (
-            <p className="error-message" role="alert">
-              差异加载失败：{diffState.message}
-            </p>
-          )}
-          {diffState.kind === 'loaded' && (
-            <section
-              className="workspace-diff"
-              aria-label={`${task.id} 的固定版本差异`}
-            >
-              <dl>
-                <div>
-                  <dt>媒体类型</dt>
-                  <dd>{diffState.diff.mediaType}</dd>
-                </div>
-                <div>
-                  <dt>大小</dt>
-                  <dd>{diffState.diff.sizeBytes} bytes</dd>
-                </div>
-                <div>
-                  <dt>SHA-256</dt>
-                  <dd>{diffState.diff.sha256}</dd>
-                </div>
-              </dl>
+        {current.state === 'REGISTERED' && <div className="next-step"><p>下一步：拉取固定版本的代码，为审阅准备工作区。</p>
+          <button className="button-primary" type="button" onClick={() => void prepareWorkspace(current)}>准备 Workspace</button></div>}
+        {current.state === 'PREPARING' && <p className="loading-message">Workspace 正在准备中，请稍后刷新。</p>}
+        {current.state === 'READY' && <div className="review-workbench">
+          <div className="diff-pane">
+            <div className="pane-heading"><h3>代码差异</h3><button type="button" disabled={diffState.kind === 'loading'} onClick={() => void loadDiff()}>
+              {diffState.kind === 'loading' ? '加载固定版本差异中…' : '查看固定版本差异'}</button></div>
+            {diffState.kind === 'idle' && <div className="diff-placeholder"><span aria-hidden="true">±</span><strong>对照代码，理解改动</strong><p>读取固定版本的差异，与右侧审阅建议逐条核对。</p></div>}
+            {diffState.kind === 'loading' && <p className="loading-message" role="status">正在读取代码差异…</p>}
+            {diffState.kind === 'failed' && <p className="error-message" role="alert">差异加载失败：{diffState.message}</p>}
+            {diffState.kind === 'loaded' && <section className="workspace-diff" aria-label={`${task.id} 的固定版本差异`}>
+              <div className="diff-caption"><span>固定版本对比</span><span>{diffState.diff.sizeBytes} bytes</span></div>
               <pre>{diffState.diff.patch.slice(0, maxDiffPreviewCharacters)}</pre>
-              {diffState.diff.patch.length > maxDiffPreviewCharacters && (
-                <p role="note">
-                  仅预览前 {maxDiffPreviewCharacters.toLocaleString('en-US')} 个字符；
-                  完整差异可归档后读取。
-                </p>
-              )}
-              <button
-                type="button"
-                disabled={artifactState.kind === 'archiving'}
-                onClick={() => void archiveDiff(state.workspace)}
-              >
-                {artifactState.kind === 'archiving'
-                  ? '正在归档…'
-                  : '归档为 Artifact'}
-              </button>
-              {artifactState.kind === 'failed' && (
-                <p className="error-message" role="alert">
-                  Artifact 归档失败：{artifactState.message}
-                </p>
-              )}
-              {artifactState.kind === 'loaded' && (
-                <section
-                  className="workspace-artifact"
-                  aria-label={`${task.id} 的 Diff Artifact`}
-                >
-                  <dl>
-                    <div>
-                      <dt>Artifact ID</dt>
-                      <dd>{artifactState.artifact.id}</dd>
-                    </div>
-                    <div>
-                      <dt>类型</dt>
-                      <dd>{artifactState.artifact.type}</dd>
-                    </div>
-                    <div>
-                      <dt>SHA-256</dt>
-                      <dd>{artifactState.artifact.sha256}</dd>
-                    </div>
-                  </dl>
-                  <ArtifactContent key={artifactState.artifact.id} id={artifactState.artifact.id} tenantId={task.tenantId} />
-                </section>
-              )}
-            </section>
-          )}
-        </div>
-      )}
+              {diffState.diff.patch.length > maxDiffPreviewCharacters && <p role="note">仅预览前 {maxDiffPreviewCharacters.toLocaleString('en-US')} 个字符；完整差异可归档后读取。</p>}
+              <details className="technical-details"><summary>差异文件信息</summary><dl className="metadata">
+                <div><dt>媒体类型</dt><dd>{diffState.diff.mediaType}</dd></div>
+                <div><dt>SHA-256</dt><dd>{diffState.diff.sha256}</dd></div>
+              </dl></details>
+              <button type="button" disabled={artifactState.kind === 'archiving'} onClick={() => void archiveDiff(current)}>{artifactState.kind === 'archiving' ? '正在归档…' : '归档为 Artifact'}</button>
+              {artifactState.kind === 'failed' && <p className="error-message" role="alert">Artifact 归档失败：{artifactState.message}</p>}
+              {artifactState.kind === 'loaded' && <section className="workspace-artifact" aria-label={`${task.id} 的 Diff Artifact`}>
+                <p className="success-message">差异已归档</p>
+                <details className="technical-details"><summary>归档信息</summary><dl className="metadata">
+                  <div><dt>Artifact ID</dt><dd>{artifactState.artifact.id}</dd></div>
+                  <div><dt>类型</dt><dd>{artifactState.artifact.type}</dd></div>
+                  <div><dt>SHA-256</dt><dd>{artifactState.artifact.sha256}</dd></div>
+                </dl></details>
+                <ArtifactContent key={artifactState.artifact.id} id={artifactState.artifact.id} tenantId={task.tenantId} />
+              </section>}
+            </section>}
+          </div>
+          <TaskReview task={task} workspace={current} autoRead={autoReadReview} />
+        </div>}
+      </div>}
     </section>
   )
 }

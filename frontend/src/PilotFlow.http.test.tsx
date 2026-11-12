@@ -64,17 +64,17 @@ it.skipIf(!endpoint)('creates, queues, prepares and reviews a task through the d
     fireEvent.click(screen.getByRole('button', { name: '将 task-1 加入队列' }))
   }
   await screen.findByText('QUEUED')
-  fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的 Workspace' }))
+  fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   fireEvent.click(await screen.findByRole('button', { name: '登记 Workspace' }))
   if (loseResponses) {
     expect(await screen.findByRole('alert')).toHaveTextContent('Workspace 操作失败：controlled response loss')
-    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的 Workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   }
   await screen.findByText('REGISTERED')
   fireEvent.click(screen.getByRole('button', { name: '准备 Workspace' }))
   if (loseResponses) {
     expect(await screen.findByRole('alert', {}, { timeout: 10_000 })).toHaveTextContent('Workspace 操作失败：controlled response loss')
-    fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的 Workspace' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   }
   await screen.findByText('READY', {}, { timeout: 10_000 })
 
@@ -112,7 +112,7 @@ it.skipIf(!endpoint)('creates, queues, prepares and reviews a task through the d
     fireEvent.click(screen.getByRole('button', { name: '开始新一轮审阅' }))
   }
   await screen.findByText('审阅成功', {}, { timeout: 10_000 })
-  fireEvent.click(screen.getByRole('button', { name: '读取审阅结果' }))
+  // The workbench reads the successful artifact automatically, without another POST.
   if (scenario === 'success') await screen.findByText('本轮未报告问题，仍需人工审阅。')
   else {
     await screen.findByText('Controlled review finding')

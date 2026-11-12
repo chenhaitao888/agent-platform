@@ -50,21 +50,42 @@ export default function Authentication() {
 
   if (session) return (
     <APIContext.Provider value={session.api}>
-      <p>当前身份：{session.subject} · 租户：{session.api.tenantId}</p>
-      <button type="button" onClick={logout}>退出身份</button>
+      <div className="session-bar">
+        <span className="breadcrumb">工作台 <span aria-hidden="true">/</span> <strong>代码审阅</strong></span>
+        <div className="session-identity">
+          <span className="avatar" aria-hidden="true">{session.subject.slice(0, 1).toUpperCase()}</span>
+          <span>{session.subject}<small>租户 · {session.api.tenantId}</small></span>
+          <button className="button-quiet" type="button" onClick={logout}>退出身份</button>
+        </div>
+      </div>
       <TaskWorkspace />
     </APIContext.Provider>
   )
 
   return (
-    <form onSubmit={(event) => { void login(event) }}>
-      <p id="api-token-help">这里填写本平台生成的登录 token，粘贴完整内容即可，无需 Bearer 前缀。DeepSeek API Key 和 GitLab token 用于服务端连接，不用于此处登录。</p>
-      <p>输入本机 API 凭据后开始操作。凭据仅在当前页面内存中使用，刷新后需重新输入。</p>
+    <section className="login-layout" aria-labelledby="login-title">
+      <div className="login-intro">
+        <span className="eyebrow">CODE REVIEW, WITH CONTEXT</span>
+        <h1 id="login-title">让每一次改动，<br />都经过认真审阅。</h1>
+        <p>从固定版本的代码差异出发，找到值得关注的问题，保留每一次审阅的依据。</p>
+        <div className="login-flow" aria-label="审阅流程">
+          <div><span>01</span><strong>选择代码</strong><p>固定仓库与提交版本</p></div>
+          <div><span>02</span><strong>只读审阅</strong><p>分析改动，保留原始代码</p></div>
+          <div><span>03</span><strong>人工复核</strong><p>对照差异确认每条建议</p></div>
+        </div>
+      </div>
+      <form className="login-card" onSubmit={(event) => { void login(event) }}>
+      <span className="eyebrow">YOUR WORKSPACE</span>
+      <h2>进入审阅工作台</h2>
+      <p>使用本平台的 API 凭据连接你的工作区。</p>
       <label htmlFor="api-token">API 凭据</label>
       <input id="api-token" type="password" autoComplete="off" aria-describedby="api-token-help" value={token}
-        onChange={(event) => setToken(event.target.value)} disabled={pending} required />
-      <button type="submit" disabled={pending}>{pending ? '认证中…' : '验证身份'}</button>
-      {error && <p role="alert">{error}</p>}
-    </form>
+        placeholder="粘贴本机 API 凭据" onChange={(event) => setToken(event.target.value)} disabled={pending} required />
+      <button className="button-primary" type="submit" disabled={pending}>{pending ? '认证中…' : '验证身份'}</button>
+      <p id="api-token-help" className="field-help">粘贴完整 token，无需 Bearer 前缀。这里不使用 DeepSeek API Key 或 GitLab token。</p>
+      {error && <p className="error-message" role="alert">{error}</p>}
+      <p className="login-note">凭据仅保存在当前页面内存中，刷新后需要重新登录。</p>
+      </form>
+    </section>
   )
 }

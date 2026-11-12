@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAPI } from './api'
 import ReviewFindings from './ReviewFindings'
 import { parseReviewExecution, reviewFailureMessage, reviewHTTPError, ReviewResponseError, type ReviewExecution } from './review'
 import type { Task } from './task'
 import type { Workspace } from './workspace'
 
-type Props = { task: Task; workspace: Workspace }
+type Props = { task: Task; workspace: Workspace; autoRead?: boolean }
 type Status = { kind: 'unknown' | 'absent' } | { kind: 'loaded'; execution: ReviewExecution }
 type Attempt = { key: string; previousExecutionId: string | null }
 
-export default function TaskReview({ task, workspace }: Props) {
+export default function TaskReview({ task, workspace, autoRead = false }: Props) {
   const api = useAPI()
   if (task.type !== 'PR_REVIEW' || task.status !== 'QUEUED' || workspace.state !== 'READY') return null
   if (task.tenantId !== api.tenantId || workspace.tenantId !== api.tenantId || workspace.taskId !== task.id ||
@@ -17,10 +17,10 @@ export default function TaskReview({ task, workspace }: Props) {
     return <p role="alert">当前身份、Task 与 Workspace 不一致，请重新加载。</p>
   }
   // Scope changes unmount the old request, findings and in-memory attempt key.
-  return <ReviewPanel key={JSON.stringify([api.tenantId, task.id, workspace.id, workspace.version, workspace.baseSha, workspace.headSha])} task={task} workspace={workspace} />
+  return <ReviewPanel key={JSON.stringify([api.tenantId, task.id, workspace.id, workspace.version, workspace.baseSha, workspace.headSha])} task={task} workspace={workspace} autoRead={autoRead} />
 }
 
-function ReviewPanel({ task, workspace }: Props) {
+function ReviewPanel({ task, workspace, autoRead }: Props) {
   const api = useAPI()
   const [status, setStatus] = useState<Status>({ kind: 'unknown' })
   const [attempt, setAttempt] = useState<Attempt | null>(null)
@@ -42,7 +42,7 @@ function ReviewPanel({ task, workspace }: Props) {
   const canStart = status.kind !== 'unknown' && !running && !attempt && !blocked
   const address = `/api/v1/tasks/${encodeURIComponent(task.id)}/review`
 
-  async function loadStatus() {
+  const loadStatus = useCallback(async () => {
     const signal = lifetime.current?.signal
     if (!signal || signal.aborted || busy.current) return
     busy.current = true
@@ -67,7 +67,9 @@ function ReviewPanel({ task, workspace }: Props) {
     } finally {
       if (!signal.aborted) { busy.current = false; setPending(null) }
     }
-  }
+  }, [api, address, workspace])
+
+  useEffect(() => { if (autoRead) void loadStatus() }, [autoRead, loadStatus])
 
   async function execute() {
     const signal = lifetime.current?.signal
@@ -98,27 +100,30 @@ function ReviewPanel({ task, workspace }: Props) {
 
   const stateLabels = { RUNNING: '审阅进行中', SUCCEEDED: '审阅成功', FAILED: '审阅失败', CANCELED: '审阅已取消' }
   return <section className="task-review" aria-label={`${task.id} 的只读审阅`}>
-    <h3>只读审阅</h3>
-    <p>先查看已有状态。每次开始新一轮都会调用模型，审阅当前固定版本。</p>
+    <div className="pane-heading"><h3>审阅结果</h3><span className="readonly-label">只读审阅</span></div>
+    <p className="review-help">{autoRead ? '已有结果会自动读取。模型建议需要由你最终确认。' : '先查看已有状态，再选择是否开始审阅。'}</p>
+    {pending === 'status' && <p className="loading-message" role="status">正在读取已有审阅…</p>}
+    {pending === 'execute' && <p className="loading-message" role="status">审阅请求处理中…</p>}
+    {status.kind === 'absent' && <div className="review-empty"><p>尚无审阅记录。</p><small>代码已就绪，可以开始第一次只读审阅。</small></div>}
+    {error && <p className="error-message" role="alert">{error}</p>}
+    {execution && <>
+      <p className={`review-state review-state--${execution.state.toLowerCase()}`} role="status">{stateLabels[execution.state]}<small>{execution.id}</small></p>
+      {(execution.state === 'FAILED' || execution.state === 'CANCELED') && <p>{reviewFailureMessage(execution.errorCode)}</p>}
+      {execution.state === 'SUCCEEDED' && <ReviewFindings key={execution.id} execution={execution} autoRead={autoRead} />}
+      <details className="technical-details"><summary>审阅版本信息</summary><dl className="metadata">
+        <div><dt>审阅 Base SHA</dt><dd>{execution.baseSha}</dd></div>
+        <div><dt>审阅 Head SHA</dt><dd>{execution.headSha}</dd></div>
+      </dl></details>
+    </>}
     <div className="review-actions">
       <button type="button" aria-label={`查看 ${task.id} 的审阅状态`} disabled={pending !== null} onClick={() => { void loadStatus() }}>
         {pending === 'status' ? '正在读取状态…' : '刷新审阅状态'}
       </button>
-      {canStart && <button type="button" disabled={pending !== null} onClick={() => { void execute() }}>
+      {canStart && <button className={execution ? '' : 'button-primary'} type="button" disabled={pending !== null} onClick={() => { void execute() }}>
         {execution ? '开始新一轮审阅' : '开始只读审阅'}
       </button>}
       {attempt && <button type="button" disabled={pending !== null || running || blocked} onClick={() => { void execute() }}>重试本次请求</button>}
     </div>
-    {pending === 'execute' && <p role="status">审阅请求处理中…</p>}
-    {status.kind === 'absent' && <p>尚无审阅记录。</p>}
-    {error && <p className="error-message" role="alert">{error}</p>}
-    {execution && <>
-      <p role="status">{stateLabels[execution.state]}</p>
-      <dl><div><dt>执行 ID</dt><dd>{execution.id}</dd></div>
-        <div><dt>审阅 Base SHA</dt><dd>{execution.baseSha}</dd></div>
-        <div><dt>审阅 Head SHA</dt><dd>{execution.headSha}</dd></div></dl>
-      {(execution.state === 'FAILED' || execution.state === 'CANCELED') && <p>{reviewFailureMessage(execution.errorCode)}</p>}
-      {execution.state === 'SUCCEEDED' && <ReviewFindings key={execution.id} execution={execution} />}
-    </>}
+    {canStart && <p className="field-help">开始{execution ? '新一轮' : ''}审阅会调用模型，不会修改仓库代码。</p>}
   </section>
 }

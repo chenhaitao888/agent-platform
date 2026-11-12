@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "kind": "live-browser-local-pilot",
+  "runDate": "2026-10-27",
+  "baselineSourceCommit": "15466899e6e7ed345c6bee8c3f6149dda3eaf024",
+  "workingTreeUncommitted": true,
+  "changedSourceSHA256": {
+    "scripts/run-local-pilot.py": "8dde7daa5c3cb50b3498226a03f90144ccd200a803e426ce9bacdb4a4e204778",
+    "scripts/test_local_pilot.py": "243b0dcab411037e773ca95326d3d039d86357862fdc593d0785325406e14fa2",
+    "frontend/dev-proxy.ts": "4f137dd23c09454b65bceda30a87c4a2084fb218a51665aea05057a66d73f73d",
+    "frontend/src/dev-proxy.test.ts": "67c9656a26e1f4c79b833f6918b2eb9d9f9a84d3894e6e2de51feaaba1a45f4e",
+    "frontend/vite.config.ts": "2e1b0b2cd18487de9bdc4e0aa176816a63c95400c4f3e04df22ea62362e296ac",
+    "frontend/tsconfig.json": "2d10df5c2a856a2ecd64f715b731eee12d361b77c9e5e0c8d5034232d3ae71db",
+    "frontend/src/App.tsx": "1f2d35a26704737a4e7ca7b927de91356135d7ce6e392a764edf2696a35140b4",
+    "frontend/src/styles.css": "d5ade33560c94e2bfcf49982b8f49e55c31c2a7753fd5db80dcc4dc71c007be3",
+    ".github/workflows/ci.yml": "352189b097c532394dab468119c5d6ae39cb7439f58bfe88e28a8a220e752235"
+  },
+  "apiBinarySHA256": "bc52ac3d8d4b652d846971fd703d3f9444da70c7648513a2e1dcd457138c446c",
+  "frontendURL": "http://127.0.0.1:5174",
+  "apiAddress": "127.0.0.1:8081",
+  "gitlabBaseURL": "https://localhost:8929",
+  "projectId": "2",
+  "reviewExecutionsCreated": 1,
+  "browserVerificationPhase": "readback-after-layout-fix; no additional review",
+  "credentialScan": {
+    "passed": true,
+    "repositoryFilesChecked": 220,
+    "privateServiceLogChecked": true
+  },
+  "files": {
+    "README.md": "2a822375b4da29ee510a3260ee1a7b88ee16a993c5117439d22a8d7a37566e25",
+    "browser-verification.json": "4a70f20a655feae5a55bd32a574459830fce9f3cafab709d645be84ddbb11608",
+    "deployment-verification.json": "b5f51fc37454fcc6effe77779f02fc7be094a391db30eeced71dad9d8d12e82b",
+    "desktop-review.png": "ae2940a2762f117bb27c8ab025b8aa15a2d705b7fad391ab77d48eb3a302935e",
+    "events.json": "82122b9e34acc4d69aab1bd11bf45807729148480d938d3954ddae77e1ae7298",
+    "execution.json": "10f38099eda6104218a26feb48e38472cb580914d91fb4b7c76351bf260efb79",
+    "findings.json": "e3fb2374bca6a26db376043a029ef3e72633840639af37cf9c3f0678e5751f35",
+    "mobile-review.png": "a103605f8aabe4a1632839828cbc53d535d9b33ce448cb9ddc555c4c9088005c",
+    "task.json": "052e68adadcec4276bcc1ab911f3cad139b1127560e1b4d3a985e08c46a8f530",
+    "workspace.json": "ca886479e7f7eafa52a48fb8fb1957f3b871d033b62610dc1b9b680102b515db"
+  },
+  "limits": [
+    "Synthetic project; user adjudication and production quality acceptance pending",
+    "No independent upstream request count, token usage or billing measurement",
+    "API records remain in memory; restart loses state",
+    "Checksums are local integrity records, not third-party attestations"
+  ]
+}

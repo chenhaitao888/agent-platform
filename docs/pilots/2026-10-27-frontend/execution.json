@@ -1,0 +1,35 @@
+{
+  "id": "review-1",
+  "tenantId": "tenant-local",
+  "taskId": "task-1",
+  "workspaceId": "workspace-1",
+  "workspaceVersion": 3,
+  "baseSha": "6762d4b6bb277debaac18a12d8b3df0b4057c9aa",
+  "headSha": "9ce4c65d38c6c9c713902744e168887b3dee0624",
+  "state": "SUCCEEDED",
+  "artifact": {
+    "id": "artifact-1",
+    "tenantId": "tenant-local",
+    "taskId": "task-1",
+    "workspaceId": "workspace-1",
+    "type": "PR_REVIEW_FINDINGS",
+    "mediaType": "application/json",
+    "sha256": "e3fb2374bca6a26db376043a029ef3e72633840639af37cf9c3f0678e5751f35",
+    "sizeBytes": 552,
+    "createdAt": "2026-10-27T10:24:19.983244Z"
+  },
+  "runtime": {
+    "integration": "docker-exec",
+    "imageId": "sha256:820528de3278b28f74f5f2246557981d7730606fad303341b7729345ba2305e8",
+    "codexVersion": "0.160.0",
+    "binarySha256": "50b06603bdcdac39b714f5c3e68583c002b8ad8779ebfdaaf4932ff016b379c0",
+    "model": "deepseek-flash",
+    "seccompPolicy": "codex-bwrap",
+    "seccompSha256": "c731e520256a3bfea369408667316fd6f1b5327773c494da5e1231347a00d72b",
+    "gatewayUrl": "https://api.deepseek.com",
+    "servicePrincipal": "pr-review-deepseek",
+    "modelTransport": "stdio"
+  },
+  "startedAt": "2026-10-27T10:23:58.454296Z",
+  "completedAt": "2026-10-27T10:24:19.983264Z"
+}

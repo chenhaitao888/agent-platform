@@ -1,0 +1,16 @@
+{
+  "stateDir": "/absolute/private/local-pilot",
+  "nodeBinary": "/absolute/node-22/bin/node",
+  "goBinary": "/opt/homebrew/bin/go",
+  "apiPort": 8081,
+  "frontendPort": 5174,
+  "gitlabCredentialFile": "/absolute/private/gitlab-credential.json",
+  "gitlabURL": "https://localhost:8929",
+  "gitlabCAFile": "/absolute/private/ca.pem",
+  "dockerHost": "unix:///absolute/docker.sock",
+  "workerImage": "sha256:<verified-worker-image-id>",
+  "model": "deepseek-flash",
+  "modelURL": "https://api.deepseek.com",
+  "servicePrincipal": "pr-review-deepseek",
+  "modelCredentialFile": "/absolute/private/model-credential.json"
+}

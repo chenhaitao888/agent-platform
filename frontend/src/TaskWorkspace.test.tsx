@@ -345,7 +345,7 @@ describe('TaskWorkspace', () => {
       screen.queryByRole('button', { name: '将 task-1 加入队列' }),
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: '查看 task-1 的 Workspace' }),
+      screen.getByRole('button', { name: '打开审阅工作区：task-1' }),
     ).toBeInTheDocument()
     const requests = fetchMock.mock.calls
       .filter(([, init]) => init?.method === 'PATCH')

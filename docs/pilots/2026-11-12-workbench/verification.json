@@ -1,0 +1,91 @@
+{
+  "checkedAt": "2026-11-12T11:52:32.734Z",
+  "browser": "Chrome/157.0.8103.50",
+  "oneActionLoadsExistingFindings": true,
+  "historyMatches": true,
+  "layouts": [
+    {
+      "viewport": 390,
+      "scrollWidth": 390
+    },
+    {
+      "viewport": 320,
+      "scrollWidth": 320
+    }
+  ],
+  "logout": {
+    "findings": false,
+    "empty": true,
+    "storageEntries": 0
+  },
+  "eventsBefore": 8,
+  "eventsAfter": 8,
+  "reviewPosts": 0,
+  "pageErrors": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/healthz"
+    },
+    {
+      "method": "GET",
+      "path": "/api/healthz"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/session"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/workspace"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/review"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/review"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/workspace/diff"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/events"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/reviews/review-1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/task-1/reviews/review-1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/artifacts/artifact-1/content"
+    }
+  ]
+}
