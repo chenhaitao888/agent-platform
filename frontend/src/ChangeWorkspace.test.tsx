@@ -26,6 +26,7 @@ it('creates a requirement from authorized services and explicitly freezes three 
       return reply({ changeId: 'change-1', changeVersion: 2, snapshot }, 201)
     }
     if (path === '/api/v1/changes/change-1') return reply(record)
+    if (path === '/api/v1/changes/change-1/reviews') return reply({ items: [] })
     throw new Error(`unexpected ${path}`)
   }))
   render(<ChangeWorkspace />)
@@ -41,14 +42,14 @@ it('creates a requirement from authorized services and explicitly freezes three 
   expect(within(detail).getByText('尚未固定快照')).toBeInTheDocument()
   expect(calls.filter(c => c.init?.method === 'POST')).toHaveLength(1)
   fireEvent.click(screen.getByRole('button', { name: '固定代码快照' }))
-  await screen.findByText('快照已固定 · 待审阅')
+  await screen.findByText('快照已固定')
   const snapshotCall = calls.find(c => c.path.endsWith('/snapshots'))!
   const body = JSON.parse(snapshotCall.init!.body as string)
   expect(body.expectedVersion).toBe(1)
   expect(body.services.map((s: { targetBranch: string }) => s.targetBranch)).toEqual(['main', 'release/test', 'master'])
   expect(JSON.stringify(body)).not.toContain('Sha')
   expect(JSON.stringify(body)).not.toContain('repositoryId')
-  expect(calls.some(c => c.path.includes('/tasks') || c.path.includes('/review'))).toBe(false)
+  expect(calls.some(c => c.init?.method === 'POST' && (c.path.includes('/tasks') || c.path.includes('/review')))).toBe(false)
   expect(within(detail).getAllByText('a'.repeat(40))).toHaveLength(3)
 })
 
@@ -96,7 +97,7 @@ it('retries a lost snapshot response with the same key and version, then shows a
   expect(posts).toHaveLength(2)
   expect(posts[0]).toBe(posts[1])
   expect(screen.getByText('源分支不存在或不可访问')).toBeInTheDocument()
-  expect(screen.queryByText('快照已固定 · 待审阅')).not.toBeInTheDocument()
+  expect(screen.queryByText('快照已固定')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: '创建新快照' })).toBeEnabled()
 })
 

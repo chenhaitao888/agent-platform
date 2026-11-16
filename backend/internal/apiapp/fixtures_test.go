@@ -81,7 +81,9 @@ func newDeploymentFixture(t *testing.T) deploymentFixture {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/branches/master"):
+		case strings.HasSuffix(r.URL.Path, "/branches/feature"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"id": fixture.head}})
+		case strings.HasSuffix(r.URL.Path, "/branches/master"), strings.HasSuffix(r.URL.Path, "/branches/main"), strings.HasSuffix(r.URL.Path, "/branches/release/test"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"id": fixture.base}})
 		case strings.HasSuffix(r.URL.Path, "/merge_base"):
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": fixture.base})

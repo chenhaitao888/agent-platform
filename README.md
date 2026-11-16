@@ -3,6 +3,7 @@
 这是“企业研发智能体与工作流平台”的最小可运行骨架。当前只完成：
 
 - D1：可信服务目录、需求创建/列表/详情，以及按多服务源/目标分支固定不可变代码快照
+- D2：从指定快照发起多服务 Review，逐服务准入/准备/审阅、失败重试与历史证据读取
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -20,7 +21,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1 已实现；下一切片 D2 从已固定快照接入多服务 Review。配置/AB 计划、持久执行与外部写入尚未实现。
+D1、D2 已实现；下一切片 D3 为配置/AB 只读计划。持久执行与外部写入尚未实现。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -48,7 +49,7 @@ agent-platform/
 │   ├── cmd/authinit/            # 首次本机 API 凭据初始化，不输出 token
 │   ├── cmd/runtimecheck/        # 不调用模型的 CLI 预检
 │   └── internal/
-│       ├── change/              # 需求聚合、版本与快照幂等应用服务
+│       ├── change/              # 需求聚合、冻结快照与逐服务 Review 应用服务
 │       ├── servicecatalog/      # 部署目录及服务/环境/操作授权
 │       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
@@ -140,7 +141,47 @@ D1 环境名限 `dev/test/qa/uat/staging`，服务只有显式登记且授权的
 
 每个成功服务保存完整 head/target/merge-base SHA、目录版本和解析时间；跨仓库没有全局瞬时原子性。
 整个解析请求限时 30 秒，不启动后台队列；取消可能留下明确的失败尝试，不能把关页等同于恢复机制。
-当前只完成固定输入，界面中的“待审阅”不表示已执行 Review，配置/AB 操作也尚未接入。
+固定快照不会自动审阅；需在下方显式发起多服务 Review。配置/AB 操作尚未接入。
+
+### D2：从快照发起多服务 Review
+
+在上述目录的相应授权中显式增加 `review` 操作，并按本文的 Review 部署说明启用 `AGENT_PLATFORM_REVIEW_ENABLED=true`。
+原 D1 示例只授予 `read/create/snapshot`，不会自动获得模型调用权限。所有服务均通过服务/环境/仓库授权后才创建子任务；
+Review 未启用时返回 503 `review_unavailable`，不会留下子任务。
+
+在需求页选择一个 READY 快照，点击“开始多服务审阅”。平台依次复用已有 Task 准入、Workspace 准备和只读 Review，
+每个子任务直接使用快照的完整仓库引用，不重新解析分支。运行时页面每两秒只读刷新状态；
+“查看 S1 结果”等入口读取该轮指定的执行和 Findings，也可打开工作区查看固定 diff。
+
+| 接口 | 行为 |
+| --- | --- |
+| `POST /api/v1/changes/{id}/reviews` | 对指定 READY 快照同步发起审阅；首次记录尝试 201，同键重放 200 |
+| `GET /api/v1/changes/{id}/reviews` | 读取运行中及历史审阅，包含逐服务状态和证据引用 |
+| `GET /api/v1/changes/{id}/reviews/{reviewId}` | 读取指定轮次；不会触发模型 |
+
+```json
+{
+  "idempotencyKey": "change-A-review-1",
+  "expectedVersion": 2,
+  "snapshotId": "snapshot-1"
+}
+```
+
+返回 `{changeId, changeVersion, review}`。**201 表示尝试已记录，需检查 `review.state`**：
+`SUCCEEDED/PARTIAL/FAILED/CANCELED`；运行中 GET 返回 `RUNNING`。逐服务状态还包括 `NOT_STARTED`，
+并保存 stage、taskId、workspaceId/version、executionId、artifactId 和安全错误码。
+审阅开始及结束各增加一次需求版本；同时最多进行一次快照解析或审阅，冲突返回 409。
+
+响应丢失时保留原 body 重试：同键等待/返回原记录，失败也不会隐式重跑。收到终态后，使用新键和最新需求版本
+“重试未完成服务”，只重试失败/取消/未启动项，复用原子任务和工作区，已成功的执行及 Artifact 保持不变。
+全部成功后，新键返回 409 `review_complete`；需要新一轮时显式创建新快照。
+新快照各自创建子任务；历史快照可读和重试，但其结论不代表当前快照。
+
+需求关联的子任务仍通过旧工作台 API 读取，并追加服务/环境 `read` 权限检查；其写操作统一走需求入口，
+直接 POST/PATCH 子任务返回 409 `change_review_required`。独立创建的单仓库 Task 保持原有行为。
+单服务准入到审阅最多 3 分钟，整次 HTTP 请求最多 4 分钟，Runner 仍受更短的部署超时限制；
+取消/超时保留已完成服务，后续服务不再启动。状态和幂等记录仍只在内存，刷新浏览器丢失本地重试键后应先读取历史，
+进程重启不具备恢复能力。成功表示每项审阅执行成功，问题仍需人工处置，不表示需求可交付或跨服务兼容性已验证。
 
 ### 本机身份与租户配置
 

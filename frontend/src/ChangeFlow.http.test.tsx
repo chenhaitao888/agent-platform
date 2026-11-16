@@ -39,7 +39,7 @@ it.skipIf(!endpoint)('freezes a three-service requirement through the deployed a
   fireEvent.click(screen.getByRole('button', { name: '固定代码快照' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('快照结果未确认')
   fireEvent.click(screen.getByRole('button', { name: '重试本次快照' }))
-  await screen.findByText('快照已固定 · 待审阅')
+  await screen.findByText('快照已固定')
   expect(snapshotBodies[0]).toBe(snapshotBodies[1])
   fireEvent.change(screen.getByLabelText('快照 S1 源分支'), { target: { value: 'feature/new' } })
   fireEvent.click(screen.getByRole('button', { name: '创建新快照' }))

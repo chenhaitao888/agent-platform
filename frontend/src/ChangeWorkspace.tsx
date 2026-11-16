@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import ChangeReviews from './ChangeReviews'
 import { useAPI } from './api'
 import { changeErrors, type ChangeRequest, type ServiceEntry, type ServiceSelection, type SnapshotResult } from './change'
 
@@ -33,6 +34,9 @@ function ChangeSession() {
   const snapshotAttempt = useRef<{ id: string; body: string } | null>(null)
   const environments = [...new Set(services.flatMap(s => s.environments))]
   const environment = chosenEnvironment || environments[0] || ''
+  const updateReviewVersion = useCallback((version: number) => {
+    setCurrent(previous => previous ? { ...previous, version: Math.max(previous.version, version) } : previous)
+  }, [])
 
   async function read<T>(path: string, signal: AbortSignal, body?: string): Promise<T> {
     const response = await api.fetch(path, { signal, ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body } : {}) })
@@ -168,12 +172,12 @@ function ChangeSession() {
                 return service && <div className="service-choice" key={service.serviceId}><strong>{service.name}</strong><BranchFields prefix="快照 " service={service} selection={selection} onChange={value => setSnapshotSelections(previous => previous.map(s => s.serviceId === value.serviceId ? value : s))} /></div>
               })}
             </fieldset>
-            <p className="field-help">固定快照将读取所有服务的当前分支。已有快照保持不变；代码审阅将在后续步骤接入。</p>
+            <p className="field-help">固定快照将读取所有服务的当前分支。已有快照与审阅结果保持不变。</p>
             <button className="button-primary" type="submit" disabled={busy}>{busy ? '处理中…' : uncertainSnapshot ? '重试本次快照' : current.snapshots.length ? '创建新快照' : '固定代码快照'}</button>
           </form>
           <div className="snapshot-history" aria-label="快照历史">{[...current.snapshots].reverse().map(snapshot => <article className="snapshot-card" key={snapshot.id}>
             <h3>快照 {snapshot.revision}</h3>
-            <p className={snapshot.state === 'READY' ? 'next-step' : 'error-message'}>{snapshot.state === 'READY' ? '快照已固定 · 待审阅' : '快照未完成 · 请检查失败服务后创建新快照'}</p>
+            <p className={snapshot.state === 'READY' ? 'next-step' : 'error-message'}>{snapshot.state === 'READY' ? '快照已固定' : '快照未完成 · 请检查失败服务后创建新快照'}</p>
             {snapshot.id === current.currentSnapshotId && <p className="field-help">当前可用快照</p>}
             <ul>{snapshot.services.map(service => <li key={service.serviceId}>
               <strong>{services.find(s => s.serviceId === service.serviceId)?.name ?? service.serviceId}</strong>
@@ -187,6 +191,7 @@ function ChangeSession() {
             </li>)}</ul>
             <details className="technical-details"><summary>快照标识</summary><p>{current.id} / {snapshot.id}</p><code>{snapshot.inputHash}</code></details>
           </article>)}</div>
+          {current.currentSnapshotId && <ChangeReviews key={current.id} change={current} onVersion={updateReviewVersion} onBusy={setBusy} blocked={busy} />}
         </>}
       </section>
     </div>}

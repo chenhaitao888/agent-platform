@@ -42,6 +42,7 @@ const maxDiffPreviewCharacters = 64 * 1024
 
 export default function WorkspaceDetails({ task, autoReadReview = false }: WorkspaceDetailsProps) {
   const api = useAPI()
+  const readOnly = !!task.change
 
   const [state, setState] = useState<WorkspaceState>({ kind: 'idle' })
   const [diffState, setDiffState] = useState<DiffState>({ kind: 'idle' })
@@ -263,7 +264,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
     <section className="workspace-details">
       <div className="workspace-entry">
         <div><strong>{current?.state === 'READY' ? '代码快照已就绪' : '审阅工作区'}</strong>
-          {current?.state !== 'READY' && <p>准备代码快照，或读取这项任务已有的审阅。</p>}</div>
+          {current?.state !== 'READY' && <p>{readOnly ? '需求审阅的准备和重试由需求页发起。这里可以读取已有代码差异。' : '准备代码快照，或读取这项任务已有的审阅。'}</p>}</div>
         <button type="button" className={current ? 'button-quiet' : 'button-primary'}
           aria-label={`打开审阅工作区：${task.id}`} disabled={busy} onClick={() => void loadWorkspace()}>
           {state.kind === 'loading' ? '正在读取…' : current ? '刷新工作区' : '打开审阅工作区'}
@@ -271,7 +272,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
       </div>
       {state.kind === 'failed' && <p className="error-message" role="alert">Workspace 操作失败：{state.message}</p>}
       {state.kind === 'absent' && <div className="workspace-registration" role="group" aria-label={`${task.id} 的仓库引用`}>
-        <p className="next-step">这项任务尚未登记代码快照。先登记，再准备工作区。</p>
+        <p className="next-step">{readOnly ? '这项服务尚未登记工作区，请从需求页重试未完成服务。' : '这项任务尚未登记代码快照。先登记，再准备工作区。'}</p>
         <details className="technical-details"><summary>查看固定仓库版本</summary><dl className="metadata">
           <div><dt>仓库</dt><dd>{task.repository.provider} / {task.repository.repositoryId}</dd></div>
           <div><dt>目标分支</dt><dd>{task.repository.targetBranch}</dd></div>
@@ -279,7 +280,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
           <div><dt>Base SHA</dt><dd>{task.repository.baseSha}</dd></div>
           <div><dt>Head SHA</dt><dd>{task.repository.headSha}</dd></div>
         </dl></details>
-        <button className="button-primary" type="button" onClick={() => void registerWorkspace()}>登记 Workspace</button>
+        {!readOnly && <button className="button-primary" type="button" onClick={() => void registerWorkspace()}>登记 Workspace</button>}
       </div>}
       {state.kind === 'registering' && <p className="loading-message" role="status">正在登记 Workspace…</p>}
       {state.kind === 'preparing' && <p className="loading-message" role="status">正在 clone 仓库并创建 worktree…</p>}
@@ -298,7 +299,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
             {current.state === 'READY' && current.path && <div><dt>工作目录</dt><dd>{current.path}</dd></div>}
           </dl></details>
         </div>
-        {current.state === 'REGISTERED' && <div className="next-step"><p>下一步：拉取固定版本的代码，为审阅准备工作区。</p>
+        {current.state === 'REGISTERED' && !readOnly && <div className="next-step"><p>下一步：拉取固定版本的代码，为审阅准备工作区。</p>
           <button className="button-primary" type="button" onClick={() => void prepareWorkspace(current)}>准备 Workspace</button></div>}
         {current.state === 'PREPARING' && <p className="loading-message">Workspace 正在准备中，请稍后刷新。</p>}
         {current.state === 'READY' && <div className="review-workbench">
@@ -316,7 +317,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
                 <div><dt>媒体类型</dt><dd>{diffState.diff.mediaType}</dd></div>
                 <div><dt>SHA-256</dt><dd>{diffState.diff.sha256}</dd></div>
               </dl></details>
-              <button type="button" disabled={artifactState.kind === 'archiving'} onClick={() => void archiveDiff(current)}>{artifactState.kind === 'archiving' ? '正在归档…' : '归档为 Artifact'}</button>
+              {!readOnly && <button type="button" disabled={artifactState.kind === 'archiving'} onClick={() => void archiveDiff(current)}>{artifactState.kind === 'archiving' ? '正在归档…' : '归档为 Artifact'}</button>}
               {artifactState.kind === 'failed' && <p className="error-message" role="alert">Artifact 归档失败：{artifactState.message}</p>}
               {artifactState.kind === 'loaded' && <section className="workspace-artifact" aria-label={`${task.id} 的 Diff Artifact`}>
                 <p className="success-message">差异已归档</p>
@@ -329,7 +330,7 @@ export default function WorkspaceDetails({ task, autoReadReview = false }: Works
               </section>}
             </section>}
           </div>
-          <TaskReview task={task} workspace={current} autoRead={autoReadReview} />
+          {!readOnly && <TaskReview task={task} workspace={current} autoRead={autoReadReview} />}
         </div>}
       </div>}
     </section>

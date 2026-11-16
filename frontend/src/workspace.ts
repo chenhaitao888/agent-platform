@@ -6,7 +6,7 @@ export type Workspace = {
     provider: string
     repositoryId: string
   }
-  targetBranch: 'master'
+  targetBranch: string
   targetSha: string
   baseSha: string
   headSha: string

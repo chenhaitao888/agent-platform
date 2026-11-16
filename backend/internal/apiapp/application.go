@@ -126,11 +126,11 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 	if !config.reviewEnabled {
-		app.Handler, err = httpapi.NewHandlerWithWorkspaceServices(verifier, workspacePreparer, reader, config.root, config.gitlabToken)
+		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken)
 		if err != nil {
 			return nil, err
 		}
-		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, verifier)))
+		app.Handler = authentication.Wrap(app.Handler)
 		return app, nil
 	}
 	var modelClient *http.Client
@@ -148,7 +148,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.Handler, err = httpapi.NewHandlerWithReviewServices(verifier, workspacePreparer, reader, runner, config.root, config.gitlabToken)
+	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +162,6 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		underlying.ServeHTTP(w, r)
 	})
 	app.ShutdownGrace = max(time.Minute, config.timeout+30*time.Second)
-	app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, verifier)))
+	app.Handler = authentication.Wrap(app.Handler)
 	return app, nil
 }

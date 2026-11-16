@@ -1,6 +1,5 @@
-// Package change implements the synchronous, in-memory D1 application service.
-// It owns authorization, optimistic versions and snapshot idempotency; HTTP only
-// adapts requests. No Task, Workspace, model or external write is created here.
+// Package change owns synchronous, in-memory change snapshots and their reviews.
+// HTTP only adapts requests; branch resolution and review execution are explicit.
 package change
 
 import (
@@ -15,8 +14,10 @@ import (
 	"time"
 
 	"agent-platform/backend/internal/repository"
+	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/servicecatalog"
 	"agent-platform/backend/internal/task"
+	"agent-platform/backend/internal/workspace"
 )
 
 var (
@@ -25,7 +26,7 @@ var (
 	ErrNotFound            = errors.New("change not found")
 	ErrIdempotencyConflict = errors.New("idempotency key already used with different content")
 	ErrVersionConflict     = errors.New("change version does not match expectedVersion")
-	ErrInProgress          = errors.New("another snapshot is resolving for this change")
+	ErrInProgress          = errors.New("another snapshot or review is running for this change")
 )
 
 type Selection struct {
@@ -94,14 +95,18 @@ type operation struct {
 type record struct {
 	value      ChangeRequest
 	operations map[string]*operation
+	reviews    []*reviewOperation
 	busy       bool
 }
 type Service struct {
-	mu        sync.Mutex
-	catalog   *servicecatalog.Catalog
-	resolver  repository.BranchResolver
-	records   map[string]*record
-	creations map[[2]string]creation
+	mu         sync.Mutex
+	catalog    *servicecatalog.Catalog
+	resolver   repository.BranchResolver
+	records    map[string]*record
+	creations  map[[2]string]creation
+	tasks      *task.Store
+	workspaces *workspace.Manager
+	reviews    *review.Service
 }
 
 func NewService(catalog *servicecatalog.Catalog, resolver repository.BranchResolver) *Service {

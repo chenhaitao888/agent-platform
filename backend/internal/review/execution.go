@@ -66,6 +66,20 @@ type executionRecord struct {
 	err                      error
 }
 
+func (s *Service) Configured() bool { return s != nil && s.runner != nil }
+
+// GetExecutionForRequest also returns terminal failed records. An aggregate must
+// bind evidence to its own request, rather than whichever execution is latest.
+func (s *Service) GetExecutionForRequest(input ExecuteInput) (Execution, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.executions[executionScope{tenantID: input.TenantID, key: input.IdempotencyKey}]
+	if !ok || record.taskID != input.TaskID || record.expectedWorkspaceVersion != input.ExpectedWorkspaceVersion {
+		return Execution{}, false
+	}
+	return record.execution.clone(), true
+}
+
 func (s *Service) GetExecution(input GetInput) (Execution, bool) {
 	if _, ok := s.tasks.Get(input.TaskID, input.TenantID); !ok {
 		return Execution{}, false

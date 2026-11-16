@@ -24,7 +24,7 @@ var (
 	ErrInvalidTransition   = errors.New("task status transition is not allowed")
 )
 
-// RepositoryReference 保存一次任务的不可变代码坐标：TargetSHA 是 master 快照，
+// RepositoryReference 保存一次任务的不可变代码坐标：TargetSHA 是目标分支快照，
 // BaseSHA 是它与 HeadSHA 的 merge-base；评审 diff 使用 BaseSHA，不直接使用 TargetSHA。
 type RepositoryReference struct {
 	Provider     string `json:"provider"`
@@ -42,9 +42,19 @@ type Task struct {
 	Type           string              `json:"type"`
 	Goal           string              `json:"goal"`
 	Repository     RepositoryReference `json:"repository"`
+	Change         ChangeReference     `json:"change,omitzero"`
 	Status         Status              `json:"status"`
 	Version        uint64              `json:"version"`
 	CreatedAt      time.Time           `json:"createdAt"`
+}
+
+// ChangeReference is assigned only by the trusted change service, never by the
+// standalone task HTTP input. It binds authorization and immutable evidence.
+type ChangeReference struct {
+	ChangeID    string `json:"changeId"`
+	SnapshotID  string `json:"snapshotId"`
+	ServiceID   string `json:"serviceId"`
+	Environment string `json:"environment"`
 }
 
 type EventType string
@@ -133,6 +143,7 @@ type CreateInput struct {
 	Type           string
 	Goal           string
 	Repository     RepositoryReference
+	Change         ChangeReference
 }
 
 type CreateResult struct {
@@ -152,6 +163,7 @@ type TransitionInput struct {
 type idempotencyScope struct {
 	tenantID string
 	key      string
+	change   bool
 }
 
 type transitionRecord struct {
@@ -186,7 +198,7 @@ func NewStore() *Store {
 func (s *Store) ReplayCreate(input CreateInput) (CreateResult, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	taskID, ok := s.idempotency[idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}]
+	taskID, ok := s.idempotency[idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey, change: input.Change.ChangeID != ""}]
 	if !ok {
 		return CreateResult{}, false, nil
 	}
@@ -198,6 +210,9 @@ func (s *Store) ReplayCreate(input CreateInput) (CreateResult, bool, error) {
 }
 
 func sameCreateRequest(existing Task, input CreateInput) bool {
+	if existing.Change != input.Change || (input.Change.ChangeID != "" && existing.Repository != input.Repository) {
+		return false
+	}
 	return existing.Type == input.Type &&
 		existing.Goal == input.Goal &&
 		existing.Repository.Provider == input.Repository.Provider &&
@@ -209,7 +224,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey}
+	scope := idempotencyScope{tenantID: input.TenantID, key: input.IdempotencyKey, change: input.Change.ChangeID != ""}
 	if taskID, ok := s.idempotency[scope]; ok {
 		existing := s.tasks[taskID]
 		if !sameCreateRequest(existing, input) {
@@ -227,6 +242,7 @@ func (s *Store) Create(input CreateInput) (CreateResult, error) {
 		Type:           input.Type,
 		Goal:           input.Goal,
 		Repository:     input.Repository,
+		Change:         input.Change,
 		Status:         StatusCreated,
 		Version:        1,
 		CreatedAt:      now,

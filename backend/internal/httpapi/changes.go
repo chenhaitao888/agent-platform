@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agent-platform/backend/internal/change"
+	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/servicecatalog"
 )
 
@@ -22,6 +23,9 @@ func WithChanges(existing http.Handler, service *change.Service) http.Handler {
 	mux.HandleFunc("POST /api/v1/changes", h.create)
 	mux.HandleFunc("GET /api/v1/changes/{id}", h.get)
 	mux.HandleFunc("POST /api/v1/changes/{id}/snapshots", h.freeze)
+	mux.HandleFunc("POST /api/v1/changes/{id}/reviews", h.review)
+	mux.HandleFunc("GET /api/v1/changes/{id}/reviews", h.reviews)
+	mux.HandleFunc("GET /api/v1/changes/{id}/reviews/{reviewId}", h.getReview)
 	mux.Handle("/", existing)
 	return requireIdentity(mux)
 }
@@ -110,8 +114,14 @@ func writeChangeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "idempotency_conflict", change.ErrIdempotencyConflict.Error()
 	case errors.Is(err, change.ErrInProgress):
 		status, code, message = 409, "snapshot_in_progress", change.ErrInProgress.Error()
+	case errors.Is(err, change.ErrSnapshotNotReady):
+		status, code, message = 409, "snapshot_not_ready", change.ErrSnapshotNotReady.Error()
+	case errors.Is(err, change.ErrReviewComplete):
+		status, code, message = 409, "review_complete", change.ErrReviewComplete.Error()
+	case errors.Is(err, review.ErrReviewUnavailable):
+		status, code, message = 503, "review_unavailable", review.ErrReviewUnavailable.Error()
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		status, code, message = 408, "request_canceled", "snapshot request canceled; read the change before retrying"
+		status, code, message = 408, "request_canceled", "request canceled; read the change before retrying"
 	}
 	writeError(w, status, code, message)
 }

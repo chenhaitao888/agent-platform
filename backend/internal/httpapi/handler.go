@@ -13,8 +13,10 @@ import (
 	"strings"
 
 	"agent-platform/backend/internal/artifact"
+	"agent-platform/backend/internal/change"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
+	"agent-platform/backend/internal/servicecatalog"
 	"agent-platform/backend/internal/task"
 	"agent-platform/backend/internal/workspace"
 )
@@ -30,6 +32,7 @@ type handler struct {
 	workspaces *workspace.Manager
 	reviews    *review.Service
 	artifacts  *artifact.Store
+	catalog    *servicecatalog.Catalog
 	// 与 GitLab verifier 使用同一份 token；仅用于遮盖日志，不写入响应。
 	logSecret string
 }
@@ -138,8 +141,27 @@ func newHandlerWithDiffReader(tasks *task.Store, workspaces *workspace.Manager, 
 }
 
 func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver, runner review.Runner, gitlabToken string) http.Handler {
+	return newTaskHandler(tasks, workspaces, diffReader, resolver, runner, gitlabToken).routes()
+}
+
+// NewHandlerWithDeliveryServices keeps one set of execution stores for both
+// entry points. A nil runner leaves snapshots usable and review unavailable.
+func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, catalog *servicecatalog.Catalog, root, gitlabToken string) (http.Handler, error) {
+	tasks := task.NewStore()
+	workspaces, err := workspace.NewManagerWithPreparer(tasks, verifier, preparer, root)
+	if err != nil {
+		return nil, err
+	}
+	h := newTaskHandler(tasks, workspaces, diffReader, verifier, runner, gitlabToken)
+	h.catalog = catalog
+	resolver, _ := verifier.(repository.BranchResolver)
+	changes := change.NewServiceWithReviews(catalog, resolver, tasks, workspaces, h.reviews)
+	return WithChanges(h.routes(), changes), nil
+}
+
+func newTaskHandler(tasks *task.Store, workspaces *workspace.Manager, diffReader repository.DiffReader, resolver repository.ReferenceResolver, runner review.Runner, gitlabToken string) *handler {
 	artifacts := artifact.NewStore()
-	h := &handler{
+	return &handler{
 		tasks:      tasks,
 		resolver:   resolver,
 		workspaces: workspaces,
@@ -147,24 +169,27 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 		artifacts:  artifacts,
 		logSecret:  strings.TrimSpace(gitlabToken),
 	}
+}
+
+func (h *handler) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
 	mux.HandleFunc("GET /api/v1/session", session)
 	mux.HandleFunc("POST /api/v1/tasks", h.createTask)
 	mux.HandleFunc("GET /api/v1/tasks", h.listTasks)
-	mux.HandleFunc("GET /api/v1/tasks/{id}", h.getTask)
-	mux.HandleFunc("GET /api/v1/tasks/{id}/events", h.listTaskEvents)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace", h.createWorkspace)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace/prepare", h.prepareWorkspace)
-	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace", h.getWorkspace)
-	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace/diff", h.getWorkspaceDiff)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/artifacts/diff", h.archiveWorkspaceDiff)
-	mux.HandleFunc("POST /api/v1/tasks/{id}/review", h.executeReview)
-	mux.HandleFunc("GET /api/v1/tasks/{id}/review", h.getReviewExecution)
-	mux.HandleFunc("GET /api/v1/tasks/{id}/reviews/{executionId}", h.getReviewExecutionByID)
-	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.getArtifact)
-	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.getArtifactContent)
-	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.updateTask)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", h.guardLinkedTask(h.getTask))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/events", h.guardLinkedTask(h.listTaskEvents))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace", h.guardLinkedTask(h.createWorkspace))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/workspace/prepare", h.guardLinkedTask(h.prepareWorkspace))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace", h.guardLinkedTask(h.getWorkspace))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/workspace/diff", h.guardLinkedTask(h.getWorkspaceDiff))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/artifacts/diff", h.guardLinkedTask(h.archiveWorkspaceDiff))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/review", h.guardLinkedTask(h.executeReview))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/review", h.guardLinkedTask(h.getReviewExecution))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/reviews/{executionId}", h.guardLinkedTask(h.getReviewExecutionByID))
+	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.guardLinkedTask(h.getArtifact))
+	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.guardLinkedTask(h.getArtifactContent))
+	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.guardLinkedTask(h.updateTask))
 
 	return requireIdentity(mux)
 }
@@ -556,7 +581,13 @@ func (h *handler) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, listTasksResponse{Items: h.tasks.List(tenantID)})
+	items := []task.Task{}
+	for _, current := range h.tasks.List(tenantID) {
+		if h.canReadLinkedTask(r, current) {
+			items = append(items, current)
+		}
+	}
+	writeJSON(w, http.StatusOK, listTasksResponse{Items: items})
 }
 
 func (h *handler) getTask(w http.ResponseWriter, r *http.Request) {

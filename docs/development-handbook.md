@@ -41,10 +41,10 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
-当前接续方向（2026-11-13）：用户将下一阶段明确为代码完成后的需求级交付智能体，先组织多服务 Review、
+当前接续方向（2026-11-16）：用户将下一阶段明确为代码完成后的需求级交付智能体，先组织多服务 Review、
 配置和 AB 变更准备，再通过 Connector 适配企业系统。D1“服务目录与多服务分支快照”已实现：
 需求创建/列表/详情、显式固定分支、逐服务结果及历史快照、前端入口与可信部署加载。
-下一切片为 D2 多服务 Review；详见 [设计方案](post-coding-delivery-design.md)
+D2 已接入冻结快照下的逐服务 Review、重试与历史证据；下一切片为 D3 配置/AB 只读计划。详见 [设计方案](post-coding-delivery-design.md)
 及 [接续交接](handoff-2026-11-13.md)。这一优先级取代下文历史记录中的“下一步”；
 正式 Review 质量验收仍未完成，继续保留为后续质量工作线。
 
@@ -92,7 +92,7 @@ agent-platform/
 │   ├── cmd/workercheck/         # 不调用模型的镜像/原生 Sandbox 启用检查
 │   ├── cmd/revieweval/          # 合成样例捕获与离线人工标注评分
 │   └── internal/
-│       ├── change/              # 需求聚合、乐观版本和同步快照幂等
+│       ├── change/              # 需求聚合、冻结快照与多服务 Review 幂等
 │       ├── servicecatalog/      # 可信服务目录及服务/环境/操作授权
 │       ├── apiapp/              # 部署环境解析与真实 API/Runner 装配
 │       ├── artifact/            # 不可变内容、checksum 与幂等内存 Store
@@ -3668,6 +3668,73 @@ D2 从指定的 `READY` 快照为每个服务创建关联的 PR_REVIEW Task，�
 子 Task 必须直接使用已校验的冻结坐标，不能再次走旧 master resolver 覆盖它们。
 按服务保存 task/execution/artifact 引用和失败结果，支持重试与历史读取；保持当前同步语义，持久后台执行留到 D4。
 
+### 第 52 步 / D2：冻结快照下的多服务 Review（2026-11-16）
+
+用户要求先 push，再继续下一步。已将 D1 及此前设计文档以 `b7ac101` 提交并成功推送到 `origin/main`；
+随后完成本步 D2。D2 改动留在工作树供审阅，未自动提交推送。
+开工时相关 Go 基线通过，前端 128 项通过、3 跳过。先新增公共 HTTP 行为测试，确认缺少 D2 构造入口和结果模型导致 RED，
+再接通共享应用服务，扩展失败、并发、授权及前端贯穿回归。
+
+#### 交付行为
+
+- [change/reviews.go](../backend/internal/change/reviews.go) 对指定 READY 快照逐服务创建 PR_REVIEW Task、准入、登记/准备 Workspace、执行 Review。
+  子任务直接复制完整冻结 repository reference；源/目标分支即使移动，也不再调用旧 master resolver。
+- 原工作台与需求入口共享同一套 Task/Workspace/Review/Artifact；单仓库 API 输入契约不变。
+  `Task.change` 保存需求/快照/服务/环境，内部创建有独立幂等范围，外部相同 key 无法冒领子任务。
+- `POST /changes/{id}/reviews` 返回 `{changeId, changeVersion, review}`；201 表示记录尝试，
+  总态为 `SUCCEEDED/PARTIAL/FAILED/CANCELED`。运行时 GET 可读 `RUNNING` 和各服务的 `NOT_STARTED/RUNNING/...` 状态。
+  详情保留阶段、任务/工作区/执行/Artifact 引用、安全错误码、复用标记和时间。
+- 一个需求至多有一个正在解析的快照或审阅；审阅预留时版本 +1，完成时再 +1。
+  同键同输入等待/重放原记录，同键异输入冲突；失败重放也不会重跑。
+  新键需当前版本，仅重试未完成服务，并保留已经成功的执行及 Artifact；先前轮次不可变。
+- 全部成功后，新键返回 `review_complete`。显式新快照会建立新的子任务集合，即使其代码引用相同；
+  历史快照的执行永远绑定原 snapshotId/hash。失败快照不能审阅，之前 READY 快照仍可使用。
+- 单个服务失败后继续其他服务；父请求取消后不再启动后续服务，保留已成功结果。
+  每服务准入到审阅限时 3 分钟，整次 HTTP 4 分钟，低于服务器 5 分钟 WriteTimeout；Runner 继续受部署超时约束。
+  所有状态、幂等与跨 Store 关联仍仅为进程内协调，不是持久事务或后台工作流。
+
+Java 类比：Change Service 是调用原 Task/Workspace/Review Service 的应用层协调器；
+本步的操作记录是内存中的请求去重与结果快照，不是 Temporal Workflow 或事务 Outbox。
+
+#### 授权与 UI
+
+目录新增显式 `review` 操作，旧配置不会自动扩权。先核验全部服务/环境/仓库权限，再创建任何子任务或访问下游；
+Runner 未配置时提前返回 503。子任务及其事件、工作区、diff、执行和 Artifact 读取均检查所属服务的 `read` 授权，
+列表过滤无权服务；其 POST/PATCH 通过需求入口统一发起，防止绕过服务授权或改写聚合外的执行关系。
+独立单仓库 Task 保持原有行为。
+
+[ChangeReviews](../frontend/src/ChangeReviews.tsx) 允许选择 READY 快照，显式开始/重试，运行中每两秒只读查询状态。
+响应丢失保留原 body/键/版本；读取、展开历史和刷新不调用模型。选择历史快照会明确标注，新的快照不会显示旧的成功结论。
+查看服务结果先核对 Task 的需求/快照/服务/租户与完整引用，再复用 WorkspaceDetails 和 ReviewRecord/ReviewFindings；
+按确切 executionId 读取，不把 latest 执行冒充某个旧轮次。身份切换与卸载取消旧请求，迟到结果不能回写。
+关联任务工作台只读，执行与重试回到需求入口。
+
+#### 验证
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| Go `test ./...` | 通过 |
+| Go `test -race ./...`，启用 `AGENT_PLATFORM_FRONTEND_INTEGRATION=1` | 通过，含全部四套前端 HTTP 验收 |
+| Go vet / golangci-lint v2.13.2 | 通过，0 issues |
+| 前端 lint / typecheck / build | 通过 |
+| 前端普通测试 | 132 通过、4 跳过；跳过项由 Go 进程托管执行 |
+| 新 D2 HTTP 验收 | 真实 API 可执行程序 + React + GitLab HTTPS + Git smart HTTP / worktree；受控 Docker/Worker/模型替身 |
+
+新增行为测试覆盖三个不同仓库和不同目标分支、冻结坐标准入、全部成功、无效 Findings、准入/准备失败恢复、
+同键并发等待、取消/恢复、旧轮次/新快照隔离、未启用不创建 Task、权限/JSON/版本拒绝、旧读取和写入绕过防护。
+跨进程验收用同仓库三个逻辑服务验证工作区隔离：首轮 3 次执行、只重试失败项 1 次、新快照 3 次，
+合计 7 次受控模型调用；丢失响应的重放及 Findings/diff 读取不增加执行。6 份工作区都检验了 HEAD 和 clean status。
+这证明协议与运行输入贯通，不代表真实企业多服务审阅质量或跨服务兼容性已验收。
+
+本轮没有调用真实模型、读取私有 key、修改私有服务映射、写 GitLab/配置/AB，或重启现有 `5174/8081` 与 `5173/8080`。
+没有新增 Chrome 视觉验收截图。示例目录仍仅授予 D1 操作，实际启用 D2 需管理员显式增加 `review`。
+
+#### 下一步
+
+D3 只读配置/AB 计划：按方案建立参考平台、受控状态读取、候选证据、缺失/冲突与规则验证、版本化计划预览。
+实际 AB 含义、平台资源/草稿语义未确认时使用参考实现，不虚构公司接口，也不提前开放写入。
+持久化/Temporal 与恢复留到 D4；真实模型质量验收仍为独立工作线。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -3691,10 +3758,10 @@ node --run build
 
 - CI 配置已推送，ESLint/Go lint 已本地验证；已知的账户账单锁定问题按当前协作约定忽略。
 - Task ID 是单进程递增值，不适合多实例部署。
-- Task、ChangeRequest、快照尝试和幂等记录都在内存中，重启即丢失。
+- Task、ChangeRequest、快照/多服务审阅尝试和幂等记录都在内存中，重启即丢失。
 - D1 一项需求的服务集合和环境创建后固定，最多 20 个服务；新快照可改变授权分支。
-  快照是跨仓库分别解析的一组版本，不是全局瞬时原子快照。尚未接入多服务 Review、配置/AB 计划或外部写入。
-- tenant 来自静态 Bearer 身份的可信上下文，请求声明必须一致；旧 Task API 同租户无角色区分；新目录按 subject + tenant + service + environment + operation 显式授权。
+  快照是跨仓库分别解析的一组版本，不是全局瞬时原子快照。多服务 Review 已接入；配置/AB 计划或外部写入尚未实现。
+- tenant 来自静态 Bearer 身份的可信上下文，请求声明必须一致；独立单仓库 Task API 同租户无角色区分；需求子任务增加服务读取授权，写入通过需求入口；新目录按 subject + tenant + service + environment + operation 显式授权。
   仓库白名单、服务目录和授权由可信部署维护，策略变更需重启。
 - 本机 `authinit` 已提供首次配置入口，但只新建身份文件，不负责在线轮换/撤销；默认不授予仓库权限。
   输出目录必须新建，I/O 中断可能留下私有未完成目录；不能把生成凭据等同于完成 GitLab/Review 部署。
@@ -3708,7 +3775,7 @@ node --run build
   本机明确选择 `codex-bwrap` 后已通过原生 sandbox 启动与只读验证；Docker 默认策略仍拒绝初始化，其他部署需重新验证。
   已接入部署 provider/主体标签、服务凭据及固定模型出口；企业模型代理/Broker、发行方服务身份核验、
   完整真实模型质量验收及场景 Skills 交付未接入。Worker 网络仍固定为 none，上游 key 留在宿主。
-- 前端已具备显式审阅、状态与 Findings 展示，但状态需手动刷新，Review POST 仍同步等待；没有后台轮询或服务端取消入口。
+- 前端已具备显式审阅、状态与 Findings 展示；独立单仓库状态需手动刷新，需求审阅运行中进行只读轮询。Review POST 仍同步等待，没有服务端取消入口。
   本页重试键在刷新/重新加载后丢失，需先查询最新状态；不能以请求中止推断服务端已经结束。结果下载后才校验大小与摘要。
 - 评测已具备原 6 例和可选 12 例扩展合成集、两种样例集的真实捕获、宿主 token 遥测、显式价格估算和人工评分入口；已有标签仍是助手草稿。
   还没有代表性 30～50 PR 数据集、正式真实模型质量基线、账单对账、工具动作安全审计、完整版本清单或独立 Eval 身份/预算/资源池。

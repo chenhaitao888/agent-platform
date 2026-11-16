@@ -3,7 +3,7 @@ export type TaskStatus = 'CREATED' | 'QUEUED'
 export type RepositoryReference = {
   provider: 'gitlab'
   repositoryId: string
-  targetBranch: 'master'
+  targetBranch: string
   targetSha: string
   baseSha: string
   headSha: string
@@ -16,6 +16,7 @@ export type Task = {
   type: string
   goal: string
   repository: RepositoryReference
+  change?: { changeId: string; snapshotId: string; serviceId: string; environment: string }
   status: TaskStatus
   version: number
   createdAt: string

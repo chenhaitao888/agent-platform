@@ -53,7 +53,7 @@ export default function ReviewRecord({ task, reference, autoReadFindings = false
   const labels = { RUNNING: '审阅进行中', SUCCEEDED: '本次审阅成功', FAILED: '本次审阅失败', CANCELED: '本次审阅已取消' }
   return <section className="task-review history-review" aria-label={`执行 ${executionId} 的记录`}>
     <h3>审阅记录：{executionId}</h3>
-    <p>显示所选事件对应的执行，刷新记录只读取状态。</p>
+    <p>显示所选记录对应的执行，刷新记录只读取状态。</p>
     <button type="button" disabled={pending} onClick={() => setRefresh((value) => value + 1)}>刷新执行记录</button>
     {pending && <p role="status">正在读取审阅记录…</p>}
     {error && <p role="alert" className="error-message">{error}</p>}
