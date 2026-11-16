@@ -1,0 +1,92 @@
+{
+  "services": [
+    {
+      "tenantId": "tenant-local",
+      "serviceId": "S1",
+      "name": "示例服务 1",
+      "catalogVersion": "1",
+      "repository": {
+        "connectorRef": "gitlab",
+        "repositoryId": "101",
+        "defaultTargetBranch": "main",
+        "allowedTargetBranches": [
+          "main",
+          "release/test"
+        ]
+      },
+      "environments": [
+        "test"
+      ]
+    },
+    {
+      "tenantId": "tenant-local",
+      "serviceId": "S2",
+      "name": "示例服务 2",
+      "catalogVersion": "1",
+      "repository": {
+        "connectorRef": "gitlab",
+        "repositoryId": "102",
+        "defaultTargetBranch": "release/test",
+        "allowedTargetBranches": [
+          "release/test"
+        ]
+      },
+      "environments": [
+        "test"
+      ]
+    },
+    {
+      "tenantId": "tenant-local",
+      "serviceId": "S3",
+      "name": "示例服务 3",
+      "catalogVersion": "1",
+      "repository": {
+        "connectorRef": "gitlab",
+        "repositoryId": "103",
+        "defaultTargetBranch": "master",
+        "allowedTargetBranches": [
+          "master",
+          "release/test"
+        ]
+      },
+      "environments": [
+        "test"
+      ]
+    }
+  ],
+  "grants": [
+    {
+      "subject": "local-developer",
+      "tenantId": "tenant-local",
+      "serviceId": "S1",
+      "environment": "test",
+      "operations": [
+        "read",
+        "create",
+        "snapshot"
+      ]
+    },
+    {
+      "subject": "local-developer",
+      "tenantId": "tenant-local",
+      "serviceId": "S2",
+      "environment": "test",
+      "operations": [
+        "read",
+        "create",
+        "snapshot"
+      ]
+    },
+    {
+      "subject": "local-developer",
+      "tenantId": "tenant-local",
+      "serviceId": "S3",
+      "environment": "test",
+      "operations": [
+        "read",
+        "create",
+        "snapshot"
+      ]
+    }
+  ]
+}

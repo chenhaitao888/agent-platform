@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { APIContext, authenticatedFetch, type API } from './api'
-import TaskWorkspace from './TaskWorkspace'
+import DeliveryWorkspace from './DeliveryWorkspace'
 
 type Session = { subject: string; api: API }
 
@@ -51,14 +51,14 @@ export default function Authentication() {
   if (session) return (
     <APIContext.Provider value={session.api}>
       <div className="session-bar">
-        <span className="breadcrumb">工作台 <span aria-hidden="true">/</span> <strong>代码审阅</strong></span>
+        <span className="breadcrumb">工作台 <span aria-hidden="true">/</span> <strong>需求交付与审阅</strong></span>
         <div className="session-identity">
           <span className="avatar" aria-hidden="true">{session.subject.slice(0, 1).toUpperCase()}</span>
           <span>{session.subject}<small>租户 · {session.api.tenantId}</small></span>
           <button className="button-quiet" type="button" onClick={logout}>退出身份</button>
         </div>
       </div>
-      <TaskWorkspace />
+      <DeliveryWorkspace />
     </APIContext.Provider>
   )
 

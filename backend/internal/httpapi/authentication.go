@@ -240,3 +240,27 @@ func unambiguousTenantClaim(content []byte) bool {
 	}
 	return true
 }
+
+// Catalog validation uses deployment identity registrations, never browser claims.
+func (a *Authenticator) RepositoryRegistered(tenant, repositoryID string) bool {
+	if a == nil {
+		return false
+	}
+	for _, b := range a.bindings {
+		if b.identity.principal.TenantID == tenant && slices.Contains(b.identity.repositories, repositoryID) {
+			return true
+		}
+	}
+	return false
+}
+func (a *Authenticator) SubjectRegistered(subject, tenant string) bool {
+	if a == nil {
+		return false
+	}
+	for _, b := range a.bindings {
+		if b.identity.principal.Subject == subject && b.identity.principal.TenantID == tenant {
+			return true
+		}
+	}
+	return false
+}

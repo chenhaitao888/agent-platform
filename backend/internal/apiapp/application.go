@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-platform/backend/internal/change"
 	"agent-platform/backend/internal/codex"
 	"agent-platform/backend/internal/connector/gitlab"
 	"agent-platform/backend/internal/gitworkspace"
@@ -26,7 +27,7 @@ type Application struct {
 }
 
 type deployment struct {
-	authFile                                                                                      string
+	authFile, catalogFile                                                                         string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
@@ -38,6 +39,7 @@ func loadDeployment() (deployment, error) {
 	config := deployment{address: value("API_ADDR"), gitlabURL: value("GITLAB_BASE_URL"), gitlabToken: value("GITLAB_TOKEN"), root: value("WORKSPACE_ROOT"), gitBinary: value("GIT_BINARY"), gitlabCA: value("GITLAB_CA_FILE"),
 		dockerBinary: value("DOCKER_BINARY"), dockerHost: value("DOCKER_HOST"), image: value("REVIEW_WORKER_IMAGE"), model: value("REVIEW_MODEL"), modelURL: value("MODEL_BASE_URL"), principal: value("MODEL_SERVICE_PRINCIPAL"), credentialFile: value("MODEL_CREDENTIAL_FILE"), modelCA: value("MODEL_CA_FILE"), seccomp: value("REVIEW_SECCOMP_POLICY"), timeout: 90 * time.Second}
 	config.authFile = value("AUTH_FILE")
+	config.catalogFile = value("SERVICE_CATALOG_FILE")
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
@@ -94,9 +96,13 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	catalog, err := loadServiceCatalog(config.catalogFile, config.root, authentication, config.gitlabURL != "")
+	if err != nil {
+		return nil, err
+	}
 	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled, AuthenticationConfigured: authentication != nil}
 	if config.gitlabURL == "" {
-		app.Handler = authentication.Wrap(app.Handler)
+		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, nil)))
 		return app, nil
 	}
 	client, err := deploymentHTTPClient(config.gitlabCA, 5*time.Second)
@@ -124,7 +130,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		if err != nil {
 			return nil, err
 		}
-		app.Handler = authentication.Wrap(app.Handler)
+		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, verifier)))
 		return app, nil
 	}
 	var modelClient *http.Client
@@ -156,6 +162,6 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		underlying.ServeHTTP(w, r)
 	})
 	app.ShutdownGrace = max(time.Minute, config.timeout+30*time.Second)
-	app.Handler = authentication.Wrap(app.Handler)
+	app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, verifier)))
 	return app, nil
 }

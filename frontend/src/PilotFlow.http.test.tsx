@@ -42,6 +42,7 @@ it.skipIf(!endpoint)('creates, queues, prepares and reviews a task through the d
   render(<Authentication />)
   fireEvent.change(screen.getByLabelText('API 凭据'), { target: { value: token } })
   fireEvent.click(screen.getByRole('button', { name: '验证身份' }))
+  fireEvent.click(await screen.findByRole('button', { name: '单仓库审阅' }))
   await screen.findByText('暂无 Task')
 
   fireEvent.change(screen.getByLabelText('任务目标'), { target: { value: 'Pilot review from an empty store' } })
@@ -165,6 +166,7 @@ it.skipIf(!endpoint)('creates, queues, prepares and reviews a task through the d
   expect(screen.queryByText('审阅成功')).not.toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('API 凭据'), { target: { value: otherToken } })
   fireEvent.click(screen.getByRole('button', { name: '验证身份' }))
+  fireEvent.click(await screen.findByRole('button', { name: '单仓库审阅' }))
   await screen.findByText('暂无 Task')
   expect(screen.queryByText('Pilot review from an empty store')).not.toBeInTheDocument()
   const otherHeaders = { Authorization: `Bearer ${otherToken}` }

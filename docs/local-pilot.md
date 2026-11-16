@@ -49,7 +49,7 @@ launchctl kickstart gui/501/com.agent-platform.local-pilot
 
 ## 页面操作
 
-1. 验证 API 凭据，看到最近 Task。
+1. 验证 API 凭据。D1 新代码默认进入“需求交付”；点击“单仓库审阅”查看最近 Task。
 2. 优先查看已有的 `task-1`。若要新建，仓库 ID 填 `2`，Head SHA 填
    `9ce4c65d38c6c9c713902744e168887b3dee0624`，任务类型保持 `PR_REVIEW`。
 3. 新任务点击“加入队列”→“打开审阅工作区”→“登记 Workspace”→“准备 Workspace”。
@@ -60,6 +60,17 @@ launchctl kickstart gui/501/com.agent-platform.local-pilot
 2026-11-12 已调整为审阅工作台布局，截图与交互验证见[界面改版记录](pilots/2026-11-12-workbench/README.md)。
 
 目前项目是专门构造的合成样例；功能闭环通过不代表 M14 正式质量验收通过。
+
+## D1 需求目录接入
+
+2026-11-13 的 D1 代码新增需求创建与多服务分支快照，尚未重启本机常驻 API，也未给当前试点登记服务目录。
+新前端搭配旧 API 时，需求入口可能提示读取失败；已有审阅可从“单仓库审阅”入口进入。
+
+启用前先按 [README](../README.md#d1启用服务目录与需求快照) 在私有目录准备 `0600` 的服务目录 JSON，
+并在 `pilot.json` 增加 `"serviceCatalogFile": "/absolute/private/service-catalog.json"`。
+真实映射必须使用已授权的仓库；本机原身份只允许项目 `2`，不要直接使用三服务示例中的占位项目。
+服务与授权校验发生在 API 启动时，启动器只做本地文件和配置预检。
+需要重启才能载入新 API 与目录，请先保留必要的内存结果；这一步不调用模型，也不创建配置或 AB。
 
 ## 在其他环境复现启动
 

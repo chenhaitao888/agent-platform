@@ -89,10 +89,7 @@ func (v *Verifier) Resolve(ctx context.Context, selection task.RepositoryReferen
 	if err := v.verifyGET(ctx, projectPath+"/repository/commits/"+url.PathEscape(selection.HeadSHA), repository.ErrHeadCommitNotFound); err != nil {
 		return task.RepositoryReference{}, err
 	}
-	query := url.Values{}
-	query.Add("refs[]", targetSHA)
-	query.Add("refs[]", selection.HeadSHA)
-	baseSHA, err := v.readCommitID(ctx, projectPath+"/repository/merge_base?"+query.Encode(), repository.ErrReviewBaseNotFound, false)
+	baseSHA, err := v.mergeBase(ctx, selection.RepositoryID, targetSHA, selection.HeadSHA)
 	if err != nil {
 		return task.RepositoryReference{}, err
 	}
@@ -100,6 +97,35 @@ func (v *Verifier) Resolve(ctx context.Context, selection task.RepositoryReferen
 	selection.TargetSHA = targetSHA
 	selection.BaseSHA = baseSHA
 	return selection, nil
+}
+
+// ResolveBranches is the authorized catalog path. The legacy Resolve above
+// deliberately retains its master policy and caller-supplied head contract.
+func (v *Verifier) ResolveBranches(ctx context.Context, selection repository.BranchSelection) (task.RepositoryReference, error) {
+	if !repository.ValidBranch(selection.SourceBranch) || !repository.ValidBranch(selection.TargetBranch) {
+		return task.RepositoryReference{}, repository.ErrVerificationUnavailable
+	}
+	branchPath := projectAPIPath(selection.RepositoryID) + "/repository/branches/"
+	head, err := v.readCommitID(ctx, branchPath+url.PathEscape(selection.SourceBranch), repository.ErrSourceBranchNotFound, true)
+	if err != nil {
+		return task.RepositoryReference{}, err
+	}
+	target, err := v.readCommitID(ctx, branchPath+url.PathEscape(selection.TargetBranch), repository.ErrTargetBranchNotFound, true)
+	if err != nil {
+		return task.RepositoryReference{}, err
+	}
+	base, err := v.mergeBase(ctx, selection.RepositoryID, target, head)
+	if err != nil {
+		return task.RepositoryReference{}, err
+	}
+	return task.RepositoryReference{Provider: "gitlab", RepositoryID: selection.RepositoryID, TargetBranch: selection.TargetBranch, HeadSHA: head, TargetSHA: target, BaseSHA: base}, nil
+}
+
+func (v *Verifier) mergeBase(ctx context.Context, repositoryID, target, head string) (string, error) {
+	query := url.Values{}
+	query.Add("refs[]", target)
+	query.Add("refs[]", head)
+	return v.readCommitID(ctx, projectAPIPath(repositoryID)+"/repository/merge_base?"+query.Encode(), repository.ErrReviewBaseNotFound, false)
 }
 
 func (v *Verifier) readCommitID(ctx context.Context, path string, notFoundError error, nested bool) (string, error) {

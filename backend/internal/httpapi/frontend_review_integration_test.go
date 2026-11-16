@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agent-platform/backend/internal/change"
 	"context"
 	"net/http/httptest"
 	"os"
@@ -22,7 +23,7 @@ func TestFrontendReviewFlowOverAuthenticatedHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := newReviewExecutionFixture(t, "success", 5*time.Second)
-	server := httptest.NewServer(authenticatedHandler(t, fixture.handler, fixture.ready.TenantID))
+	server := httptest.NewServer(authenticatedHandler(t, WithChanges(fixture.handler, change.NewService(nil, nil)), fixture.ready.TenantID))
 	t.Cleanup(server.Close)
 	frontend, err := filepath.Abs("../../../frontend")
 	if err != nil {

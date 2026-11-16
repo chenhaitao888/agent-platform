@@ -2,6 +2,7 @@
 
 这是“企业研发智能体与工作流平台”的最小可运行骨架。当前只完成：
 
+- D1：可信服务目录、需求创建/列表/详情，以及按多服务源/目标分支固定不可变代码快照
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -17,6 +18,10 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
+
+2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
+D1 已实现；下一切片 D2 从已固定快照接入多服务 Review。配置/AB 计划、持久执行与外部写入尚未实现。
+见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
 M14 将通过 `codex exec` 复用 OpenAI 开源 Codex Harness，由平台准备输入、隔离执行、校验并归档结果；
@@ -43,6 +48,8 @@ agent-platform/
 │   ├── cmd/authinit/            # 首次本机 API 凭据初始化，不输出 token
 │   ├── cmd/runtimecheck/        # 不调用模型的 CLI 预检
 │   └── internal/
+│       ├── change/              # 需求聚合、版本与快照幂等应用服务
+│       ├── servicecatalog/      # 部署目录及服务/环境/操作授权
 │       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
 │       ├── artifact/            # 不可变结果元数据、内容与幂等创建
@@ -61,6 +68,79 @@ agent-platform/
 
 本项目使用 Go 1.27.1。请确认 `go version` 显示 `go1.27.1 darwin/arm64`
 或对应平台的 Go 1.27.1。
+
+### D1：启用服务目录与需求快照
+
+登录后默认进入“需求交付”，可随时切换到“单仓库审阅”。目录未配置时显示空目录，原 Task API 继续可用。
+新增能力仍使用内存存储；API 重启会丢失需求、快照和幂等记录。
+
+1. 复制并修改 [三服务配置示例](docs/examples/service-catalog.json)。示例的 `101/102/103` 是占位项目 ID，
+   必须替换为同一 GitLab 实例的已登记仓库，并加入认证文件对应租户的 `repositoryIds`。
+2. `subject`、`tenantId` 必须对应已有 API 身份；每个服务分别登记默认目标分支、允许目标分支及环境。
+   `grants` 按身份、租户、服务、环境显式授予 `read`、`create`、`snapshot`；每条授权必须包含 `read`。
+   未授权服务/环境不会出现在该身份的目录中，创建或固定快照仍会独立重验权限。
+3. 把配置放在 Workspace 根目录之外的绝对路径，推荐权限 `0600`，设置
+   `AGENT_PLATFORM_SERVICE_CATALOG_FILE=/absolute/path/service-catalog.json`。API 启动时加载，修改后需重启生效。
+   使用 `scripts/run-local-pilot.py` 时，在私有 `pilot.json` 增加可选字段 `serviceCatalogFile` 指向同一文件。
+4. 保留现有认证、GitLab URL/token、可信 CA 和 Workspace 部署配置。D1 不要求启用 Review 或配置模型。
+   `connectorRef` 当前仅接受 `gitlab`，绑定现有唯一 GitLab 实例；不能从请求指定连接 URL 或凭据。
+
+目录文件必须为当前用户拥有的普通文件，不能为符号链接、硬链接或允许组/其他用户写入的文件，最大 1 MiB；
+启动器进一步要求 `0600` 和 64 KiB。目录严格拒绝未知/重复/大小写别名字段及 `null`。
+D1 环境名限 `dev/test/qa/uat/staging`，服务只有显式登记且授权的环境可用。
+配置/AB 资源映射留待 D3，此版本目录不接受设计草案中的 `config/experiment` 字段。
+
+新增 API 自动采用可信身份的租户；可以省略 `tenantId`，显式声明时必须一致。以下接口均要求 Bearer：
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /api/v1/services` | 返回当前身份可见的服务、目标分支和环境；隐藏连接、仓库坐标及凭据 |
+| `POST /api/v1/changes` | 幂等创建需求，不访问 GitLab；首次 201，重放 200 |
+| `GET /api/v1/changes`、`GET /api/v1/changes/{id}` | 列表与详情只读，详情含历史快照尝试 |
+| `POST /api/v1/changes/{id}/snapshots` | 同步固定所有分支；首次记录尝试 201，同键重放 200 |
+
+创建请求示例：
+
+```json
+{
+  "idempotencyKey": "change-A-create-1",
+  "title": "需求 A",
+  "description": "验收说明",
+  "environment": "test",
+  "services": [
+    {"serviceId": "S1", "sourceBranch": "feature/A"},
+    {"serviceId": "S2", "sourceBranch": "feature/A-api"},
+    {"serviceId": "S3", "sourceBranch": "feature/A-exp"}
+  ]
+}
+```
+
+固定快照提交 `idempotencyKey`、`expectedVersion` 和完整 `services` 数组；`targetBranch` 可省略以使用目录默认值。
+一项需求最多 20 个服务；D1 的服务集合和环境创建后固定，新快照可以显式改变各服务的源/允许目标分支。
+请求不能提交 SHA、仓库 ID、URL 或凭据，额外字段会被拒绝。
+
+```json
+{
+  "idempotencyKey": "change-A-snapshot-1",
+  "expectedVersion": 1,
+  "services": [
+    {"serviceId": "S1", "sourceBranch": "feature/A", "targetBranch": "main"},
+    {"serviceId": "S2", "sourceBranch": "feature/A-api", "targetBranch": "release/test"},
+    {"serviceId": "S3", "sourceBranch": "feature/A-exp", "targetBranch": "master"}
+  ]
+}
+```
+
+**201 只表示已记录此次尝试。必须检查 `snapshot.state`：** 全部解析成功才是 `READY`；部分失败为 `FAILED`，
+逐服务提供稳定 `errorCode`，不发布新的 `currentSnapshotId`，也不创建任何 Review Task。
+每次完成的尝试（包括失败）使需求 `version` 增加一次；正在解析期间不同键返回 409 `snapshot_in_progress`。
+相同键不同输入为 409 `idempotency_conflict`；新键使用过期版本为 409 `version_conflict`。
+成功与失败的同键重放都返回原记录，不再次读取分支；重试失败解析需显式新键和最新版本。
+响应丢失时保持原请求重试；刷新页面丢失浏览器重试键后，先读取需求历史。
+
+每个成功服务保存完整 head/target/merge-base SHA、目录版本和解析时间；跨仓库没有全局瞬时原子性。
+整个解析请求限时 30 秒，不启动后台队列；取消可能留下明确的失败尝试，不能把关页等同于恢复机制。
+当前只完成固定输入，界面中的“待审阅”不表示已执行 Review，配置/AB 操作也尚未接入。
 
 ### 本机身份与租户配置
 

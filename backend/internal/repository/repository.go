@@ -12,6 +12,7 @@ var (
 	ErrBaseCommitNotFound      = errors.New("base commit was not found in repository")
 	ErrHeadCommitNotFound      = errors.New("head commit was not found in repository")
 	ErrTargetBranchNotFound    = errors.New("target branch was not found in repository")
+	ErrSourceBranchNotFound    = errors.New("source branch was not found in repository")
 	ErrReviewBaseNotFound      = errors.New("review base could not be computed")
 	ErrVerificationUnavailable = errors.New("repository verification is unavailable")
 	ErrDiffUnavailable         = errors.New("repository diff is unavailable")
