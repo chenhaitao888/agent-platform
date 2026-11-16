@@ -26,6 +26,9 @@ func WithChanges(existing http.Handler, service *change.Service) http.Handler {
 	mux.HandleFunc("POST /api/v1/changes/{id}/reviews", h.review)
 	mux.HandleFunc("GET /api/v1/changes/{id}/reviews", h.reviews)
 	mux.HandleFunc("GET /api/v1/changes/{id}/reviews/{reviewId}", h.getReview)
+	mux.HandleFunc("POST /api/v1/changes/{id}/plans", h.plan)
+	mux.HandleFunc("GET /api/v1/changes/{id}/plans", h.plans)
+	mux.HandleFunc("GET /api/v1/changes/{id}/plans/{planId}", h.getPlan)
 	mux.Handle("/", existing)
 	return requireIdentity(mux)
 }
@@ -120,6 +123,8 @@ func writeChangeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "review_complete", change.ErrReviewComplete.Error()
 	case errors.Is(err, review.ErrReviewUnavailable):
 		status, code, message = 503, "review_unavailable", review.ErrReviewUnavailable.Error()
+	case errors.Is(err, change.ErrPlanningUnavailable):
+		status, code, message = 503, "planning_unavailable", change.ErrPlanningUnavailable.Error()
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		status, code, message = 408, "request_canceled", "request canceled; read the change before retrying"
 	}

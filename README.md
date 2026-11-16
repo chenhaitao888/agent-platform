@@ -4,6 +4,7 @@
 
 - D1：可信服务目录、需求创建/列表/详情，以及按多服务源/目标分支固定不可变代码快照
 - D2：从指定快照发起多服务 Review，逐服务准入/准备/审阅、失败重试与历史证据读取
+- D3：固定 diff 候选、配置/实验现状读取、类型化规则与版本化只读计划预览
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -21,7 +22,7 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1、D2 已实现；下一切片 D3 为配置/AB 只读计划。持久执行与外部写入尚未实现。
+D1～D3 已实现；下一切片 D4 为持久化与可靠执行基础。外部写入尚未实现。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -53,6 +54,8 @@ agent-platform/
 │       ├── servicecatalog/      # 部署目录及服务/环境/操作授权
 │       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
+│       ├── connector/reference/ # 配置/实验参考协议，只提供 GET 读取
+│       ├── planning/            # 候选分析、平台窄接口与确定性计划规则
 │       ├── artifact/            # 不可变结果元数据、内容与幂等创建
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
@@ -89,7 +92,7 @@ agent-platform/
 目录文件必须为当前用户拥有的普通文件，不能为符号链接、硬链接或允许组/其他用户写入的文件，最大 1 MiB；
 启动器进一步要求 `0600` 和 64 KiB。目录严格拒绝未知/重复/大小写别名字段及 `null`。
 D1 环境名限 `dev/test/qa/uat/staging`，服务只有显式登记且授权的环境可用。
-配置/AB 资源映射留待 D3，此版本目录不接受设计草案中的 `config/experiment` 字段。
+配置/AB 映射使用 D3 的可选 `planning` 数组，格式见下方；不接受设计草案中的任意扩展字段。
 
 新增 API 自动采用可信身份的租户；可以省略 `tenantId`，显式声明时必须一致。以下接口均要求 Bearer：
 
@@ -141,7 +144,7 @@ D1 环境名限 `dev/test/qa/uat/staging`，服务只有显式登记且授权的
 
 每个成功服务保存完整 head/target/merge-base SHA、目录版本和解析时间；跨仓库没有全局瞬时原子性。
 整个解析请求限时 30 秒，不启动后台队列；取消可能留下明确的失败尝试，不能把关页等同于恢复机制。
-固定快照不会自动审阅；需在下方显式发起多服务 Review。配置/AB 操作尚未接入。
+固定快照不会自动审阅；需在下方显式发起多服务 Review。配置/AB 只读计划见 D3，写操作尚未接入。
 
 ### D2：从快照发起多服务 Review
 
@@ -182,6 +185,29 @@ Review 未启用时返回 503 `review_unavailable`，不会留下子任务。
 单服务准入到审阅最多 3 分钟，整次 HTTP 请求最多 4 分钟，Runner 仍受更短的部署超时限制；
 取消/超时保留已完成服务，后续服务不再启动。状态和幂等记录仍只在内存，刷新浏览器丢失本地重试键后应先读取历史，
 进程重启不具备恢复能力。成功表示每项审阅执行成功，问题仍需人工处置，不表示需求可交付或跨服务兼容性已验证。
+
+### D3：配置与实验只读计划
+
+先完成服务审阅并准备固定代码工作区。在可信目录为环境登记 `planning` 中的 config/experiment 资源映射，
+显式授予 `plan` 操作，设置 `AGENT_PLATFORM_PLANNING_CONNECTORS_FILE` 指向私有连接文件。
+启动器对应可选字段为 `planningConnectorsFile`；连接与凭据只进入 API，不进入前端或模型。
+完整部署字段、参考 HTTP 协议、示例与限制见 [只读计划契约](docs/planning-reference.md)。
+
+需求页“配置与实验计划”支持先分析，再集中补齐业务值或不涉及的依据。
+系统读取指定快照的 diff 和目录映射的当前平台状态，区分新增/更新，保留基线版本和前置条件；
+共享资源提案相同则合并，不同则阻断。实验只形成未激活草稿提案，不支持该能力的平台明确阻断。
+密钥只允许该资源登记的引用和版本；不读取密钥内容。
+
+| 接口 | 行为 |
+| --- | --- |
+| `POST /api/v1/changes/{id}/plans` | `idempotencyKey/expectedVersion/snapshotId` 加可选 requirements；同步生成，首次 201、重放 200 |
+| `GET /api/v1/changes/{id}/plans` | 读取计划历史，包含 RUNNING / BLOCKED / READY_FOR_REVIEW |
+| `GET /api/v1/changes/{id}/plans/{planId}` | 读取指定不可变版本，不调用模型或外部平台 |
+
+首版分析器仅识别参考契约中的字面 `config.Get...` 和 `experiments.Variant...` 调用，不推断业务值、不调用模型。
+未发现候选、明确不涉及、分析失败和尚未分析分开展示。生成开始/结束各推进一次需求版本，30 秒内完成或记录阻断；
+同键重放不重新读取平台，新键和当前版本生成新计划并保留旧记录。
+计划就绪只表示可供人工审阅；没有批准、执行或激活接口，所有状态仍在内存。
 
 ### 本机身份与租户配置
 

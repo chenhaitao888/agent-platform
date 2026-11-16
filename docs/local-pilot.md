@@ -72,6 +72,13 @@ launchctl kickstart gui/501/com.agent-platform.local-pilot
 服务与授权校验发生在 API 启动时，启动器只做本地文件和配置预检。
 需要重启才能载入新 API 与目录，请先保留必要的内存结果；这一步不调用模型，也不创建配置或 AB。
 
+## D2/D3 接续能力
+
+D2 支持多服务 Review，目录需显式 review 授权。D3 支持参考配置/实验只读计划，需显式 plan 授权、
+planning 资源映射及私有连接文件；启动器新增可选 `planningConnectorsFile`，只传 API。
+协议见 [D3 只读计划契约](planning-reference.md)。旧配置继续可用，没有自动授权或修改真实资源映射。
+本轮没有重启此处的常驻试点，也没有安装常驻参考平台；源码能力不能视为已在旧 API 进程中启用。
+
 ## 在其他环境复现启动
 
 仓库入口为 `scripts/run-local-pilot.py`，仅使用 Python 3.9+ 标准库（POSIX/macOS）。

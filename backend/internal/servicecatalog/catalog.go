@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/repository"
 )
 
@@ -21,12 +22,13 @@ type Repository struct {
 	AllowedTargetBranches []string `json:"allowedTargetBranches"`
 }
 type Entry struct {
-	TenantID       string     `json:"tenantId"`
-	ServiceID      string     `json:"serviceId"`
-	Name           string     `json:"name"`
-	CatalogVersion string     `json:"catalogVersion"`
-	Repository     Repository `json:"repository"`
-	Environments   []string   `json:"environments"`
+	TenantID       string                        `json:"tenantId"`
+	ServiceID      string                        `json:"serviceId"`
+	Name           string                        `json:"name"`
+	CatalogVersion string                        `json:"catalogVersion"`
+	Repository     Repository                    `json:"repository"`
+	Environments   []string                      `json:"environments"`
+	Planning       []planning.EnvironmentBinding `json:"planning,omitempty"`
 }
 type Grant struct {
 	Subject     string   `json:"subject"`
@@ -93,6 +95,18 @@ func New(config Config, registry Registry) (*Catalog, error) {
 				return nil, ErrInvalidCatalog
 			}
 		}
+		seenPlanning := map[string]bool{}
+		for _, binding := range e.Planning {
+			if !slices.Contains(e.Environments, binding.Environment) || seenPlanning[binding.Environment] || (binding.Config == nil && binding.Experiment == nil) {
+				return nil, ErrInvalidCatalog
+			}
+			seenPlanning[binding.Environment] = true
+			for _, resource := range []*planning.ResourceBinding{binding.Config, binding.Experiment} {
+				if resource != nil && (!planning.ValidIdentifier(resource.ConnectorRef) || !planning.ValidIdentifier(resource.ResourceRef)) {
+					return nil, ErrInvalidCatalog
+				}
+			}
+		}
 		c.entries[key] = clone(e)
 	}
 	for _, g := range config.Grants {
@@ -102,7 +116,7 @@ func New(config Config, registry Registry) (*Catalog, error) {
 			return nil, ErrInvalidCatalog
 		}
 		for _, op := range g.Operations {
-			if !slices.Contains([]string{"read", "create", "snapshot", "review"}, op) {
+			if !slices.Contains([]string{"read", "create", "snapshot", "review", "plan"}, op) {
 				return nil, ErrInvalidCatalog
 			}
 		}
@@ -123,7 +137,23 @@ func unique(values []string) bool {
 func clone(e Entry) Entry {
 	e.Environments = slices.Clone(e.Environments)
 	e.Repository.AllowedTargetBranches = slices.Clone(e.Repository.AllowedTargetBranches)
+	e.Planning = planning.Clone(e.Planning)
 	return e
+}
+
+// ValidatePlanning binds every deployment mapping before handlers are exposed.
+func (c *Catalog) ValidatePlanning(p *planning.Planner) error {
+	if c == nil {
+		return nil
+	}
+	for _, e := range c.entries {
+		for _, b := range e.Planning {
+			if (b.Config != nil && !p.Registered("config", b.Config.ConnectorRef)) || (b.Experiment != nil && !p.Registered("experiment", b.Experiment.ConnectorRef)) {
+				return ErrInvalidCatalog
+			}
+		}
+	}
+	return nil
 }
 func (c *Catalog) Authorized(actor Actor, service, env, operation string) (Entry, bool) {
 	if c == nil {

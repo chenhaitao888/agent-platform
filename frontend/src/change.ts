@@ -46,7 +46,7 @@ export const changeErrors: Record<string, string> = {
   service_forbidden: '当前身份无权使用所选服务、环境或操作',
   version_conflict: '需求已更新，请重新读取详情后操作',
   idempotency_conflict: '请求标识已用于不同内容，请重新读取详情',
-  snapshot_in_progress: '该需求正在固定快照或审阅，请稍后刷新状态',
+  snapshot_in_progress: '该需求正在固定快照、审阅或生成计划，请稍后刷新状态',
   snapshot_not_ready: '请选择该需求下完整可用的代码快照',
   review_complete: '该快照的所有服务已完成审阅；代码变化后请创建新快照',
   review_unavailable: '当前部署尚未启用代码审阅',

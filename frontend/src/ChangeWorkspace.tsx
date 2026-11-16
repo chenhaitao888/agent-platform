@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import ChangeReviews from './ChangeReviews'
+import ChangePlans from './ChangePlans'
 import { useAPI } from './api'
 import { changeErrors, type ChangeRequest, type ServiceEntry, type ServiceSelection, type SnapshotResult } from './change'
 
@@ -192,6 +193,7 @@ function ChangeSession() {
             <details className="technical-details"><summary>快照标识</summary><p>{current.id} / {snapshot.id}</p><code>{snapshot.inputHash}</code></details>
           </article>)}</div>
           {current.currentSnapshotId && <ChangeReviews key={current.id} change={current} onVersion={updateReviewVersion} onBusy={setBusy} blocked={busy} />}
+          {current.currentSnapshotId && <ChangePlans key={`plans:${current.id}`} change={current} onVersion={updateReviewVersion} onBusy={setBusy} blocked={busy} />}
         </>}
       </section>
     </div>}

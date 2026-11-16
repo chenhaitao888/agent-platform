@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agent-platform/backend/internal/change"
+	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/servicecatalog"
@@ -28,6 +29,8 @@ type deliveryFixture struct {
 	verified                []task.RepositoryReference
 	failHead                string
 	failVerify, failPrepare string
+	sharedPlanning          bool
+	patch                   string
 	run                     func(context.Context, review.RunInput) error
 }
 
@@ -64,7 +67,10 @@ func (f *deliveryFixture) Prepare(_ context.Context, ref task.RepositoryReferenc
 	}
 	return nil
 }
-func (*deliveryFixture) Read(context.Context, repository.DiffInput) ([]byte, error) {
+func (f *deliveryFixture) Read(context.Context, repository.DiffInput) ([]byte, error) {
+	if f.patch != "" {
+		return []byte(f.patch), nil
+	}
 	return []byte("diff --git a/a.go b/a.go\n"), nil
 }
 func (f *deliveryFixture) Run(ctx context.Context, in review.RunInput) (review.FindingsReport, error) {
@@ -82,7 +88,7 @@ func (f *deliveryFixture) Run(ctx context.Context, in review.RunInput) (review.F
 	}
 	return review.FindingsReport{SchemaVersion: "1.0", BaseSHA: in.BaseSHA, HeadSHA: in.HeadSHA, Findings: []review.Finding{}}, nil
 }
-func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool) http.Handler {
+func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool, planners ...*planning.Planner) http.Handler {
 	t.Helper()
 	credentials := []Credential{}
 	for _, subject := range []string{"alice", "reader", "outsider", "bob"} {
@@ -103,10 +109,19 @@ func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool) http.Handle
 	for i, target := range []string{"main", "release/test", "master"} {
 		id := fmt.Sprintf("S%d", i+1)
 		config.Services = append(config.Services, servicecatalog.Entry{TenantID: "tenant-a", ServiceID: id, Name: id, CatalogVersion: "1", Repository: servicecatalog.Repository{ConnectorRef: "gitlab", RepositoryID: fmt.Sprint(i + 1), DefaultTargetBranch: target, AllowedTargetBranches: []string{target}}, Environments: []string{"test"}})
+		if len(planners) > 0 {
+			config.Services[i].Planning = []planning.EnvironmentBinding{{Environment: "test", Config: &planning.ResourceBinding{ConnectorRef: "config-ref", ResourceRef: id}, Experiment: &planning.ResourceBinding{ConnectorRef: "ab-ref", ResourceRef: "shared-app"}}}
+			if f.sharedPlanning {
+				config.Services[i].Planning[0].Config.ResourceRef = "shared-config"
+			}
+		}
 		for _, subject := range []string{"alice", "reader"} {
 			ops := []string{"read"}
 			if subject == "alice" {
 				ops = []string{"read", "create", "snapshot", "review"}
+				if len(planners) > 0 {
+					ops = append(ops, "plan")
+				}
 			}
 			config.Grants = append(config.Grants, servicecatalog.Grant{Subject: subject, TenantID: "tenant-a", ServiceID: id, Environment: "test", Operations: ops})
 		}
@@ -119,7 +134,7 @@ func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool) http.Handle
 	if enabled {
 		runner = f
 	}
-	h, err := NewHandlerWithDeliveryServices(f, f, f, runner, catalog, t.TempDir(), "")
+	h, err := NewHandlerWithDeliveryServices(f, f, f, runner, catalog, t.TempDir(), "", planners...)
 	if err != nil {
 		t.Fatal(err)
 	}

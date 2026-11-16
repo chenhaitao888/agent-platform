@@ -286,5 +286,17 @@ pre { font-size: 13px; line-height: 1.9; white-space: pre; overflow: auto; paddi
 .change-reviews > label { display: grid; gap: 7px; margin: 16px 0; font-size: 12px; }
 .change-reviews .button-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .service-evidence { min-width: 0; margin-top: 16px; }
+.change-plans { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 24px; min-width: 0; }
+.change-plans p { font-size: 13px; margin: 10px 0; overflow-wrap: anywhere; }
+.change-plans label { display: grid; gap: 7px; margin: 12px 0; font-size: 12px; }
+.change-plans .service-checkbox { display: flex; align-items: center; }
+.change-plans .service-checkbox input { width: auto; }
+.plan-form fieldset { border: 0; padding: 0; min-width: 0; }
+.plan-form { margin: 16px 0; }
+.plan-requirements, .plan-source, .plan-action { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 14px 0; min-width: 0; }
+.plan-fields { border-top: 1px solid var(--line); padding: 12px 0; }
+.plan-preview { margin-top: 22px; }
+.plan-issues { color: #9b532e; padding-left: 20px; overflow-wrap: anywhere; }
+.plan-issues li { margin: 8px 0; }
 @media (max-width: 850px) { .change-layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 480px) { .change-detail .branch-fields { grid-template-columns: minmax(0, 1fr); } }

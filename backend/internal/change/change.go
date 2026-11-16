@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
 	"agent-platform/backend/internal/servicecatalog"
@@ -26,7 +27,7 @@ var (
 	ErrNotFound            = errors.New("change not found")
 	ErrIdempotencyConflict = errors.New("idempotency key already used with different content")
 	ErrVersionConflict     = errors.New("change version does not match expectedVersion")
-	ErrInProgress          = errors.New("another snapshot or review is running for this change")
+	ErrInProgress          = errors.New("another snapshot, review or plan is running for this change")
 )
 
 type Selection struct {
@@ -96,6 +97,7 @@ type record struct {
 	value      ChangeRequest
 	operations map[string]*operation
 	reviews    []*reviewOperation
+	plans      []*planOperation
 	busy       bool
 }
 type Service struct {
@@ -107,6 +109,7 @@ type Service struct {
 	tasks      *task.Store
 	workspaces *workspace.Manager
 	reviews    *review.Service
+	planner    *planning.Planner
 }
 
 func NewService(catalog *servicecatalog.Catalog, resolver repository.BranchResolver) *Service {

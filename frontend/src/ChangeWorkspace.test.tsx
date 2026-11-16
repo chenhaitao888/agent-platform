@@ -27,6 +27,7 @@ it('creates a requirement from authorized services and explicitly freezes three 
     }
     if (path === '/api/v1/changes/change-1') return reply(record)
     if (path === '/api/v1/changes/change-1/reviews') return reply({ items: [] })
+    if (path === '/api/v1/changes/change-1/plans') return reply({ items: [] })
     throw new Error(`unexpected ${path}`)
   }))
   render(<ChangeWorkspace />)

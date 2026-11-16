@@ -27,7 +27,7 @@ type Application struct {
 }
 
 type deployment struct {
-	authFile, catalogFile                                                                         string
+	authFile, catalogFile, planningFile                                                           string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
@@ -40,6 +40,7 @@ func loadDeployment() (deployment, error) {
 		dockerBinary: value("DOCKER_BINARY"), dockerHost: value("DOCKER_HOST"), image: value("REVIEW_WORKER_IMAGE"), model: value("REVIEW_MODEL"), modelURL: value("MODEL_BASE_URL"), principal: value("MODEL_SERVICE_PRINCIPAL"), credentialFile: value("MODEL_CREDENTIAL_FILE"), modelCA: value("MODEL_CA_FILE"), seccomp: value("REVIEW_SECCOMP_POLICY"), timeout: 90 * time.Second}
 	config.authFile = value("AUTH_FILE")
 	config.catalogFile = value("SERVICE_CATALOG_FILE")
+	config.planningFile = value("PLANNING_CONNECTORS_FILE")
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
@@ -100,6 +101,10 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	planner, err := loadPlanning(config.planningFile, config.root, catalog)
+	if err != nil {
+		return nil, err
+	}
 	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled, AuthenticationConfigured: authentication != nil}
 	if config.gitlabURL == "" {
 		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, nil)))
@@ -126,7 +131,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 	if !config.reviewEnabled {
-		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken)
+		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, planner)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +153,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken)
+	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, planner)
 	if err != nil {
 		return nil, err
 	}

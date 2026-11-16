@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	ErrSnapshotNotReady = errors.New("review requires a READY snapshot belonging to this change")
+	ErrSnapshotNotReady = errors.New("operation requires a READY snapshot belonging to this change")
 	ErrReviewComplete   = errors.New("all services in this snapshot have already succeeded")
 )
 
