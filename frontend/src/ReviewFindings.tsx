@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAPI } from './api'
 import { parseFindingsContent, reviewHTTPError, ReviewResponseError, type FindingsReport, type ReviewExecution } from './review'
 
-export default function ReviewFindings({ execution, autoRead = false }: { execution: ReviewExecution; autoRead?: boolean }) {
+export default function ReviewFindings({ execution, autoRead = false, deliveryId }: { execution: ReviewExecution; autoRead?: boolean; deliveryId?: string }) {
   const api = useAPI()
   const controller = useRef<AbortController | null>(null)
   const [report, setReport] = useState<FindingsReport | null>(null)
@@ -21,7 +21,8 @@ export default function ReviewFindings({ execution, autoRead = false }: { execut
     setPending(true); setError(''); setReport(null)
     try {
       const query = new URLSearchParams({ tenantId: api.tenantId })
-      const response = await api.fetch(`/api/v1/artifacts/${encodeURIComponent(execution.artifact.id)}/content?${query}`, { signal: current.signal })
+      const prefix = deliveryId ? `/api/v1/deliveries/${encodeURIComponent(deliveryId)}/artifacts` : '/api/v1/artifacts'
+      const response = await api.fetch(`${prefix}/${encodeURIComponent(execution.artifact.id)}/content?${query}`, { signal: current.signal })
       if (current.signal.aborted) return
       if (!response.ok) throw new ReviewResponseError((await reviewHTTPError(response)).message)
       const result = await parseFindingsContent(response, execution)
@@ -31,7 +32,7 @@ export default function ReviewFindings({ execution, autoRead = false }: { execut
     } finally {
       if (!current.signal.aborted) setPending(false)
     }
-  }, [api, execution])
+  }, [api, execution, deliveryId])
 
   useEffect(() => { if (autoRead) void read() }, [autoRead, read])
 

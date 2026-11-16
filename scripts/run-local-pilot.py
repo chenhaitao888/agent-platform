@@ -52,7 +52,7 @@ def private_json(path):
 def configuration(path):
     config = private_json(path)
     fields = set(ENV_FIELDS) | {"stateDir", "nodeBinary", "goBinary", "apiPort", "frontendPort", "gitlabCredentialFile"}
-    optional = {"serviceCatalogFile", "planningConnectorsFile"}
+    optional = {"serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile"}
     if not fields.issubset(config) or set(config) - fields - optional:
         raise PilotError("pilot configuration has missing or unsupported fields")
     for key in fields - {"apiPort", "frontendPort"}:
@@ -86,12 +86,12 @@ def configuration(path):
     info = Path(config["modelCredentialFile"]).lstat()
     if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.getuid():
         raise PilotError("model credential must be a user-owned regular file with mode 0600")
-    for optional_file in ("serviceCatalogFile", "planningConnectorsFile"):
+    for optional_file in ("serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile"):
         if optional_file not in config:
             continue
         catalog = config[optional_file]
         if not isinstance(catalog, str) or not Path(catalog).is_absolute() or Path(catalog).resolve().is_relative_to(root.resolve()):
-            raise PilotError("catalog and planning files must use absolute paths outside workspaces")
+            raise PilotError("catalog, planning and archive files must use absolute paths outside workspaces")
         private_json(catalog)
     return config, state, credential["token"]
 
@@ -117,6 +117,8 @@ def environments(config, state, token):
         api["AGENT_PLATFORM_SERVICE_CATALOG_FILE"] = config["serviceCatalogFile"]
     if "planningConnectorsFile" in config:
         api["AGENT_PLATFORM_PLANNING_CONNECTORS_FILE"] = config["planningConnectorsFile"]
+    if "archiveDatabaseFile" in config:
+        api["AGENT_PLATFORM_ARCHIVE_DATABASE_FILE"] = config["archiveDatabaseFile"]
     frontend = dict(common, AGENT_PLATFORM_DEV_API_URL=f"http://127.0.0.1:{config['apiPort']}")
     build = dict(common, GOTOOLCHAIN="local", GOCACHE=str(state / "go-cache"), GOPATH=str(state / "go-path"))
     return api, frontend, build

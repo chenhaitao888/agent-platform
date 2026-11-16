@@ -31,20 +31,20 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 | 后端测试 | Go `testing`、`httptest` | JUnit + MockMvc 的轻量组合 |
 | 前端测试 | Vitest、Testing Library、jsdom | JUnit + 面向用户行为的 UI 测试 |
 | 静态检查 | golangci-lint v2.13.2、ESLint 10.12.0、TypeScript | Checkstyle/PMD + 编译期检查 |
-| 持久化 | 进程内存 | 临时的 InMemoryRepository，重启即丢失 |
+| 持久化 | 工作台草稿在内存；交付包可选 PostgreSQL 17.12 / pgx v5.11.0 | InMemoryRepository + 事务式不可变归档 |
 
 当前代码覆盖健康检查、持有不可变仓库引用的 Task 幂等创建、查询、第一条状态迁移、Task
 事件时间线、GitLab 仓库/commit 只读验证，以及 Workspace 登记、bare clone、detached worktree、
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件，
 前端已支持显式审阅、手动刷新状态、从事件回看某次执行与带认证的 Findings 读取。
-API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。数据库、工作流执行、Codex app-server、
+API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。PostgreSQL 已用于显式保存交付包；工作流执行、Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
 当前接续方向（2026-11-16）：用户将下一阶段明确为代码完成后的需求级交付智能体，先组织多服务 Review、
 配置和 AB 变更准备，再通过 Connector 适配企业系统。D1“服务目录与多服务分支快照”已实现：
 需求创建/列表/详情、显式固定分支、逐服务结果及历史快照、前端入口与可信部署加载。
-D2 已接入逐服务 Review，D3 已实现参考平台、候选与配置/实验只读计划；下一切片为 D4 持久化与可靠执行基础。详见 [设计方案](post-coding-delivery-design.md)
+D2/D3 已接入 Review 与只读计划，D4.1 已完成 PostgreSQL 持久交付包；下一切片 D4.2 接审批、Outbox 与 Temporal 模拟执行。详见 [设计方案](post-coding-delivery-design.md)
 及 [接续交接](handoff-2026-11-13.md)。这一优先级取代下文历史记录中的“下一步”；
 正式 Review 质量验收仍未完成，继续保留为后续质量工作线。
 
@@ -3738,7 +3738,7 @@ D3 只读配置/AB 计划：按方案建立参考平台、受控状态读取、�
 ### 第 53 步 / D3：配置与实验只读计划（2026-11-16）
 
 用户要求先推送 D2 再继续。已将 D2 以 `74a9c9e feat(change): orchestrate snapshot-bound multi-service reviews`
-成功推送到 `origin/main`，随后完成本步 D3 首版；D3 改动仍在工作树，尚未提交推送。
+成功推送到 `origin/main`，随后完成本步 D3 首版；用户再次授权后以 `f5b86bb` 提交并推送。
 开工基线为相关 Go 包通过、前端 132 项通过/4 跳过。先新增公共 HTTP 计划验收，确认缺少 planning 包导致 RED，
 再接类型化 Reader/Analyzer、计划应用服务和前端，不用内部实现替身冒充贯穿验收。
 
@@ -3811,6 +3811,70 @@ Plan、幂等、观察与审批前资料仍在内存；没有持久记录、审�
 下一切片 D4：先明确本机持久化部署条件，再接 PostgreSQL、已选自托管 Temporal、审批/操作记录/Outbox 与恢复核对。
 初期仍只模拟外部写入；真实配置与实验写入留到 D5，实际平台测试空间与语义验收留到 D6。
 
+### 第 54 步 / D4.1：PostgreSQL 持久交付包（2026-11-16）
+
+用户要求推送 D3 并继续。已将 D3 以 `f5b86bb feat(planning): add snapshot-bound read-only config and experiment plans`
+推送到 `origin/main`。随后按小切片约定推进 D4.1：显式保存不可变计划及其证据，先证明进程重启不丢记录。
+本步不宣称完成整个 D4；审批、操作记录/Outbox 和 Temporal 模拟执行仍是下一切片。
+D4.1 改动留在工作树供审阅，尚未提交推送。
+
+#### 部署决策与公共行为
+
+只读检查确认本机 Docker 28.3.0 可用，已有 GitLab 等容器；没有独立 PostgreSQL/Temporal 命令。
+查阅官方版本/部署资料，选择 PostgreSQL 17.12 官方 ARM64 镜像并固定 registry digest，驱动固定 pgx v5.11.0，
+仅新增其必要依赖。版本来源和复现步骤见 [持久交付包说明](durable-delivery.md)。
+使用独立 Compose 项目、本机 15439 测试端口和新数据卷，不复用 GitLab 内部数据库。
+Temporal 保留原 ADR-004 决定，本步未安装或引入 SDK；先建立之后审批和工作流需要的稳定输入边界。
+
+开始时相关 Go 基线及前端 136 项测试通过。先写公开 Store 的重开/重放行为用例，确认缺实现产生 RED，
+再加入实际 PostgreSQL 表、迁移与事务；之后通过真实 HTTP、前端和 API 可执行进程逐条扩展验收。
+
+- [delivery](../backend/internal/delivery/bundle.go) 保存版本化 Bundle：需求说明、固定快照、原计划、执行/Artifact 元数据和 Findings 内容，
+  具有独立随机 ID 与整包摘要。客户端只指定原计划与 expectedPlanHash，不能提交包正文或替代证据。
+- 允许保存 READY_FOR_REVIEW 或 BLOCKED 计划，不修改原结果，不把保存等同批准/执行；未开始/失败的审阅如实保留。
+  证据和 plan hash 必须与原服务/SHA/租户一致，Findings 复用已有 schema、大小与校验和规则。
+- [PostgreSQL Store](../backend/internal/delivery/store.go) 使用独立 agent_delivery schema；迁移锁、schema version/checksum、
+  数据库唯一约束和事务级幂等锁协调并发。包与 request 绑定在同一事务提交，取消或失败不能留下假成功键。
+  同键异内容冲突；同一不可变计划的新键也复用原包。已有保存的重放先查数据库，不依赖已丢失的内存源。
+- API 配置为私有 AGENT_PLATFORM_ARCHIVE_DATABASE_FILE；严格文件检查、显式 loopback URL/用户/密码/端口，
+  不读取隐式 PGSERVICE，不允许远程明文连接或随意驱动选项，错误不回显 DSN/密码。配置后数据库不可用则启动失败，
+  运行中返回 503，不降级为内存保存。启动器 archiveDatabaseFile 只传 API，API 退出时关闭连接池。
+- 保存增加显式 archive 权限；读取仍要求包内全部服务的 read 与原仓库白名单。
+  撤销权限后，重放、详情、列表及 Artifact 读取都不能绕过当前授权；跨租户对象不可见。
+- 前端计划下增加保存动作及同键响应丢失恢复，导航新增“交付包”。使用独立包路径读取原 Findings，
+  不把旧任务 ID 重新解释成新 API 进程中的同名任务。选择/身份变化时忽略迟到响应。
+
+Java 类比：这是不可变交付包的数据库 Repository 和事务边界；原工作台还是 InMemoryRepository，
+没有偷偷通过整个内存对象 dump/restore 伪装成运行恢复，也没有增加临时后台队列。
+
+#### 验证
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| Go `test ./...`（启用独立 PostgreSQL） | 通过 |
+| Go `test -race ./...`（启用数据库与六套前端 HTTP 验收） | 通过 |
+| Go vet / Go lint / lint config verify / go mod verify | 通过，0 issues；依赖校验通过 |
+| 前端 lint / typecheck / build | 通过 |
+| 前端普通测试 | 141 通过、6 跳过；跳过项由 Go 托管执行 |
+| Python 启动器测试 | 5 项通过，数据库配置路径不进入前端环境 |
+| API 进程恢复 | 两次真实 API 可执行程序：先保存并模拟丢响应，再停止、移走旧工作区、启动空工作台，原包和 Findings 仍可读且幂等重放完全一致 |
+| PostgreSQL 异常重启 | 强制终止本轮测试容器再启动，18 条测试记录的数量与 ID/摘要集合一致 |
+
+额外回归包括同键/不同键并发去重、事务取消不占键、跨租户/服务授权、权限撤销后拒绝重放、源/包完整性检查、
+受控数据库损坏拒绝读取、私有文件链接/权限/路径/重复字段拒绝、临时 Task/Artifact ID 复用不污染旧证据。
+前端跨进程验收只发生原始 Review 的 1 次受控模型调用，保存/读取与恢复没有新增模型或规划平台请求。
+全量数据库验收使用本轮合成数据，不连接现有业务数据库，也不把私有连接串写到日志或提交。
+
+#### 限制与下一步
+
+只有显式保存的包持久化，未保存需求/快照/计划与运行状态仍会丢失；已保存包只能回看，尚不能恢复原工作流。
+没有分页/配额、保留期/加密、备份恢复工具、生产权限拆分、远程 TLS 数据库配置或持久审批。
+本轮没有读取真实模型 key、修改试点配置或重启既有 5174/8081、5173/8080、GitLab 等服务。测试容器、网络、合成数据卷及临时凭据已清理。
+
+下一切片 D4.2：在已封存输入上接审批/过期与撤权检查、业务事务 Outbox、Operation Ledger、自托管 Temporal 模拟执行及恢复核对。
+先保持模拟副作用，D5 才开放真实配置/实验草稿写入。
+用户已再次明确模型理解是完整目标必需，Skill/MCP 可用于公司规范和平台接入；该分析能力仍待补齐，不能因持久化而漏掉。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -3834,14 +3898,14 @@ node --run build
 
 - CI 配置已推送，ESLint/Go lint 已本地验证；已知的账户账单锁定问题按当前协作约定忽略。
 - Task ID 是单进程递增值，不适合多实例部署。
-- Task、ChangeRequest、快照/多服务审阅/计划尝试和幂等记录都在内存中，重启即丢失。
+- 原工作台 Task、ChangeRequest、快照/多服务审阅/计划尝试及幂等记录仍在内存；显式保存的交付包与其保存幂等已进入 PostgreSQL。包可独立回看，尚不恢复运行状态。
 - D1 一项需求的服务集合和环境创建后固定，最多 20 个服务；新快照可改变授权分支。
   快照是跨仓库分别解析的一组版本，不是全局瞬时原子快照。多服务 Review 与配置/实验参考只读计划已接入；外部写入尚未实现。
 - tenant 来自静态 Bearer 身份的可信上下文，请求声明必须一致；独立单仓库 Task API 同租户无角色区分；需求子任务增加服务读取授权，写入通过需求入口；新目录按 subject + tenant + service + environment + operation 显式授权。
   仓库白名单、服务目录和授权由可信部署维护，策略变更需重启。
 - 本机 `authinit` 已提供首次配置入口，但只新建身份文件，不负责在线轮换/撤销；默认不授予仓库权限。
   输出目录必须新建，I/O 中断可能留下私有未完成目录；不能把生成凭据等同于完成 GitLab/Review 部署。
-- 幂等索引只存在于单个 Go 进程，重启或多实例部署后不能提供全局唯一保证。
+- 原工作台幂等索引只在单个 Go 进程；交付包保存已使用数据库事务与唯一约束，其他操作不能据此宣称持久或多实例幂等。
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
   它们还不是事务 Outbox，也没有发布到 Event Bus。

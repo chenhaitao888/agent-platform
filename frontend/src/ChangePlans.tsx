@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAPI } from './api'
+import ArchivePlan from './ArchivePlan'
 import { changeErrors, type ChangeRequest, type ChangeSnapshot } from './change'
 import { coverageLabels, operationLabels, planIssues, valueText, type ChangePlan, type ExperimentSpec, type PlanRequirement, type PlannedValue } from './planning'
 
@@ -111,8 +112,8 @@ function SnapshotPlans({ change, snapshot, onVersion, onBusy, blocked }: { chang
     {loading && <p role="status">正在读取计划历史…</p>}
     {error && <p role="alert" className="error-message">{error}</p>}
     {!loading && !current && <p>此快照尚未生成配置与实验计划。</p>}
-    {history.length > 0 && <label>计划历史<select value={current?.id ?? ''} onChange={e => setSelectedPlan(e.target.value)}>{history.map(p => <option key={p.id} value={p.id}>计划 {p.revision} · {p.state === 'READY_FOR_REVIEW' ? '待人工审阅' : p.state === 'RUNNING' ? '生成中' : '待补齐或处理'}</option>)}</select></label>}
-    {current && (current.tenantId !== api.tenantId || current.snapshotHash !== snapshot.inputHash ? <p role="alert">计划与当前身份或快照不一致，请重新读取需求。</p> : <PlanPreview plan={current} />)}
+    {history.length > 0 && <label>计划历史<select disabled={blocked} value={current?.id ?? ''} onChange={e => setSelectedPlan(e.target.value)}>{history.map(p => <option key={p.id} value={p.id}>计划 {p.revision} · {p.state === 'READY_FOR_REVIEW' ? '待人工审阅' : p.state === 'RUNNING' ? '生成中' : '待补齐或处理'}</option>)}</select></label>}
+    {current && (current.tenantId !== api.tenantId || current.snapshotHash !== snapshot.inputHash ? <p role="alert">计划与当前身份或快照不一致，请重新读取需求。</p> : <><PlanPreview plan={current} /><ArchivePlan key={`${current.id}:${current.hash}`} changeId={change.id} plan={current} blocked={blocked} onBusy={onBusy} /></>)}
   </>
 }
 
@@ -139,7 +140,7 @@ function experimentText(spec: ExperimentSpec) {
   return `${spec.audience} · ${spec.variants.map(v => `${v.name} ${v.weight}%`).join(' / ')} · 指标：${spec.metrics.join(', ')} · ${spec.allocation}${spec.exclusionGroup ? ` · 互斥组：${spec.exclusionGroup}` : ''}`
 }
 
-function PlanPreview({ plan }: { plan: ChangePlan }) {
+export function PlanPreview({ plan }: { plan: ChangePlan }) {
   return <article className="plan-preview" aria-label={`计划 ${plan.revision} 预览`}>
     <h4>{plan.state === 'READY_FOR_REVIEW' ? '计划已整理 · 待人工审阅' : plan.state === 'RUNNING' ? '计划生成中' : '计划存在待补齐或阻断项'}</h4>
     <p>目标环境：{plan.environment}。没有写入配置或激活实验。</p>

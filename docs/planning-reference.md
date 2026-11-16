@@ -168,4 +168,4 @@ READY_FOR_REVIEW 仅表示当前参考规则没有发现待补/阻断项，仍�
 `GET /api/v1/changes/{id}/plans` 列出历史；`GET /api/v1/changes/{id}/plans/{planId}` 读取指定版本，均不调用模型或平台。
 计划保存确切审阅证据、源 SHA、目录/连接/契约版本、观察版本、当前/期望值、前置条件、动作 hash 和 plan hash。
 修改要求、重新观察或新快照都会产生独立记录；旧计划保持不变。
-没有 approvals/executions/activation 路由；所有记录仍在内存，D4 再接持久化、Temporal、审批与操作记录基础。
+没有 approvals/executions/activation 路由；生成中的工作台记录仍在内存。D4.1 已可显式保存为 [持久交付包](durable-delivery.md)，审批/Temporal 与操作记录仍待 D4.2。

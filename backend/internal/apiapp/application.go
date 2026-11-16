@@ -24,10 +24,17 @@ type Application struct {
 	ShutdownGrace            time.Duration
 	ReviewEnabled            bool
 	AuthenticationConfigured bool
+	close                    func()
+}
+
+func (a *Application) Close() {
+	if a != nil && a.close != nil {
+		a.close()
+	}
 }
 
 type deployment struct {
-	authFile, catalogFile, planningFile                                                           string
+	authFile, catalogFile, planningFile, archiveFile                                              string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
@@ -41,6 +48,7 @@ func loadDeployment() (deployment, error) {
 	config.authFile = value("AUTH_FILE")
 	config.catalogFile = value("SERVICE_CATALOG_FILE")
 	config.planningFile = value("PLANNING_CONNECTORS_FILE")
+	config.archiveFile = value("ARCHIVE_DATABASE_FILE")
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
@@ -105,9 +113,21 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	archives, err := loadArchives(ctx, config.archiveFile, config.root, catalog)
+	if err != nil {
+		return nil, err
+	}
+	assembled := false
+	defer func() {
+		if !assembled {
+			archives.Close()
+		}
+	}()
 	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled, AuthenticationConfigured: authentication != nil}
+	app.close = archives.Close
 	if config.gitlabURL == "" {
 		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, nil)))
+		assembled = true
 		return app, nil
 	}
 	client, err := deploymentHTTPClient(config.gitlabCA, 5*time.Second)
@@ -131,11 +151,12 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 	if !config.reviewEnabled {
-		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, planner)
+		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives})
 		if err != nil {
 			return nil, err
 		}
 		app.Handler = authentication.Wrap(app.Handler)
+		assembled = true
 		return app, nil
 	}
 	var modelClient *http.Client
@@ -153,7 +174,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, planner)
+	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives})
 	if err != nil {
 		return nil, err
 	}
@@ -168,5 +189,6 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	})
 	app.ShutdownGrace = max(time.Minute, config.timeout+30*time.Second)
 	app.Handler = authentication.Wrap(app.Handler)
+	assembled = true
 	return app, nil
 }

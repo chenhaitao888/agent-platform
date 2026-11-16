@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agent-platform/backend/internal/change"
+	"agent-platform/backend/internal/delivery"
 	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
@@ -24,14 +25,17 @@ import (
 // Only external ports are faked: the HTTP router, task admission, workspace,
 // execution and artifact stores are the same instances used in deployment.
 type deliveryFixture struct {
-	mu                      sync.Mutex
-	branches, legacy, runs  int
-	verified                []task.RepositoryReference
-	failHead                string
-	failVerify, failPrepare string
-	sharedPlanning          bool
-	patch                   string
-	run                     func(context.Context, review.RunInput) error
+	mu                        sync.Mutex
+	branches, legacy, runs    int
+	verified                  []task.RepositoryReference
+	failHead                  string
+	failVerify, failPrepare   string
+	sharedPlanning            bool
+	patch                     string
+	archives                  *delivery.Store
+	revokeArchive, revokeRead bool
+	findings                  []review.Finding
+	run                       func(context.Context, review.RunInput) error
 }
 
 func (f *deliveryFixture) ResolveBranches(_ context.Context, in repository.BranchSelection) (task.RepositoryReference, error) {
@@ -86,7 +90,11 @@ func (f *deliveryFixture) Run(ctx context.Context, in review.RunInput) (review.F
 			return review.FindingsReport{}, err
 		}
 	}
-	return review.FindingsReport{SchemaVersion: "1.0", BaseSHA: in.BaseSHA, HeadSHA: in.HeadSHA, Findings: []review.Finding{}}, nil
+	findings := f.findings
+	if findings == nil {
+		findings = []review.Finding{}
+	}
+	return review.FindingsReport{SchemaVersion: "1.0", BaseSHA: in.BaseSHA, HeadSHA: in.HeadSHA, Findings: findings}, nil
 }
 func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool, planners ...*planning.Planner) http.Handler {
 	t.Helper()
@@ -116,9 +124,15 @@ func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool, planners ..
 			}
 		}
 		for _, subject := range []string{"alice", "reader"} {
+			if subject == "alice" && f.revokeRead {
+				continue
+			}
 			ops := []string{"read"}
 			if subject == "alice" {
 				ops = []string{"read", "create", "snapshot", "review"}
+				if f.archives != nil && !f.revokeArchive {
+					ops = append(ops, "archive")
+				}
 				if len(planners) > 0 {
 					ops = append(ops, "plan")
 				}
@@ -134,7 +148,11 @@ func deliveryHandler(t *testing.T, f *deliveryFixture, enabled bool, planners ..
 	if enabled {
 		runner = f
 	}
-	h, err := NewHandlerWithDeliveryServices(f, f, f, runner, catalog, t.TempDir(), "", planners...)
+	option := DeliveryOptions{Archives: f.archives}
+	if len(planners) > 0 {
+		option.Planning = planners[0]
+	}
+	h, err := NewHandlerWithDeliveryServices(f, f, f, runner, catalog, t.TempDir(), "", option)
 	if err != nil {
 		t.Fatal(err)
 	}

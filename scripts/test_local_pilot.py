@@ -110,11 +110,13 @@ class LocalPilotTest(unittest.TestCase):
         self.assert_child_gone(frontend)
         self.assertNotIn('secret', output)
 
-    def test_optional_catalog_reaches_only_api(self):
+    def test_optional_delivery_settings_reach_only_api(self):
         self.write_json('catalog.json', {'services': [], 'grants': []})
         self.config['serviceCatalogFile'] = str(self.state / 'catalog.json')
         self.write_json('planning.json', {'connectors': []})
         self.config['planningConnectorsFile'] = str(self.state / 'planning.json')
+        self.write_json('archive.json', {'url': 'controlled-test-only'})
+        self.config['archiveDatabaseFile'] = str(self.state / 'archive.json')
         self.write_json('pilot.json', self.config)
         process = self.launch()
         api = self.wait_for('api.json', process)
@@ -123,6 +125,8 @@ class LocalPilotTest(unittest.TestCase):
         self.assertNotIn('AGENT_PLATFORM_SERVICE_CATALOG_FILE', frontend['env'])
         self.assertEqual(api['env']['AGENT_PLATFORM_PLANNING_CONNECTORS_FILE'], self.config['planningConnectorsFile'])
         self.assertNotIn('AGENT_PLATFORM_PLANNING_CONNECTORS_FILE', frontend['env'])
+        self.assertEqual(api['env']['AGENT_PLATFORM_ARCHIVE_DATABASE_FILE'], self.config['archiveDatabaseFile'])
+        self.assertNotIn('AGENT_PLATFORM_ARCHIVE_DATABASE_FILE', frontend['env'])
         process.send_signal(signal.SIGTERM)
         output = process.communicate(timeout=10)[0]
         self.assertEqual(process.returncode, 0, output)

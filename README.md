@@ -5,6 +5,7 @@
 - D1：可信服务目录、需求创建/列表/详情，以及按多服务源/目标分支固定不可变代码快照
 - D2：从指定快照发起多服务 Review，逐服务准入/准备/审阅、失败重试与历史证据读取
 - D3：固定 diff 候选、配置/实验现状读取、类型化规则与版本化只读计划预览
+- D4.1：显式保存计划、快照和 Findings 为 PostgreSQL 持久交付包，支持重启后读取及幂等重放
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -15,14 +16,14 @@
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备、只读审阅触发与 Findings 展示
 - Go 接口测试与 React 组件测试
 
-这一阶段没有接入数据库、Temporal、Codex app-server 或 Credential Broker。GitLab 只读验证和
+交付包已可选接入 PostgreSQL；原工作台草稿仍在内存，Temporal、Codex app-server 和 Credential Broker 尚未接入。GitLab 只读验证和
 Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进程环境变量提供。
 
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1～D3 已实现；下一切片 D4 为持久化与可靠执行基础。外部写入尚未实现。
+D1～D3、D4.1 持久交付包已实现；下一切片 D4.2 接审批、Outbox 和 Temporal 模拟执行。D4 尚未全部完成，外部写入尚未实现。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -56,6 +57,7 @@ agent-platform/
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
 │       ├── connector/reference/ # 配置/实验参考协议，只提供 GET 读取
 │       ├── planning/            # 候选分析、平台窄接口与确定性计划规则
+│       ├── delivery/            # PostgreSQL 不可变交付包、证据与事务幂等
 │       ├── artifact/            # 不可变结果元数据、内容与幂等创建
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
@@ -207,7 +209,17 @@ Review 未启用时返回 503 `review_unavailable`，不会留下子任务。
 首版分析器仅识别参考契约中的字面 `config.Get...` 和 `experiments.Variant...` 调用，不推断业务值、不调用模型。
 未发现候选、明确不涉及、分析失败和尚未分析分开展示。生成开始/结束各推进一次需求版本，30 秒内完成或记录阻断；
 同键重放不重新读取平台，新键和当前版本生成新计划并保留旧记录。
-计划就绪只表示可供人工审阅；没有批准、执行或激活接口，所有状态仍在内存。
+计划就绪只表示可供人工审阅；没有批准、执行或激活接口。未保存为交付包的计划仍在内存。
+
+### D4.1：保存持久交付包
+
+在选定计划下点击“保存当前计划为交付包”，会保存需求说明、固定代码快照、原计划、审阅执行和完整 Findings。
+保存不代表批准或执行；BLOCKED 计划也可保存。通过“交付包”入口读取，API 重启后仍可查看原计划与证据。
+原工作台的未保存草稿、Task/Workspace 运行状态仍在内存，本切片不会恢复它们。
+
+可选配置 `AGENT_PLATFORM_ARCHIVE_DATABASE_FILE` 指向 Workspace 外的私有数据库 JSON，并为各服务/环境显式授予 `archive` 操作。
+启动器对应字段为 `archiveDatabaseFile`。Compose、配置生成、API 和恢复验收见 [持久交付包说明](docs/durable-delivery.md)。
+未启用数据库时旧功能继续可用；启用后存储故障不会降级成内存保存。
 
 ### 本机身份与租户配置
 
@@ -284,7 +296,7 @@ repositoryIds 为空数组时不能创建 Task 或发起仓库 I/O；非空时�
 新建 Task、登记/准备 Workspace、读取 diff、归档 diff 和执行 Review 都要通过白名单；禁止项目不会触达 GitLab/模型服务凭据。
 白名单移除后，本租户已经保存的 Task、事件和 Artifact 仍可读取；它不是细粒度历史数据访问撤销机制。
 
-这仍是本机试点方案：同租户身份具有相同权限，尚无角色、自动过期/热撤销、限流或持久审计。
+这仍是本机试点方案：独立单仓库入口使用租户/仓库边界，需求与交付包另按 subject/服务/环境/操作显式授权；尚无企业角色体系、凭据自动过期/热撤销、限流或持久审计。
 token 泄漏等同该身份被使用；同一 OS 用户或 root 仍能读取本地凭据/进程内存。上线网络服务需另行设计 TLS、
 可信身份源、仓库授权同步和运营控制，本次不放宽监听限制。
 
@@ -798,7 +810,7 @@ Docker Runner 另记录不可变镜像 ID、seccomp 策略名与自带策略的 
 中止浏览器请求不代表服务端已经取消执行。当前状态刷新为手动操作，POST 仍使用已有同步接口。
 
 成功追加 `review.started → artifact.created → review.succeeded`；失败或取消只追加开始与终态事件，
-不会保存部分 Findings。Task 的准入状态仍为 QUEUED，审阅执行投影单独管理；所有记录仍只在单进程内存中。
+不会保存部分 Findings。Task 的准入状态仍为 QUEUED，审阅执行投影单独管理；原工作台记录仍在内存，显式保存到交付包的计划与证据另存 PostgreSQL。
 
 运行后端测试：
 

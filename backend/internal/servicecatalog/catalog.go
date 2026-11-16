@@ -116,7 +116,7 @@ func New(config Config, registry Registry) (*Catalog, error) {
 			return nil, ErrInvalidCatalog
 		}
 		for _, op := range g.Operations {
-			if !slices.Contains([]string{"read", "create", "snapshot", "review", "plan"}, op) {
+			if !slices.Contains([]string{"read", "create", "snapshot", "review", "plan", "archive"}, op) {
 				return nil, ErrInvalidCatalog
 			}
 		}

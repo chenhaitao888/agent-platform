@@ -296,6 +296,7 @@ pre { font-size: 13px; line-height: 1.9; white-space: pre; overflow: auto; paddi
 .plan-requirements, .plan-source, .plan-action { border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 14px 0; min-width: 0; }
 .plan-fields { border-top: 1px solid var(--line); padding: 12px 0; }
 .plan-preview { margin-top: 22px; }
+.archive-plan { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
 .plan-issues { color: #9b532e; padding-left: 20px; overflow-wrap: anywhere; }
 .plan-issues li { margin: 8px 0; }
 @media (max-width: 850px) { .change-layout { grid-template-columns: minmax(0, 1fr); } }

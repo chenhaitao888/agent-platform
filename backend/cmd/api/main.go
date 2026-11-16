@@ -30,6 +30,7 @@ func main() {
 	}
 
 	server := newServer(application.Handler)
+	defer application.Close()
 	server.Addr = application.ListenAddress
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {

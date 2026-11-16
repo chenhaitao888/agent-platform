@@ -14,6 +14,7 @@ import (
 
 	"agent-platform/backend/internal/artifact"
 	"agent-platform/backend/internal/change"
+	"agent-platform/backend/internal/delivery"
 	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/repository"
 	"agent-platform/backend/internal/review"
@@ -34,6 +35,8 @@ type handler struct {
 	reviews    *review.Service
 	artifacts  *artifact.Store
 	catalog    *servicecatalog.Catalog
+	changes    *change.Service
+	archives   *delivery.Store
 	// 与 GitLab verifier 使用同一份 token；仅用于遮盖日志，不写入响应。
 	logSecret string
 }
@@ -147,15 +150,20 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 
 // NewHandlerWithDeliveryServices keeps one set of execution stores for both
 // entry points. A nil runner leaves snapshots usable and review unavailable.
-func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, catalog *servicecatalog.Catalog, root, gitlabToken string, planners ...*planning.Planner) (http.Handler, error) {
-	var planner *planning.Planner
-	if len(planners) > 1 {
+type DeliveryOptions struct {
+	Planning *planning.Planner
+	Archives *delivery.Store
+}
+
+func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, catalog *servicecatalog.Catalog, root, gitlabToken string, options ...DeliveryOptions) (http.Handler, error) {
+	var option DeliveryOptions
+	if len(options) > 1 {
 		return nil, planning.ErrInvalid
 	}
-	if len(planners) == 1 {
-		planner = planners[0]
+	if len(options) == 1 {
+		option = options[0]
 	}
-	if err := catalog.ValidatePlanning(planner); err != nil {
+	if err := catalog.ValidatePlanning(option.Planning); err != nil {
 		return nil, err
 	}
 	tasks := task.NewStore()
@@ -167,7 +175,8 @@ func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, prepa
 	h.catalog = catalog
 	resolver, _ := verifier.(repository.BranchResolver)
 	changes := change.NewServiceWithReviews(catalog, resolver, tasks, workspaces, h.reviews)
-	changes.ConfigurePlanning(planner)
+	changes.ConfigurePlanning(option.Planning)
+	h.changes, h.archives = changes, option.Archives
 	return WithChanges(h.routes(), changes), nil
 }
 
@@ -202,6 +211,10 @@ func (h *handler) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/artifacts/{id}", h.guardLinkedTask(h.getArtifact))
 	mux.HandleFunc("GET /api/v1/artifacts/{id}/content", h.guardLinkedTask(h.getArtifactContent))
 	mux.HandleFunc("PATCH /api/v1/tasks/{id}", h.guardLinkedTask(h.updateTask))
+	mux.HandleFunc("POST /api/v1/changes/{id}/plans/{planId}/archive", h.archivePlan)
+	mux.HandleFunc("GET /api/v1/deliveries", h.listDeliveries)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}", h.getDelivery)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/artifacts/{artifactId}/content", h.getDeliveryArtifact)
 
 	return requireIdentity(mux)
 }

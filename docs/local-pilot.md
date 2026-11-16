@@ -79,6 +79,12 @@ planning 资源映射及私有连接文件；启动器新增可选 `planningConn
 协议见 [D3 只读计划契约](planning-reference.md)。旧配置继续可用，没有自动授权或修改真实资源映射。
 本轮没有重启此处的常驻试点，也没有安装常驻参考平台；源码能力不能视为已在旧 API 进程中启用。
 
+## D4.1 持久交付包
+
+可选增加 `archiveDatabaseFile`，并显式授予服务/环境的 archive 权限，保存后的包由独立 PostgreSQL 持有。
+详细配置与数据范围见 [持久交付包说明](durable-delivery.md)。未保存的工作台草稿仍在内存；本轮未重启常驻试点或修改私有配置。
+测试数据库与现有 GitLab 分开，不应借用 GitLab 的内部数据库或覆盖已有端口。
+
 ## 在其他环境复现启动
 
 仓库入口为 `scripts/run-local-pilot.py`，仅使用 Python 3.9+ 标准库（POSIX/macOS）。
