@@ -73,5 +73,5 @@ Schema 文件：[model-candidates-v1.json](../backend/internal/planning/model-ca
 真实模型能否准确识别公司包装 API、常量传播和复杂动态 key，需要代表性样例、人工标签和显式授权的模型采集验证。
 
 D5.1 已补齐 [参考 Writer 契约](reference-writes.md)：配置 CAS、未激活 AB 草稿、未知结果回查及逐项核验。
-D5.2/D5.3 已完成 [写入控制层](write-execution.md) 和 [部署/API/前端](write-deployment.md)，默认关闭；明确补偿仍待完成。
+D5.2/D5.3 已完成 [写入控制层](write-execution.md) 和 [部署/API/前端](write-deployment.md)，默认关闭；D5.4 已补充 [独立配置补偿](compensation.md)。
 在公司平台文档和测试空间到位后，再实现对应 MCP/API adapter；SIMULATION 批准始终不能用于真实写入。

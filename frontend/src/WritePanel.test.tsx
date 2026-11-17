@@ -9,7 +9,7 @@ const permission = { tenantId: bundle.tenantId, bundleId: bundle.id, canApprove:
 const approval = { id: 'approval-1', tenantId: bundle.tenantId, bundleId: bundle.id, mode: 'WRITE', subject: 'bob', reason: '已复核', state: 'APPROVED', version: 1, expiresAt: '2099-01-01T00:00:00Z' }
 const run = { id: 'write-1', tenantId: bundle.tenantId, bundleId: bundle.id, mode: 'WRITE', approvalId: approval.id, state: 'QUEUED', operations: [{ id: 'op-1', actionId: 'action-1', state: 'NOT_STARTED' }] }
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status })
-const read = (path: string, approvals: unknown[] = [], runs: unknown[] = [], access = permission) => reply(path.endsWith('write-access') ? access : { items: path.endsWith('write-approvals') ? approvals : runs })
+const read = (path: string, approvals: unknown[] = [], runs: unknown[] = [], access = permission) => reply(path.endsWith('write-access') ? access : { items: path.endsWith('compensations') ? [] : path.endsWith('write-approvals') ? approvals : runs })
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 async function fillApproval() {
   await waitFor(() => expect(screen.getByRole('button', { name: '批准写入' })).toBeEnabled())

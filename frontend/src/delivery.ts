@@ -7,6 +7,7 @@ export type DeliveryBundle = {
   title: string; description: string; environment: string; createdBy: string; createdAt: string; digest: string
   snapshot: ChangeSnapshot; plan: ChangePlan
   evidence: { serviceId: string; execution: ReviewExecution }[]
+  compensation?: { reportId: string; bundleId: string; bundleDigest: string; executionId: string; executionHash: string; manualItems: number }
 }
 export const archiveErrors: Record<string, string> = {
   archive_unavailable: '交付包存储尚未启用或暂时不可用，请稍后重试。',

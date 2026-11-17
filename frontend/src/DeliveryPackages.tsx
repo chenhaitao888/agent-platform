@@ -57,19 +57,20 @@ function PackageSession() {
     <button type="button" onClick={() => { setLoading(true); setRefresh(v => v + 1) }}>刷新交付包列表</button>
     {loading ? <p role="status">正在读取交付包…</p> : <div className="change-layout">
       <section className="change-list" aria-label="交付包列表"><h2>已保存记录</h2>{items.length === 0 ? <p>暂无已保存的交付包</p> : <ul>{items.map(b => <li key={b.id}><button type="button" onClick={() => void open(b.id)}>{b.title} · {b.id}</button><small>{b.environment} · 计划 {b.plan.revision} · {b.createdAt}</small></li>)}</ul>}</section>
-      <section className="change-detail" aria-label="交付包详情">{current ? <SavedPackage bundle={current} /> : <p>选择一份交付包查看保存时的计划与证据。</p>}</section>
+      <section className="change-detail" aria-label="交付包详情">{current ? <SavedPackage bundle={current} onOpen={id => void open(id)} /> : <p>选择一份交付包查看保存时的计划与证据。</p>}</section>
     </div>}
   </>
 }
-function SavedPackage({ bundle }: { bundle: DeliveryBundle }) {
+function SavedPackage({ bundle, onOpen }: { bundle: DeliveryBundle; onOpen: (id: string) => void }) {
   return <>
     <h2>{bundle.title}</h2><p>保存人：{bundle.createdBy} · {bundle.createdAt}</p>
     <p>这是保存时的记录。当前代码和平台状态可能已变化，保存不代表批准或执行。</p>
     {bundle.description && <p className="change-description">{bundle.description}</p>}
+    {bundle.compensation && <aside aria-label="补偿来源"><p>这是原执行 {bundle.compensation.executionId} 的独立配置补偿计划，沿用原代码审阅证据，需另行批准。</p><p>仍有 {bundle.compensation.manualItems} 项人工处置。本包完成不代表整体回滚完成。</p><button type="button" onClick={() => onOpen(bundle.compensation!.bundleId)}>查看原交付包</button></aside>}
     <details className="technical-details"><summary>固定代码版本与交付包摘要</summary><code>{bundle.digest}</code>{bundle.snapshot.services.map(s => <p key={s.serviceId}>{s.serviceId} · {s.sourceBranch} → {s.targetBranch}<br />{s.repository?.baseSha} → {s.repository?.headSha}</p>)}</details>
     <PlanPreview plan={bundle.plan} />
-    <SimulationPanel key={bundle.id} bundle={bundle} />
-    <WritePanel bundle={bundle} />
+    {!bundle.compensation && <SimulationPanel key={bundle.id} bundle={bundle} />}
+    <WritePanel bundle={bundle} onOpen={onOpen} />
     <section aria-label="已保存的审阅证据"><h3>审阅证据</h3>{bundle.evidence.length === 0 && <p>这份交付包没有已保存的审阅执行，具体缺失项见计划。</p>}{bundle.evidence.map(e => <article className="snapshot-card" key={e.serviceId}><h4>{e.serviceId} · {e.execution.state === 'SUCCEEDED' ? '审阅已完成' : '审阅未成功'}</h4>{e.execution.state === 'SUCCEEDED' ? <ReviewFindings key={`${bundle.id}:${e.execution.id}`} execution={e.execution} deliveryId={bundle.id} /> : <p>{reviewFailureMessage(e.execution.errorCode)}</p>}</article>)}</section>
   </>
 }

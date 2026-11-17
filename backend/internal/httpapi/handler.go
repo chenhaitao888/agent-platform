@@ -235,6 +235,9 @@ func (h *handler) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-executions", h.listWriteExecutions)
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-executions/{executionId}", h.getWriteExecution)
 	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-executions/{executionId}/reconcile", h.reconcileWrite)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-executions/{executionId}/compensations", h.prepareCompensation)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/compensations", h.listCompensations)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/compensations/{compensationId}", h.getCompensation)
 
 	return requireIdentity(mux)
 }

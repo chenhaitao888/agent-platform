@@ -10,6 +10,7 @@
 - D5.1：独立参考 Writer、资源/条目条件写入、幂等回执和回读核验
 - D5.2：独立写批准、持久请求/回执、Temporal 写入与只读恢复控制层
 - D5.3：显式写连接/权限、当前策略重验、独立写 Worker、业务 API 与交付包页面；默认关闭
+- D5.4：持久处置报告与独立配置补偿；新增项/实验项人工处理，未知结果先核对
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -27,8 +28,8 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证、明确补偿和企业平台接入尚待完成。
-D5.1～D5.3 已完成参考 Writer、持久控制层与业务入口，受控测试验证了配置/AB 草稿写入和恢复；必须显式配置才可执行。
+D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证和企业平台接入尚待完成。
+D5.1～D5.4 已完成参考 Writer、持久控制层、业务入口和配置更新补偿；必须显式配置和授权才可执行。
 见 [参考写入契约](docs/reference-writes.md)、[写入执行控制层](docs/write-execution.md) 和 [写入部署](docs/write-deployment.md)。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
@@ -262,6 +263,13 @@ python3 scripts/run-write-worker.py --config /absolute/private/pilot.json
 页面提供批准、执行、撤回和 UNKNOWN 的只读核对。回复丢失后沿用原请求键，不重发已经登记的外部写请求。
 写入专用策略逐次重验当前身份/绑定、固定 GitLab 引用和资源条件；交付包及证据读取也检查当前权限。
 配置、API、身份轮换范围和限制见 [写入部署说明](docs/write-deployment.md)。本轮没有修改常驻试点或接入公司配置/AB。
+
+### D5.4：准备处置与补偿计划
+
+对已结束的执行，可显式生成处置报告：依据原回执和当前配置条件，准备可恢复的配置原值；新增配置/实验项列为人工处理。
+可执行动作进入新的交付包，原计划和回执不变。补偿包需重新批准，普通写入批准和权限不能复用。
+目录另授 `prepare_compensation`、`approve_compensation`、`execute_compensation`；撤回沿用 `revoke_write`。
+UNKNOWN 必须先补证，外部后续修改不会被强行覆盖。支持范围、API 和限制见 [处置与补偿说明](docs/compensation.md)。
 
 ### 本机身份与租户配置
 

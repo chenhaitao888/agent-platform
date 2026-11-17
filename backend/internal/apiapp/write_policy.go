@@ -23,7 +23,7 @@ func (p writePolicy) Authorize(ctx context.Context, subject string, b delivery.B
 	if ctx.Err() != nil {
 		return "", delivery.ErrUnavailable
 	}
-	if !slices.Contains([]string{"read", "approve_write", "execute_write", "revoke_write"}, operation) {
+	if !slices.Contains([]string{"read", "approve_write", "execute_write", "revoke_write", "prepare_compensation", "approve_compensation", "execute_compensation"}, operation) {
 		return "", delivery.ErrPolicy
 	}
 	auth, err := loadAuthentication(p.config.authFile, p.config.root)
@@ -44,7 +44,7 @@ func (p writePolicy) Authorize(ctx context.Context, subject string, b delivery.B
 		if !ok || source.Repository == nil || !slices.Contains(actor.RepositoryIDs, source.Repository.RepositoryID) {
 			return "", delivery.ErrPolicy
 		}
-		if operation == "approve_write" || operation == "execute_write" {
+		if operation != "read" && operation != "revoke_write" {
 			if entry.CatalogVersion != source.CatalogVersion || entry.Repository.RepositoryID != source.Repository.RepositoryID || entry.Repository.ConnectorRef != source.ConnectorRef || !slices.Contains(entry.Repository.AllowedTargetBranches, source.TargetBranch) {
 				return "", delivery.ErrPolicy
 			}
@@ -73,7 +73,7 @@ func (p writePolicy) Authorize(ctx context.Context, subject string, b delivery.B
 	if err != nil {
 		return "", delivery.ErrPolicy
 	}
-	if operation == "approve_write" && !registry.settings.AllowSelfApproval && (subject == b.CreatedBy || subject == b.Plan.CreatedBy) {
+	if (operation == "approve_write" || operation == "approve_compensation") && !registry.settings.AllowSelfApproval && (subject == b.CreatedBy || subject == b.Plan.CreatedBy) {
 		return "", delivery.ErrPolicy
 	}
 	for _, action := range b.Plan.Actions {
@@ -98,6 +98,22 @@ func (p writePolicy) Authorize(ctx context.Context, subject string, b delivery.B
 		Entries                                       []servicecatalog.Entry
 		Writes, Identity, RepositoryURL, RepositoryCA string
 	}{actor, entries, registry.digest, planning.Hash(identity), p.config.gitlabURL, caDigest}), nil
+}
+
+func (p writePolicy) ReadCompensationConfig(ctx context.Context, target planning.Target) (planning.Descriptor, planning.ConfigState, error) {
+	auth, err := loadAuthentication(p.config.authFile, p.config.root)
+	if err != nil {
+		return planning.Descriptor{}, planning.ConfigState{}, delivery.ErrPolicy
+	}
+	catalog, err := loadServiceCatalog(p.config.catalogFile, p.config.root, auth, true)
+	if err != nil {
+		return planning.Descriptor{}, planning.ConfigState{}, delivery.ErrPolicy
+	}
+	planner, err := loadPlanning(p.config.planningFile, p.config.root, catalog)
+	if err != nil || planner == nil {
+		return planning.Descriptor{}, planning.ConfigState{}, delivery.ErrPolicy
+	}
+	return planner.ReadConfigState(ctx, target)
 }
 func entryBindsAction(entry servicecatalog.Entry, environment string, action planning.Action) bool {
 	for _, binding := range entry.Planning {

@@ -49,19 +49,20 @@ type Evidence struct {
 	Content   []byte           `json:"content,omitempty"`
 }
 type Bundle struct {
-	SchemaVersion string          `json:"schemaVersion"`
-	ID            string          `json:"id"`
-	TenantID      string          `json:"tenantId"`
-	ChangeID      string          `json:"changeId"`
-	Title         string          `json:"title"`
-	Description   string          `json:"description"`
-	Environment   string          `json:"environment"`
-	CreatedBy     string          `json:"createdBy"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	Snapshot      change.Snapshot `json:"snapshot"`
-	Plan          planning.Plan   `json:"plan"`
-	Evidence      []Evidence      `json:"evidence"`
-	Digest        string          `json:"digest"`
+	SchemaVersion string              `json:"schemaVersion"`
+	ID            string              `json:"id"`
+	TenantID      string              `json:"tenantId"`
+	ChangeID      string              `json:"changeId"`
+	Title         string              `json:"title"`
+	Description   string              `json:"description"`
+	Environment   string              `json:"environment"`
+	CreatedBy     string              `json:"createdBy"`
+	CreatedAt     time.Time           `json:"createdAt"`
+	Snapshot      change.Snapshot     `json:"snapshot"`
+	Plan          planning.Plan       `json:"plan"`
+	Evidence      []Evidence          `json:"evidence"`
+	Digest        string              `json:"digest"`
+	Compensation  *CompensationOrigin `json:"compensation,omitempty"`
 }
 
 func (b Bundle) Public() Bundle {
@@ -73,6 +74,12 @@ func (b Bundle) Public() Bundle {
 }
 func (b Bundle) digest() string { b.Digest = ""; return planning.Hash(b) }
 func (b Bundle) Valid() bool {
+	if b.Compensation != nil {
+		o := b.Compensation
+		if !planning.ValidIdentifier(o.ReportID) || !planning.ValidIdentifier(o.BundleID) || !planning.ValidIdentifier(o.ExecutionID) || len(o.BundleDigest) != 64 || len(o.ExecutionHash) != 64 || o.ManualItems < 0 || o.BundleID == b.ID {
+			return false
+		}
+	}
 	if b.SchemaVersion != "delivery-archive.v1" || !strings.HasPrefix(b.ID, "delivery-") || b.TenantID == "" || b.ChangeID == "" || strings.TrimSpace(b.Title) == "" || len(b.Title) > 256 || len(b.Description) > 4096 || b.CreatedBy == "" || b.CreatedAt.IsZero() || b.Snapshot.State != "READY" || len(b.Snapshot.Services) == 0 || len(b.Snapshot.Services) > 20 || b.Plan.SchemaVersion != "change-plan.v1" || b.Plan.TenantID != b.TenantID || b.Plan.Environment != b.Environment || b.Plan.SnapshotID != b.Snapshot.ID || b.Plan.SnapshotHash != b.Snapshot.InputHash || (b.Plan.State != "READY_FOR_REVIEW" && b.Plan.State != "BLOCKED") || len(b.Plan.Services) != len(b.Snapshot.Services) || len(b.Evidence) > 20 {
 		return false
 	}

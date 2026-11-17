@@ -26,16 +26,17 @@ func (h *handler) writeAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	allowed := func(op string) bool {
-		_, err := h.writes.Policy.Authorize(r.Context(), changeActor(r).Subject, b, op)
+		_, err := h.writes.Policy.Authorize(r.Context(), changeActor(r).Subject, b, delivery.WritePermission(b, op))
 		return err == nil
 	}
 	writeJSON(w, 200, struct {
-		TenantID   string `json:"tenantId"`
-		BundleID   string `json:"bundleId"`
-		CanApprove bool   `json:"canApprove"`
-		CanExecute bool   `json:"canExecute"`
-		CanRevoke  bool   `json:"canRevoke"`
-	}{b.TenantID, b.ID, allowed("approve_write"), allowed("execute_write"), allowed("revoke_write")})
+		TenantID               string `json:"tenantId"`
+		BundleID               string `json:"bundleId"`
+		CanApprove             bool   `json:"canApprove"`
+		CanExecute             bool   `json:"canExecute"`
+		CanRevoke              bool   `json:"canRevoke"`
+		CanPrepareCompensation bool   `json:"canPrepareCompensation"`
+	}{b.TenantID, b.ID, allowed("approve_write"), allowed("execute_write"), allowed("revoke_write"), b.Compensation == nil && allowed("prepare_compensation")})
 }
 func (h *handler) approveWrite(w http.ResponseWriter, r *http.Request) {
 	var in struct {

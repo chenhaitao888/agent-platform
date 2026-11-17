@@ -27,6 +27,9 @@ var simulationMigration string
 //go:embed migrations/003_writes.sql
 var writeMigration string
 
+//go:embed migrations/004_compensation.sql
+var compensationMigration string
+
 type Store struct{ pool *pgxpool.Pool }
 
 // D4.1 is a local deployment: one explicit loopback host, database, user and
@@ -99,7 +102,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	count := 0
 	valid := true
-	checksums := []string{hashMigration(), planning.Hash(simulationMigration), planning.Hash(writeMigration)}
+	checksums := []string{hashMigration(), planning.Hash(simulationMigration), planning.Hash(writeMigration), planning.Hash(compensationMigration)}
 	for rows.Next() {
 		var version int
 		var checksum string
@@ -114,7 +117,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return ErrUnavailable
 	}
 	for i := count; i < len(checksums); i++ {
-		if _, err = tx.Exec(ctx, []string{migration, simulationMigration, writeMigration}[i]); err != nil {
+		if _, err = tx.Exec(ctx, []string{migration, simulationMigration, writeMigration, compensationMigration}[i]); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO agent_delivery.migrations(version,checksum) VALUES($1,$2)", i+1, checksums[i]); err != nil {

@@ -26,17 +26,18 @@ import (
 // A controlled HTTPS platform in the test process survives API/Worker process
 // restarts. Resource mutation and receipt creation share one critical section.
 type writeAPIFixture struct {
-	mu             sync.Mutex
-	config         planning.ConfigState
-	experiments    planning.ExperimentState
-	receipts       map[string]resourcewrite.Receipt
-	effects, posts atomic.Int32
-	drop           atomic.Bool
-	hold           atomic.Bool
-	committed      chan struct{}
-	release        chan struct{}
-	settings       apiapp.WriteSettings
-	filename       string
+	mu               sync.Mutex
+	config           planning.ConfigState
+	experiments      planning.ExperimentState
+	receipts         map[string]resourcewrite.Receipt
+	effects, posts   atomic.Int32
+	drop             atomic.Bool
+	rejectExperiment atomic.Bool
+	hold             atomic.Bool
+	committed        chan struct{}
+	release          chan struct{}
+	settings         apiapp.WriteSettings
+	filename         string
 }
 
 func installWriteFixture(t *testing.T, fixture deploymentFixture) *writeAPIFixture {
@@ -191,6 +192,10 @@ func (f *writeAPIFixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 func (f *writeAPIFixture) apply(i resourcewrite.Intent) resourcewrite.Receipt {
 	r := resourcewrite.Receipt{SchemaVersion: "resource-write-receipt.v1", ID: "receipt-" + rand.Text(), OperationID: i.OperationID, IntentHash: i.Hash, Kind: i.Kind, Target: i.Target, Key: i.Key, RecordedAt: time.Now().UTC(), Status: "REJECTED", Code: "precondition_failed"}
+	if i.Kind == "experiment" && f.rejectExperiment.Load() {
+		r.Code = "value_rejected"
+		return r
+	}
 	if !r.RecordedAt.Before(i.ExpiresAt) {
 		r.Code = "intent_expired"
 		return r

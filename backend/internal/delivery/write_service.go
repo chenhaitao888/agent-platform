@@ -49,7 +49,7 @@ func (s *WriteService) approvalStamp(ctx context.Context, subject string, b Bund
 	if !s.AllowSelfApproval && (subject == b.CreatedBy || subject == b.Plan.CreatedBy) {
 		return "", ErrPolicy
 	}
-	stamp, err := s.Policy.Authorize(ctx, subject, b, "approve_write")
+	stamp, err := s.Policy.Authorize(ctx, subject, b, WritePermission(b, "approve_write"))
 	if err != nil || stamp == "" {
 		return "", ErrPolicy
 	}
@@ -68,6 +68,9 @@ func (s *WriteService) Approve(ctx context.Context, in ApprovalInput) (WriteAppr
 	}
 	if b.Digest != in.ExpectedDigest {
 		return WriteApproval{}, false, ErrConflict
+	}
+	if err := s.Store.checkCompensation(ctx, b); err != nil {
+		return WriteApproval{}, false, err
 	}
 	stamp, err := s.approvalStamp(ctx, in.Subject, b)
 	if err != nil {
@@ -91,7 +94,10 @@ func (s *WriteService) Start(ctx context.Context, in WriteStartInput) (WriteExec
 	if b.Digest != in.ExpectedDigest {
 		return WriteExecution{}, false, ErrConflict
 	}
-	stamp, err := s.Policy.Authorize(ctx, in.Subject, b, "execute_write")
+	if err := s.Store.checkCompensation(ctx, b); err != nil {
+		return WriteExecution{}, false, err
+	}
+	stamp, err := s.Policy.Authorize(ctx, in.Subject, b, WritePermission(b, "execute_write"))
 	if err != nil || stamp == "" {
 		return WriteExecution{}, false, ErrPolicy
 	}
@@ -124,11 +130,14 @@ func (s *WriteService) Begin(ctx context.Context, ref Ref) ([]string, error) {
 	return ids, nil
 }
 func (s *WriteService) check(ctx context.Context, b Bundle, a WriteApproval, r WriteExecution, prefix []resourcewrite.Completed) error {
+	if err := s.Store.checkCompensation(ctx, b); err != nil {
+		return err
+	}
 	stamp, err := s.approvalStamp(ctx, a.Subject, b)
 	if err != nil || stamp != a.PolicyHash {
 		return ErrPolicy
 	}
-	stamp, err = s.Policy.Authorize(ctx, r.Subject, b, "execute_write")
+	stamp, err = s.Policy.Authorize(ctx, r.Subject, b, WritePermission(b, "execute_write"))
 	if err != nil || stamp == "" || stamp != r.PolicyHash {
 		return ErrPolicy
 	}

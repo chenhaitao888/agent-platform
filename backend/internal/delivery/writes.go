@@ -37,19 +37,20 @@ type WriteStartInput struct {
 	ApprovalID                  string `json:"approvalId"`
 }
 type WriteExecution struct {
-	ID          string           `json:"id"`
-	TenantID    string           `json:"tenantId"`
-	BundleID    string           `json:"bundleId"`
-	ApprovalID  string           `json:"approvalId"`
-	Subject     string           `json:"subject"`
-	PolicyHash  string           `json:"policyHash"`
-	Mode        string           `json:"mode"`
-	State       string           `json:"state"`
-	ErrorCode   string           `json:"errorCode,omitempty"`
-	CreatedAt   time.Time        `json:"createdAt"`
-	CompletedAt *time.Time       `json:"completedAt,omitempty"`
-	WorkflowID  string           `json:"workflowId"`
-	Operations  []WriteOperation `json:"operations"`
+	ID           string           `json:"id"`
+	TenantID     string           `json:"tenantId"`
+	BundleID     string           `json:"bundleId"`
+	ApprovalID   string           `json:"approvalId"`
+	Subject      string           `json:"subject"`
+	PolicyHash   string           `json:"policyHash"`
+	Mode         string           `json:"mode"`
+	State        string           `json:"state"`
+	ErrorCode    string           `json:"errorCode,omitempty"`
+	CreatedAt    time.Time        `json:"createdAt"`
+	CompletedAt  *time.Time       `json:"completedAt,omitempty"`
+	WorkflowID   string           `json:"workflowId"`
+	Operations   []WriteOperation `json:"operations"`
+	EvidenceHash string           `json:"evidenceHash,omitempty"`
 }
 type WriteOperation struct {
 	ID           string                      `json:"id"`
@@ -68,6 +69,7 @@ type WriteOperation struct {
 // Public exposes outcome evidence without the internal dispatch payload.
 func (r WriteExecution) Public() WriteExecution {
 	r = planning.Clone(r)
+	r.EvidenceHash = r.EvidenceDigest()
 	for n := range r.Operations {
 		o := &r.Operations[n]
 		if o.Intent != nil {
@@ -78,6 +80,7 @@ func (r WriteExecution) Public() WriteExecution {
 	}
 	return r
 }
+func (r WriteExecution) EvidenceDigest() string { r.EvidenceHash = ""; return planning.Hash(r) }
 
 // Deployment supplies a trusted policy. HTTP adapters must authorize current
 // reads/reconciliation as well as mutations; callers never supply a Writer.

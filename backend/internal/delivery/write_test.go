@@ -72,7 +72,17 @@ func (w *ledgerWriter) Apply(ctx context.Context, i resourcewrite.Intent) (resou
 		r.ValueHash = i.ValueDigest()
 		r.Effect = i.Effect
 		w.state.Version = r.ResourceVersion
-		w.state.Items = append(w.state.Items, planning.ConfigItem{Key: i.Key, Version: r.ItemVersion, Value: *i.Value})
+		item := planning.ConfigItem{Key: i.Key, Version: r.ItemVersion, Value: *i.Value}
+		found := false
+		for n := range w.state.Items {
+			if w.state.Items[n].Key == i.Key {
+				w.state.Items[n] = item
+				found = true
+			}
+		}
+		if !found {
+			w.state.Items = append(w.state.Items, item)
+		}
 	}
 	w.receipts[i.OperationID] = r
 	if w.lost {
@@ -126,7 +136,7 @@ type writePolicy struct {
 }
 
 func (p *writePolicy) Authorize(_ context.Context, subject string, _ delivery.Bundle, op string) (string, error) {
-	if p.deny.Load() || subject != "alice" && subject != "bob" || op != "approve_write" && op != "execute_write" && op != "revoke_write" {
+	if p.deny.Load() || subject != "alice" && subject != "bob" || op != "approve_write" && op != "execute_write" && op != "revoke_write" && op != "prepare_compensation" && op != "approve_compensation" && op != "execute_compensation" {
 		return "", delivery.ErrPolicy
 	}
 	stamp := subject + ":" + op
@@ -134,6 +144,14 @@ func (p *writePolicy) Authorize(_ context.Context, subject string, _ delivery.Bu
 		stamp += "-changed"
 	}
 	return stamp, nil
+}
+func (p *writePolicy) ReadCompensationConfig(ctx context.Context, target planning.Target) (planning.Descriptor, planning.ConfigState, error) {
+	if p.unavailable.Load() {
+		return planning.Descriptor{}, planning.ConfigState{}, delivery.ErrUnavailable
+	}
+	r := ledgerReader{p.writer}
+	state, err := r.ReadConfig(ctx, target)
+	return r.Describe(), state, err
 }
 func (p *writePolicy) Writer(_ context.Context, kind string, target planning.Target) (resourcewrite.Writer, error) {
 	if kind != "config" || target != p.writer.state.Target {
@@ -192,6 +210,11 @@ func newWriteFixture(t *testing.T, tweaks ...func(*delivery.Bundle)) *writeFixtu
 		t.Fatal(err)
 	}
 	w := &ledgerWriter{state: planning.ConfigState{Target: a.Target, Version: "v1", SaveMode: "draft", ConditionalUpdates: true, Items: []planning.ConfigItem{}, SecretReferences: []planning.SecretReference{}}, receipts: map[string]resourcewrite.Receipt{}}
+	for _, action := range b.Plan.Actions {
+		if action.Kind == "config" && !action.MustNotExist && action.CurrentValue != nil {
+			w.state.Items = append(w.state.Items, planning.ConfigItem{Key: action.Key, Version: action.ExpectedVersion, Value: *action.CurrentValue})
+		}
+	}
 	p := &writePolicy{writer: w}
 	service := &delivery.WriteService{Store: store, Policy: p}
 	f := &writeFixture{service: service, policy: p, bundle: saved, dsn: dsn}

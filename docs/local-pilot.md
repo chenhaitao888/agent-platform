@@ -148,3 +148,6 @@ python3 -B -m unittest discover -s scripts -p 'test_local_pilot.py' -v
 私有 pilot JSON 可新增 `writesFile`，用于明确指定写连接、凭据文件和精确目标范围；还需服务目录里的独立写操作权限。
 默认关闭，页面浏览不会执行写入。独立 `scripts/run-write-worker.py --config ...` 启动写 Worker；模拟 Worker 不能替代。
 配置和重启要求见 [写入部署](write-deployment.md)。本轮仅在隔离测试环境验收，没有修改现有 pilot JSON 或重启常驻试点。
+
+D5.4 补偿需额外授予 prepare_compensation/approve_compensation/execute_compensation；沿用写连接与写 Worker。
+默认不会因已有普通写权限而启用，详见 [处置与补偿](compensation.md)。原本机私有配置未变更。
