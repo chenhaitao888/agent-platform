@@ -1,5 +1,5 @@
-// Package reference implements the versioned, GET-only planning reference
-// protocol. It is a contract fixture adapter, not a company platform integration.
+// Package reference implements versioned reference protocols. Planning Readers
+// remain GET-only; separate Writers require explicit deployment-owned targets.
 package reference
 
 import (

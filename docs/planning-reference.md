@@ -2,7 +2,8 @@
 
 2026-11-17。本文描述已实现的参考契约，不代表已接入某家公司的配置/AB 系统。
 核心接口是 `planning.ConfigReader`、`ExperimentReader` 和版本化 `Analyzer`；
-`connector/reference` 只提供 GET 读取，没有 Apply、批准、发布或实验激活方法。
+Planning 装配中的 `connector/reference` Readers 只提供 GET 读取，没有写入或批准能力。
+D5.1 新增独立 Writer 构造器及受控写入测试，尚未接到业务入口；见 [参考写入契约](reference-writes.md)。
 
 ## 1. 可信部署
 

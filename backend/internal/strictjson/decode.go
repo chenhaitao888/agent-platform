@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 )
 
 var ErrInvalid = errors.New("invalid JSON fields")
@@ -46,6 +47,12 @@ func check(data []byte, t reflect.Type) error {
 	}
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	// Timestamps are a closed scalar format, not an arbitrary custom decoder.
+	// Keep rejecting null above and all unknown/duplicate object fields below.
+	if t == reflect.TypeFor[time.Time]() {
+		var stamp time.Time
+		return json.Unmarshal(data, &stamp)
 	}
 	switch t.Kind() {
 	case reflect.Struct:

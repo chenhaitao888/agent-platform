@@ -7,6 +7,7 @@
 - D3：固定 diff 规则/模型候选、配置/实验现状读取、类型化规则与版本化只读计划预览
 - D4.1：显式保存计划、快照和 Findings 为 PostgreSQL 持久交付包，支持重启后读取及幂等重放
 - D4.2：模拟批准、事务 Outbox、Temporal 调度、操作租约与回执核对；只产生合成回执
+- D5.1：独立参考 Writer、资源/条目条件写入、幂等回执和回读核验；尚未接入业务执行入口
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -24,7 +25,8 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证、配置/实验写入和企业平台接入尚待完成。
+D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证、独立写入批准/编排和企业平台接入尚待完成。
+D5.1 已完成参考 Writer 底层契约，受控测试验证了实际状态修改；现有页面仍只允许模拟。见 [参考写入契约](docs/reference-writes.md)。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -56,7 +58,8 @@ agent-platform/
 │       ├── servicecatalog/      # 部署目录及服务/环境/操作授权
 │       ├── codex/               # CLI 能力预检与只读 exec 进程 adapter
 │       ├── connector/gitlab/    # GitLab HTTPS 读取 adapter
-│       ├── connector/reference/ # 配置/实验参考协议，只提供 GET 读取
+│       ├── connector/reference/ # GET-only Readers 与独立条件写入 Writers
+│       ├── resourcewrite/       # 写入意图、回执、核验及同资源版本续接
 │       ├── planning/            # 候选分析、平台窄接口与确定性计划规则
 │       ├── delivery/            # PostgreSQL 不可变交付包、证据与事务幂等
 │       ├── orchestration/       # Temporal 模拟 Workflow 与 Outbox 投递

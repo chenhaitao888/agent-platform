@@ -72,5 +72,6 @@ Schema 文件：[model-candidates-v1.json](../backend/internal/planning/model-ca
 归档后 API 进程重启读取，以及真实 Docker/原生 sandbox。全部使用合成数据和本地模型替身。
 真实模型能否准确识别公司包装 API、常量传播和复杂动态 key，需要代表性样例、人工标签和显式授权的模型采集验证。
 
-下一切片可进入 D5 参考 Writer：独立真实写入批准模式、配置 CAS、未激活 AB 草稿、未知结果回查及逐项核验。
+D5.1 已补齐 [参考 Writer 契约](reference-writes.md)：配置 CAS、未激活 AB 草稿、未知结果回查及逐项核验。
+下一切片 D5.2 接独立真实写入批准和持久编排，完成后才开放业务写入口。
 在公司平台文档和测试空间到位后，再实现对应 MCP/API adapter；SIMULATION 批准始终不能用于真实写入。
