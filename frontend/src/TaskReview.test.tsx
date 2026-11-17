@@ -31,6 +31,8 @@ it('starts an authenticated review for a ready workspace and displays its bound 
   render(<APIContext.Provider value={api}><WorkspaceDetails task={reviewTask} /></APIContext.Provider>)
   fireEvent.click(screen.getByRole('button', { name: '打开审阅工作区：task-1' }))
   await screen.findByText('READY')
+  // The child ReviewPanel installs its request lifetime in a mount effect.
+  await act(async () => {})
   expect(fetchMock).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: '查看 task-1 的审阅状态' }))
   await screen.findByText('尚无审阅记录。')

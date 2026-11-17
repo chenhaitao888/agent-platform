@@ -4,6 +4,7 @@ import { archiveErrors, type DeliveryBundle } from './delivery'
 import { PlanPreview } from './ChangePlans'
 import ReviewFindings from './ReviewFindings'
 import { reviewFailureMessage } from './review'
+import SimulationPanel from './SimulationPanel'
 
 export default function DeliveryPackages() {
   const api = useAPI()
@@ -66,6 +67,7 @@ function SavedPackage({ bundle }: { bundle: DeliveryBundle }) {
     {bundle.description && <p className="change-description">{bundle.description}</p>}
     <details className="technical-details"><summary>固定代码版本与交付包摘要</summary><code>{bundle.digest}</code>{bundle.snapshot.services.map(s => <p key={s.serviceId}>{s.serviceId} · {s.sourceBranch} → {s.targetBranch}<br />{s.repository?.baseSha} → {s.repository?.headSha}</p>)}</details>
     <PlanPreview plan={bundle.plan} />
+    <SimulationPanel key={bundle.id} bundle={bundle} />
     <section aria-label="已保存的审阅证据"><h3>审阅证据</h3>{bundle.evidence.length === 0 && <p>这份交付包没有已保存的审阅执行，具体缺失项见计划。</p>}{bundle.evidence.map(e => <article className="snapshot-card" key={e.serviceId}><h4>{e.serviceId} · {e.execution.state === 'SUCCEEDED' ? '审阅已完成' : '审阅未成功'}</h4>{e.execution.state === 'SUCCEEDED' ? <ReviewFindings key={`${bundle.id}:${e.execution.id}`} execution={e.execution} deliveryId={bundle.id} /> : <p>{reviewFailureMessage(e.execution.errorCode)}</p>}</article>)}</section>
   </>
 }

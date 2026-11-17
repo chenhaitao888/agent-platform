@@ -34,7 +34,7 @@ func (a *Application) Close() {
 }
 
 type deployment struct {
-	authFile, catalogFile, planningFile, archiveFile                                              string
+	authFile, catalogFile, planningFile, archiveFile, simulationFile                              string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
@@ -49,6 +49,7 @@ func loadDeployment() (deployment, error) {
 	config.catalogFile = value("SERVICE_CATALOG_FILE")
 	config.planningFile = value("PLANNING_CONNECTORS_FILE")
 	config.archiveFile = value("ARCHIVE_DATABASE_FILE")
+	config.simulationFile = value("SIMULATION_FILE")
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
@@ -125,6 +126,10 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	}()
 	app := &Application{Handler: httpapi.NewHandler(), ListenAddress: config.address, ShutdownGrace: time.Minute, ReviewEnabled: config.reviewEnabled, AuthenticationConfigured: authentication != nil}
 	app.close = archives.Close
+	simulation, _, err := loadSimulation(config, archives)
+	if err != nil {
+		return nil, err
+	}
 	if config.gitlabURL == "" {
 		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, nil)))
 		assembled = true
@@ -151,7 +156,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 	if !config.reviewEnabled {
-		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives})
+		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation})
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +179,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives})
+	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation})
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,7 @@
+{
+  "temporalAddress": "127.0.0.1:17233",
+  "namespace": "agent-platform-d4",
+  "taskQueue": "delivery-simulation-v1",
+  "allowSelfApproval": true,
+  "leaseSeconds": 30
+}

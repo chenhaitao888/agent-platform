@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"agent-platform/backend/internal/servicecatalog"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -42,6 +43,18 @@ type bearerBinding struct {
 	digest   [sha256.Size]byte
 }
 type Authenticator struct{ bindings []bearerBinding }
+
+// Resolve current authorization for a persisted operator without exposing tokens.
+func (a *Authenticator) ActorForSubject(subject, tenant string) (servicecatalog.Actor, bool) {
+	if a != nil {
+		for _, b := range a.bindings {
+			if b.identity.principal.Subject == subject && b.identity.principal.TenantID == tenant {
+				return servicecatalog.Actor{Subject: subject, TenantID: tenant, RepositoryIDs: slices.Clone(b.identity.repositories)}, true
+			}
+		}
+	}
+	return servicecatalog.Actor{}, false
+}
 
 func NewAuthenticator(credentials []Credential) (*Authenticator, error) {
 	if len(credentials) == 0 || len(credentials) > 64 {

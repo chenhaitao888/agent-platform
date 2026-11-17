@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"agent-platform/backend/internal/planning"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -19,6 +20,9 @@ import (
 
 //go:embed migrations/001_archive.sql
 var migration string
+
+//go:embed migrations/002_simulation.sql
+var simulationMigration string
 
 type Store struct{ pool *pgxpool.Pool }
 
@@ -92,24 +96,25 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	count := 0
 	valid := true
+	checksums := []string{hashMigration(), planning.Hash(simulationMigration)}
 	for rows.Next() {
 		var version int
 		var checksum string
-		if rows.Scan(&version, &checksum) != nil || version != 1 || checksum != hashMigration() {
+		if rows.Scan(&version, &checksum) != nil || version != count+1 || version > len(checksums) || checksum != checksums[version-1] {
 			valid = false
 		}
 		count++
 	}
 	err = rows.Err()
 	rows.Close()
-	if err != nil || !valid || count > 1 {
+	if err != nil || !valid || count > len(checksums) {
 		return ErrUnavailable
 	}
-	if count == 0 {
-		if _, err = tx.Exec(ctx, migration); err != nil {
+	for i := count; i < len(checksums); i++ {
+		if _, err = tx.Exec(ctx, []string{migration, simulationMigration}[i]); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, "INSERT INTO agent_delivery.migrations(version,checksum) VALUES(1,$1)", hashMigration()); err != nil {
+		if _, err = tx.Exec(ctx, "INSERT INTO agent_delivery.migrations(version,checksum) VALUES($1,$2)", i+1, checksums[i]); err != nil {
 			return err
 		}
 	}

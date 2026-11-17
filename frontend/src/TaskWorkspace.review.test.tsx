@@ -22,6 +22,7 @@ it('opens existing results in one action using authenticated reads only', async 
   const api = { tenantId: reviewTask.tenantId, fetch: authenticatedFetch(token, new AbortController().signal) }
   render(<StrictMode><APIContext.Provider value={api}><TaskWorkspace /></APIContext.Provider></StrictMode>)
   const open = await screen.findByRole('button', { name: '打开审阅工作区：task-1' })
+  await act(async () => {})
   expect(calls.every(({ url }) => url.startsWith('/api/v1/tasks?'))).toBe(true)
   fireEvent.click(open)
   expect(await screen.findByText('Restore the zero guard')).toBeVisible()

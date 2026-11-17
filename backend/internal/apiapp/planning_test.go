@@ -21,11 +21,14 @@ import (
 type planningFixture struct {
 	reads    *atomic.Int32
 	filename string
+	revision *atomic.Int32
 }
 
-func installPlanningFixture(t *testing.T, fixture deploymentFixture) planningFixture {
+func installPlanningFixture(t *testing.T, fixture deploymentFixture, stable ...bool) planningFixture {
 	t.Helper()
 	reads := new(atomic.Int32)
+	revision := new(atomic.Int32)
+	revision.Store(1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" || r.Header.Get("Authorization") != "Bearer planning-fixture-token" || r.URL.Query().Get("tenantId") != "test" || r.URL.Query().Get("environment") != "test" {
 			t.Error("unexpected planning method, credentials or scope")
@@ -33,8 +36,8 @@ func installPlanningFixture(t *testing.T, fixture deploymentFixture) planningFix
 			return
 		}
 		count := reads.Add(1)
-		version := "v1"
-		if count > 2 {
+		version := fmt.Sprintf("v%d", revision.Load())
+		if count > 2 && len(stable) == 0 {
 			version = "v2"
 		}
 		kind, connector := "config", "config-ref"
@@ -95,7 +98,7 @@ func installPlanningFixture(t *testing.T, fixture deploymentFixture) planningFix
 		t.Fatal(err)
 	}
 	installCatalog(t, string(data))
-	return planningFixture{reads: reads, filename: filename}
+	return planningFixture{reads: reads, filename: filename, revision: revision}
 }
 
 func TestPlanningDeploymentValidatesBindingsAndPrivateFilesBeforeReads(t *testing.T) {

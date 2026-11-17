@@ -37,6 +37,7 @@ type handler struct {
 	catalog    *servicecatalog.Catalog
 	changes    *change.Service
 	archives   *delivery.Store
+	simulation *delivery.SimulationService
 	// 与 GitLab verifier 使用同一份 token；仅用于遮盖日志，不写入响应。
 	logSecret string
 }
@@ -151,8 +152,9 @@ func newHandlerWithRunner(tasks *task.Store, workspaces *workspace.Manager, diff
 // NewHandlerWithDeliveryServices keeps one set of execution stores for both
 // entry points. A nil runner leaves snapshots usable and review unavailable.
 type DeliveryOptions struct {
-	Planning *planning.Planner
-	Archives *delivery.Store
+	Planning   *planning.Planner
+	Archives   *delivery.Store
+	Simulation *delivery.SimulationService
 }
 
 func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, catalog *servicecatalog.Catalog, root, gitlabToken string, options ...DeliveryOptions) (http.Handler, error) {
@@ -177,6 +179,7 @@ func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, prepa
 	changes := change.NewServiceWithReviews(catalog, resolver, tasks, workspaces, h.reviews)
 	changes.ConfigurePlanning(option.Planning)
 	h.changes, h.archives = changes, option.Archives
+	h.simulation = option.Simulation
 	return WithChanges(h.routes(), changes), nil
 }
 
@@ -215,6 +218,12 @@ func (h *handler) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/deliveries", h.listDeliveries)
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}", h.getDelivery)
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/artifacts/{artifactId}/content", h.getDeliveryArtifact)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/simulation-approvals", h.approveSimulation)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/simulation-approvals", h.listSimulationApprovals)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/simulation-approvals/{approvalId}/revoke", h.revokeSimulation)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/simulations", h.startSimulation)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/simulations", h.listSimulations)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/simulations/{simulationId}", h.getSimulation)
 
 	return requireIdentity(mux)
 }

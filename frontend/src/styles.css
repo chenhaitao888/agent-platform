@@ -297,6 +297,13 @@ pre { font-size: 13px; line-height: 1.9; white-space: pre; overflow: auto; paddi
 .plan-fields { border-top: 1px solid var(--line); padding: 12px 0; }
 .plan-preview { margin-top: 22px; }
 .archive-plan { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 18px; }
+.simulation-panel { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
+.simulation-panel p { font-size: 13px; margin: 12px 0; }
+.simulation-panel label { display: grid; gap: 7px; margin: 12px 0; font-size: 12px; }
+.simulation-panel .service-checkbox { display: flex; align-items: center; }
+.simulation-panel .service-checkbox input { width: auto; }
+.simulation-panel fieldset { border: 0; padding: 0; min-width: 0; }
+.simulation-panel .simulation-start { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 20px; }
 .plan-issues { color: #9b532e; padding-left: 20px; overflow-wrap: anywhere; }
 .plan-issues li { margin: 8px 0; }
 @media (max-width: 850px) { .change-layout { grid-template-columns: minmax(0, 1fr); } }

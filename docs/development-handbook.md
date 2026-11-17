@@ -38,13 +38,13 @@ README 负责五分钟内跑起来；本手册负责解释开发过程，避免�
 真实 path、固定 base/head 的 diff 读取与预览、不可变 Artifact 归档及 metadata/content 读取，
 并具备对应前端闭环；还提供只读 Review 的任务范围触发、执行投影、Findings Artifact 和结果事件，
 前端已支持显式审阅、手动刷新状态、从事件回看某次执行与带认证的 Findings 读取。
-API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。PostgreSQL 已用于显式保存交付包；工作流执行、Codex app-server、
+API 默认不启用 Review，完整部署配置可显式启用；已实现 Docker Worker adapter、受控模型转发和 DeepSeek 真实执行闭环。PostgreSQL 已用于交付包与模拟账本，Temporal 已用于模拟运行；Codex app-server、
 Credential Broker、企业 IAM 与其他企业 Connector 仍未接入；本机已实现静态 Bearer 身份认证、可信租户绑定及仓库白名单。
 
 当前接续方向（2026-11-16）：用户将下一阶段明确为代码完成后的需求级交付智能体，先组织多服务 Review、
 配置和 AB 变更准备，再通过 Connector 适配企业系统。D1“服务目录与多服务分支快照”已实现：
 需求创建/列表/详情、显式固定分支、逐服务结果及历史快照、前端入口与可信部署加载。
-D2/D3 已接入 Review 与只读计划，D4.1 已完成 PostgreSQL 持久交付包；下一切片 D4.2 接审批、Outbox 与 Temporal 模拟执行。详见 [设计方案](post-coding-delivery-design.md)
+D2/D3 首版与 D4.1/D4.2 模拟闭环已接通；后续优先补模型候选理解，再推进真实写入契约。详见 [设计方案](post-coding-delivery-design.md)
 及 [接续交接](handoff-2026-11-13.md)。这一优先级取代下文历史记录中的“下一步”；
 正式 Review 质量验收仍未完成，继续保留为后续质量工作线。
 
@@ -3815,8 +3815,8 @@ Plan、幂等、观察与审批前资料仍在内存；没有持久记录、审�
 
 用户要求推送 D3 并继续。已将 D3 以 `f5b86bb feat(planning): add snapshot-bound read-only config and experiment plans`
 推送到 `origin/main`。随后按小切片约定推进 D4.1：显式保存不可变计划及其证据，先证明进程重启不丢记录。
-本步不宣称完成整个 D4；审批、操作记录/Outbox 和 Temporal 模拟执行仍是下一切片。
-D4.1 改动留在工作树供审阅，尚未提交推送。
+本步不宣称完成整个 D4；审批、操作记录/Outbox 和 Temporal 模拟执行见后续第 55 步。
+D4.1 经用户批准后以 `88c5d5d` 提交并推送。
 
 #### 部署决策与公共行为
 
@@ -3875,6 +3875,78 @@ Java 类比：这是不可变交付包的数据库 Repository 和事务边界；
 先保持模拟副作用，D5 才开放真实配置/实验草稿写入。
 用户已再次明确模型理解是完整目标必需，Skill/MCP 可用于公司规范和平台接入；该分析能力仍待补齐，不能因持久化而漏掉。
 
+### 第 55 步 / D4.2：模拟审批、Outbox 与 Temporal 恢复（2026-11-16）
+
+用户要求推送后继续。已将 D4.1 以 `88c5d5d feat(delivery): persist immutable plan packages and review evidence`
+推送到 origin/main，随后完成本步 D4.2。当前改动未提交，仍待审阅。
+本步只模拟副作用，没有把企业平台的实际写入交给模型或通用工具调用。
+
+#### 公共行为与实现
+
+- 目录新增 approve_simulation/simulate；模拟批准记录交付包摘要、plan hash、策略摘要、主体、理由、有效期和撤回信息。
+  要求 READY_FOR_REVIEW 与显式 Findings 核对；同人创建/保存并批准默认禁止，只有私有配置明确 allowSelfApproval=true 才允许。
+  所有批准硬编码为 SIMULATION，不能用于未来实际写入。
+- 启动事务同时插入 Run 与 Outbox，返回 202；相同键重放同一运行，同一批准只能用于一个运行。
+  API 不依赖 Temporal 在线，也不在 HTTP 请求内等待执行。
+- [delivery](../backend/internal/delivery/simulation_service.go) 在执行前重新加载主体/服务权限与可信绑定，
+  重新解析源/目标分支并比较冻结引用，再用原 Reader 读取资源、重建动作并比较版本/当前值/能力。
+  明确过期、撤回、权限/策略或输入漂移进入 BLOCKED；临时读取错误交给 Temporal 重试，不当成校验成功。
+- 批准消费与操作创建同事务；每项操作有稳定 ID、租约、递增 fencing token 和回执。
+  过期写者不能插入回执或覆盖结果，批准和租约在插入模拟效果时再次检查有效期。
+  模拟回执单独提交，UNKNOWN 恢复先核对原 receipt/action hash，成功项保留，失败停止后续。
+  已提交事实可在随后撤回/过期后被核对；这不允许产生新的效果。
+- [orchestration](../backend/internal/orchestration/temporal.go) 使用真正的 Temporal Workflow/Activities，
+  Outbox 通过稳定 Workflow ID 发布并处理重复 ACK。history 只携带 tenant/run/operation ID 与状态，业务值不进入历史。
+  没有新增自己的持久定时器或临时任务队列。
+- 前端“交付模拟”提供批准、有效期、三种演练、撤回和逐操作结果；网络错误/5xx 保留原请求键。
+  状态轮询只读，不自动批准或启动。原工作台与已保存 Findings 的入口保持可用。
+
+Java 类比：审批与 Outbox 是业务数据库事务；Temporal 是持久编排引擎；Activity 从数据库取冻结输入，
+租约/幂等/回执属于操作账本。不能把 Workflow 自动重试当成远端操作自动具备幂等。
+
+#### 版本与本机环境
+
+官方资料核验后使用 Temporal Server 1.32.2、Go SDK 1.51.0，沿用 PostgreSQL 17.12 / pgx v5.11.0。
+镜像固定 tag/digest，依赖由 go.mod/go.sum 锁定；官方来源及安装命令见 [模拟工作流说明](simulation-workflow.md)。
+Compose 新增 simulation profile，独立创建 temporal/temporal_visibility 数据库、schema 和命名空间，端口只绑定 loopback。
+API 增加私有 SIMULATION_FILE；Worker 独立运行，不构造 Review runner，也不读模型 key。
+启动器增加 simulationFile 和 run-delivery-worker.py，Worker 环境仅保留只读连接、策略、数据库与 Temporal 设置。
+
+初始基线出现了既有测试在新挂载组件 effect 尚未完成时点击的时序问题；按既有约定补 await act，保持业务逻辑不变。
+首条审批/Outbox 公共行为测试先确认缺实现导致 RED，再接数据库与编排，逐步扩展真实服务验收。
+数据库测试改为按本次 run 查询 Outbox，避免把全局队列前十项误当成全部记录，复用测试库时也可独立运行。
+重复启动还发现 Compose --wait 会把最后的一次性命名空间任务退出判作未就绪；已改为先等待长期服务，再单独初始化命名空间，并实际复验成功。
+
+#### 验证
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| Go 全量普通 / race | 通过；启用独立 PostgreSQL、真实 Temporal，race 含七套前端 HTTP 验收 |
+| Go vet / lint / lint config verify / mod verify | 通过，0 issues，模块校验通过 |
+| 前端 lint / typecheck / build | 通过 |
+| 前端普通测试 | 145 通过、7 跳过；HTTP 项由 Go 托管执行 |
+| Python 启动器测试 | 6 项通过，Worker 不继承模型 key、Review 或浏览器环境 |
+| API/Worker 恢复 | 离线 Worker 时先持久排队，API 重启后同键恢复；回执提交后强制终止 Worker，再重启 API/Worker，最终两项效果各一份 |
+| 重复 Outbox | 手动丢弃 ACK 后重投递，复用同一 Workflow，模拟回执仍只有两份 |
+| Temporal 服务恢复 | 容器重启前后，选定完成运行的 31 条历史事件及摘要一致 |
+| 迁移 | 从真实 v1 schema/包/幂等记录升级到 v2，原 ID/摘要及重放保持不变 |
+
+回归还覆盖过期、撤回后停止新增效果、撤回后仍核对已提交回执、权限热变更、Git/平台漂移、同人限制、
+伪造主体/模式、交付包绑定、晚到租约写者、部分失败与页面迟到响应隔离。
+真实 HTTP 验收使用受控 GitLab/配置/实验 HTTPS 端点，所有平台调用仍为 GET；只有最初 Review 的受控模型调用，
+模拟过程没有增加模型调用。Temporal 输入/结果 payload 检查未发现业务值和测试凭据。
+
+#### 范围与后续
+
+原工作台未保存草稿仍在内存。模拟器是独立 PostgreSQL 回执事务，不是企业配置/AB 的实际 Writer，
+不能据此声称真实平台已有 CAS/幂等/核对/补偿或 exactly-once。
+批准是模拟级确认，不替代正式质量问题处置/豁免、生产 IAM/SoD、审计和高可用部署；真实写入必须采用独立授权模式。
+本轮未重启既有试点、GitLab 或其他业务服务，没有读取真实模型 key 或写入公司平台。独立测试容器、网络、合成数据卷与临时凭据已清理。
+
+后续优先补齐用户明确要求的模型候选理解：独立 change-candidates 输出契约、冻结代码与受控平台上下文、
+证据校验和确定性规则，先用受控模型 fixture；随后推进 D5 的具体 Writer/MCP 适配、CAS 与未知结果核对。
+Skill 提供公司规范，平台继续负责授权与副作用边界；不能把模拟批准直接接到真实工具上。
+
 ## 7. 常用验证命令
 
 具体启动命令和 curl 示例见项目根目录 README。开发完成前至少运行：
@@ -3898,14 +3970,14 @@ node --run build
 
 - CI 配置已推送，ESLint/Go lint 已本地验证；已知的账户账单锁定问题按当前协作约定忽略。
 - Task ID 是单进程递增值，不适合多实例部署。
-- 原工作台 Task、ChangeRequest、快照/多服务审阅/计划尝试及幂等记录仍在内存；显式保存的交付包与其保存幂等已进入 PostgreSQL。包可独立回看，尚不恢复运行状态。
+- 原工作台 Task、ChangeRequest、快照/多服务审阅/计划尝试仍在内存；交付包、模拟批准/运行/回执和相关幂等已进入 PostgreSQL。Temporal 只恢复模拟流程，尚不恢复原工作台运行状态。
 - D1 一项需求的服务集合和环境创建后固定，最多 20 个服务；新快照可改变授权分支。
   快照是跨仓库分别解析的一组版本，不是全局瞬时原子快照。多服务 Review 与配置/实验参考只读计划已接入；外部写入尚未实现。
 - tenant 来自静态 Bearer 身份的可信上下文，请求声明必须一致；独立单仓库 Task API 同租户无角色区分；需求子任务增加服务读取授权，写入通过需求入口；新目录按 subject + tenant + service + environment + operation 显式授权。
   仓库白名单、服务目录和授权由可信部署维护，策略变更需重启。
 - 本机 `authinit` 已提供首次配置入口，但只新建身份文件，不负责在线轮换/撤销；默认不授予仓库权限。
   输出目录必须新建，I/O 中断可能留下私有未完成目录；不能把生成凭据等同于完成 GitLab/Review 部署。
-- 原工作台幂等索引只在单个 Go 进程；交付包保存已使用数据库事务与唯一约束，其他操作不能据此宣称持久或多实例幂等。
+- 原工作台幂等索引只在单个 Go 进程；交付包、模拟批准/运行已使用数据库事务与唯一约束；原工作台其他操作不能据此宣称持久或多实例幂等。
 - request ID 已用于 503/500 结构化日志，但尚未覆盖所有请求，也没有审计存储或全链路追踪。
 - Task/Workspace/Artifact 事件与 ID 只存在于单进程内存；跨 Store 更新不是原子事务，
   它们还不是事务 Outbox，也没有发布到 Event Bus。

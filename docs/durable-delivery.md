@@ -1,7 +1,7 @@
 # D4.1：持久交付包
 
 2026-11-16。D4 的第一个可验收切片：显式保存选定计划、代码快照和审阅证据，API 重启后仍可读取和幂等重放。
-审批、Operation Ledger、Outbox、Temporal 模拟执行及原工作台全量持久化尚未接入，不能将本切片称为 D4 全部完成。
+此页记录 D4.1。模拟批准、Operation Ledger、Outbox 与 Temporal 已在后续 [D4.2](simulation-workflow.md) 接入；原工作台全量持久化仍未实现。
 
 ## 保存范围
 
@@ -119,6 +119,4 @@ AGENT_PLATFORM_TEST_ARCHIVE_DB_FILE=/absolute/private/d4/database.json \
 本切片没有原工作台全量状态恢复、分页/配额、备份恢复工具、生产数据库权限拆分、远程 TLS 配置或持久审批。
 保存的结构化业务值和审阅结果需要按实际部署的数据政策管理；目前不提供加密存储/保留期策略。
 
-下一切片 D4.2 在这个不可变输入边界上接审批、Outbox、Operation Ledger 与自托管 Temporal 模拟执行，
-验证批准过期、撤权、资源漂移、重复投递与重启恢复，仍不开放真实配置/AB 写入。
-Temporal 沿用原架构决定，部署时按 [官方自托管指南](https://docs.temporal.io/self-hosted-guide) 复核；本轮仅调研部署与版本，没有安装 Temporal 或引入 SDK。
+后续 [D4.2 模拟工作流](simulation-workflow.md) 已在此输入边界上接入批准、Outbox、操作记录和自托管 Temporal，仍不开放真实配置/AB 写入。

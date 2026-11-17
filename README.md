@@ -6,6 +6,7 @@
 - D2：从指定快照发起多服务 Review，逐服务准入/准备/审阅、失败重试与历史证据读取
 - D3：固定 diff 候选、配置/实验现状读取、类型化规则与版本化只读计划预览
 - D4.1：显式保存计划、快照和 Findings 为 PostgreSQL 持久交付包，支持重启后读取及幂等重放
+- D4.2：模拟批准、事务 Outbox、Temporal 调度、操作租约与回执核对；只产生合成回执
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -16,14 +17,14 @@
 - React + TypeScript 状态页、Task 操作、事件、Workspace 准备、只读审阅触发与 Findings 展示
 - Go 接口测试与 React 组件测试
 
-交付包已可选接入 PostgreSQL；原工作台草稿仍在内存，Temporal、Codex app-server 和 Credential Broker 尚未接入。GitLab 只读验证和
+交付包和模拟账本可选接入 PostgreSQL，模拟执行已接自托管 Temporal；原工作台草稿仍在内存，Codex app-server 和 Credential Broker 尚未接入。GitLab 只读验证和
 Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进程环境变量提供。
 
 完整的开发步骤、设计取舍、Java 类比和每一阶段验证记录见
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1～D3、D4.1 持久交付包已实现；下一切片 D4.2 接审批、Outbox 和 Temporal 模拟执行。D4 尚未全部完成，外部写入尚未实现。
+D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选理解仍待补齐，真实配置/实验写入和企业平台接入尚未实现。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -58,6 +59,7 @@ agent-platform/
 │       ├── connector/reference/ # 配置/实验参考协议，只提供 GET 读取
 │       ├── planning/            # 候选分析、平台窄接口与确定性计划规则
 │       ├── delivery/            # PostgreSQL 不可变交付包、证据与事务幂等
+│       ├── orchestration/       # Temporal 模拟 Workflow 与 Outbox 投递
 │       ├── artifact/            # 不可变结果元数据、内容与幂等创建
 │       ├── gitworkspace/        # 受控 Git 子进程、bare clone 与 worktree
 │       ├── httpapi/             # HTTP 路由和测试，类似 Web/Controller 层
@@ -220,6 +222,19 @@ Review 未启用时返回 503 `review_unavailable`，不会留下子任务。
 可选配置 `AGENT_PLATFORM_ARCHIVE_DATABASE_FILE` 指向 Workspace 外的私有数据库 JSON，并为各服务/环境显式授予 `archive` 操作。
 启动器对应字段为 `archiveDatabaseFile`。Compose、配置生成、API 和恢复验收见 [持久交付包说明](docs/durable-delivery.md)。
 未启用数据库时旧功能继续可用；启用后存储故障不会降级成内存保存。
+
+### D4.2：批准与发起交付模拟
+
+在“交付包”中核对计划与 Findings，创建有有效期的模拟批准，再显式发起模拟。
+启动请求通过数据库事务写入 Outbox，Worker 可以离线后恢复；执行前重验权限、分支和资源版本。
+支持正常完成、响应丢失后核对、中途失败三个演练场景，仅保存合成回执，不修改配置或激活实验。
+
+目录分别授予 `approve_simulation`、`simulate`，配置私有 `AGENT_PLATFORM_SIMULATION_FILE`。
+API 与独立 `cmd/deliveryworker` 使用同一组可信配置。启动器新增 `simulationFile`，Worker 可通过
+`scripts/run-delivery-worker.py --config /absolute/private/pilot.json` 单独启动，不继承模型或浏览器凭据。
+Compose 的 `simulation` profile 提供固定版本的本机 Temporal 服务。
+
+部署、API、撤回与恢复语义见 [模拟工作流说明](docs/simulation-workflow.md)。所有批准都限定为 SIMULATION，不能用于未来的真实写入。
 
 ### 本机身份与租户配置
 

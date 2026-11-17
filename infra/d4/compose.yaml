@@ -17,8 +17,69 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+  temporal-databases:
+    profiles: [simulation]
+    image: postgres:17.12-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
+    entrypoint: [/bin/sh, /scripts/prepare-temporal-databases.sh]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets: [database-password]
+    volumes:
+      - ./prepare-temporal-databases.sh:/scripts/prepare-temporal-databases.sh:ro
+      - temporal-setup-state:/setup-state
+  temporal-schema:
+    profiles: [simulation]
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
+    user: "0:0"
+    entrypoint: [/bin/sh, /scripts/setup-temporal-schema.sh]
+    depends_on:
+      temporal-databases:
+        condition: service_completed_successfully
+    secrets: [database-password]
+    volumes:
+      - ./setup-temporal-schema.sh:/scripts/setup-temporal-schema.sh:ro
+      - temporal-setup-state:/setup-state:ro
+  temporal:
+    profiles: [simulation]
+    image: temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
+    user: "0:0"
+    entrypoint: [/bin/sh, /scripts/start-temporal.sh]
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: agent_platform
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      BIND_ON_IP: 0.0.0.0
+      NUM_HISTORY_SHARDS: "4"
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/dynamicconfig/local.yaml
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${D4_TEMPORAL_PORT:-17233}:7233"
+    secrets: [database-password]
+    volumes:
+      - ./start-temporal.sh:/scripts/start-temporal.sh:ro
+      - ./temporal-dynamic.yaml:/etc/temporal/config/dynamicconfig/local.yaml:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+  temporal-namespace:
+    profiles: [simulation]
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
+    depends_on:
+      temporal:
+        condition: service_healthy
+    entrypoint: [/bin/sh, -c]
+    command: ["temporal --address temporal:7233 operator namespace describe --namespace agent-platform-d4 >/dev/null 2>&1 || temporal --address temporal:7233 operator namespace create --namespace agent-platform-d4 --retention 24h"]
 secrets:
   database-password:
     file: ${D4_PASSWORD_FILE:?Set D4_PASSWORD_FILE to the private generated password file}
 volumes:
   archive-data:
+  temporal-setup-state:

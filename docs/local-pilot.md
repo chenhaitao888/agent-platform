@@ -85,6 +85,13 @@ planning 资源映射及私有连接文件；启动器新增可选 `planningConn
 详细配置与数据范围见 [持久交付包说明](durable-delivery.md)。未保存的工作台草稿仍在内存；本轮未重启常驻试点或修改私有配置。
 测试数据库与现有 GitLab 分开，不应借用 GitLab 的内部数据库或覆盖已有端口。
 
+## D4.2 模拟 Worker
+
+可选增加私有 simulationFile 并配置 approve_simulation/simulate 权限，随后单独运行
+`scripts/run-delivery-worker.py --config /absolute/private/pilot.json`。
+Worker 不占用 API/前端端口，不接收模型或浏览器环境，会领取已批准并排队的模拟任务。
+完整部署见 [模拟工作流说明](simulation-workflow.md)。本轮仍未修改常驻试点配置或替用户启用真实写入。
+
 ## 在其他环境复现启动
 
 仓库入口为 `scripts/run-local-pilot.py`，仅使用 Python 3.9+ 标准库（POSIX/macOS）。
