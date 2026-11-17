@@ -35,10 +35,11 @@ func (a *Application) Close() {
 }
 
 type deployment struct {
-	authFile, catalogFile, planningFile, archiveFile, simulationFile                              string
+	authFile, catalogFile, planningFile, archiveFile, simulationFile, writesFile                  string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
 	planningAnalyzer                                                                              string
+	writeRouting                                                                                  string
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
 	timeout                                                                                       time.Duration
 }
@@ -52,6 +53,7 @@ func loadDeployment() (deployment, error) {
 	config.planningFile = value("PLANNING_CONNECTORS_FILE")
 	config.archiveFile = value("ARCHIVE_DATABASE_FILE")
 	config.simulationFile = value("SIMULATION_FILE")
+	config.writesFile = value("WRITES_FILE")
 	config.planningAnalyzer = value("PLANNING_ANALYZER")
 	if config.planningAnalyzer != "" && config.planningAnalyzer != "literal" && config.planningAnalyzer != "model" {
 		return deployment{}, errors.New("AGENT_PLATFORM_PLANNING_ANALYZER must be literal or model")
@@ -139,6 +141,10 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	writes, _, err := loadWrites(config, archives)
+	if err != nil {
+		return nil, err
+	}
 	if config.gitlabURL == "" {
 		app.Handler = authentication.Wrap(httpapi.WithChanges(app.Handler, change.NewService(catalog, nil)))
 		assembled = true
@@ -165,11 +171,11 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		return nil, err
 	}
 	if !config.reviewEnabled {
-		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation})
+		app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, nil, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation, Writes: writes})
 		if err != nil {
 			return nil, err
 		}
-		app.Handler = authentication.Wrap(app.Handler)
+		app.Handler = wrapDeliveryAuthentication(config, authentication, app.Handler)
 		assembled = true
 		return app, nil
 	}
@@ -198,7 +204,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 			return nil, err
 		}
 	}
-	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation})
+	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation, Writes: writes})
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +221,7 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if config.planningAnalyzer == "model" {
 		app.ShutdownGrace = planning.ModelPlanTimeout + 30*time.Second
 	}
-	app.Handler = authentication.Wrap(app.Handler)
+	app.Handler = wrapDeliveryAuthentication(config, authentication, app.Handler)
 	assembled = true
 	return app, nil
 }

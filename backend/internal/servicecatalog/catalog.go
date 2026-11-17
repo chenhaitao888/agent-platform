@@ -116,7 +116,7 @@ func New(config Config, registry Registry) (*Catalog, error) {
 			return nil, ErrInvalidCatalog
 		}
 		for _, op := range g.Operations {
-			if !slices.Contains([]string{"read", "create", "snapshot", "review", "plan", "archive", "approve_simulation", "simulate"}, op) {
+			if !slices.Contains([]string{"read", "create", "snapshot", "review", "plan", "archive", "approve_simulation", "simulate", "approve_write", "execute_write", "revoke_write"}, op) {
 				return nil, ErrInvalidCatalog
 			}
 		}
@@ -154,6 +154,34 @@ func (c *Catalog) ValidatePlanning(p *planning.Planner) error {
 		}
 	}
 	return nil
+}
+
+// HasPlanningTarget checks deployment registration, never user permission.
+func (c *Catalog) HasPlanningTarget(kind string, target planning.Target) bool {
+	if c == nil || !planning.ValidIdentifier(target.ResourceRef) {
+		return false
+	}
+	for _, entry := range c.entries {
+		if entry.TenantID != target.TenantID {
+			continue
+		}
+		for _, binding := range entry.Planning {
+			if binding.Environment != target.Environment {
+				continue
+			}
+			var resource *planning.ResourceBinding
+			switch kind {
+			case "config":
+				resource = binding.Config
+			case "experiment":
+				resource = binding.Experiment
+			}
+			if resource != nil && resource.ConnectorRef == target.ConnectorRef && resource.ResourceRef == target.ResourceRef {
+				return true
+			}
+		}
+	}
+	return false
 }
 func (c *Catalog) Authorized(actor Actor, service, env, operation string) (Entry, bool) {
 	if c == nil {

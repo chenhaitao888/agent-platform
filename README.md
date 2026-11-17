@@ -8,7 +8,8 @@
 - D4.1：显式保存计划、快照和 Findings 为 PostgreSQL 持久交付包，支持重启后读取及幂等重放
 - D4.2：模拟批准、事务 Outbox、Temporal 调度、操作租约与回执核对；只产生合成回执
 - D5.1：独立参考 Writer、资源/条目条件写入、幂等回执和回读核验
-- D5.2：独立写批准、持久请求/回执、Temporal 写入与只读恢复控制层；尚未装配业务 API/前端
+- D5.2：独立写批准、持久请求/回执、Temporal 写入与只读恢复控制层
+- D5.3：显式写连接/权限、当前策略重验、独立写 Worker、业务 API 与交付包页面；默认关闭
 - Go HTTP 服务与 `GET /healthz`
 - 本机 Bearer 身份认证、可信租户上下文和租户仓库白名单
 - 内存版 Task 幂等创建、由服务端固定的 master/merge-base/head 仓库引用、查询、状态迁移与事件时间线
@@ -26,9 +27,9 @@ Workspace 准备已经具备最小 adapter，服务令牌暂由控制平面进�
 [Agent Platform 开发手册](docs/development-handbook.md)。
 
 2026-11-13 后续方向：以需求为单位组织多服务 Review、配置与 AB 变更准备，企业系统通过 Connector 适配。
-D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证、写入部署/API/前端和企业平台接入尚待完成。
-D5.1/D5.2 已完成参考 Writer 与写入控制层，受控测试验证了实际状态修改和持久恢复；现有页面仍只允许模拟。
-见 [参考写入契约](docs/reference-writes.md) 和 [写入执行控制层](docs/write-execution.md)。
+D1～D3 首版、D4.1/D4.2 持久交付包与模拟闭环已实现。模型候选通路已接入并通过受控测试；真实模型质量验证、明确补偿和企业平台接入尚待完成。
+D5.1～D5.3 已完成参考 Writer、持久控制层与业务入口，受控测试验证了配置/AB 草稿写入和恢复；必须显式配置才可执行。
+见 [参考写入契约](docs/reference-writes.md)、[写入执行控制层](docs/write-execution.md) 和 [写入部署](docs/write-deployment.md)。
 见 [交付智能体方案](docs/post-coding-delivery-design.md) 和 [接续交接](docs/handoff-2026-11-13.md)。
 
 M14（只读 Codex exec 与 Findings）的准备记录见开发手册第 26～30 步；实现、评测与本机试点切片见第 31～47 步。
@@ -243,7 +244,24 @@ API 与独立 `cmd/deliveryworker` 使用同一组可信配置。启动器新增
 `scripts/run-delivery-worker.py --config /absolute/private/pilot.json` 单独启动，不继承模型或浏览器凭据。
 Compose 的 `simulation` profile 提供固定版本的本机 Temporal 服务。
 
-部署、API、撤回与恢复语义见 [模拟工作流说明](docs/simulation-workflow.md)。所有批准都限定为 SIMULATION，不能用于未来的真实写入。
+部署、API、撤回与恢复语义见 [模拟工作流说明](docs/simulation-workflow.md)。本节批准都限定为 SIMULATION，不能用于真实写入。
+
+### D5.3：批准并执行配置/实验草稿写入
+
+交付包页面新增独立写入入口，需 `AGENT_PLATFORM_WRITES_FILE`、完整 Planning/归档配置和目录中的
+`approve_write`、`execute_write`、`revoke_write` 权限。未配置时不可执行，默认禁止自行批准自己的计划。
+API 只保存执行请求，独立 `cmd/writeworker` 调用参考 HTTPS Writer；模拟 Worker 不执行真实写入。
+
+本机启动器可指定私有 `writesFile`，再单独运行：
+
+```bash
+python3 scripts/run-write-worker.py --config /absolute/private/pilot.json --check
+python3 scripts/run-write-worker.py --config /absolute/private/pilot.json
+```
+
+页面提供批准、执行、撤回和 UNKNOWN 的只读核对。回复丢失后沿用原请求键，不重发已经登记的外部写请求。
+写入专用策略逐次重验当前身份/绑定、固定 GitLab 引用和资源条件；交付包及证据读取也检查当前权限。
+配置、API、身份轮换范围和限制见 [写入部署说明](docs/write-deployment.md)。本轮没有修改常驻试点或接入公司配置/AB。
 
 ### 本机身份与租户配置
 

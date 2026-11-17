@@ -142,3 +142,9 @@ python3 -B -m unittest discover -s scripts -p 'test_local_pilot.py' -v
 需已有 planningConnectorsFile、服务目录与支持 candidatesSupported 的新 Worker 镜像。
 只在明确生成新计划时调用模型，不由启动/浏览/刷新触发。部署步骤和输入边界见 [模型候选分析](model-candidates.md)。
 2026-11-17 的验证未修改常驻试点配置或读取真实模型 key；本功能尚未在现有试点启用。
+
+## 可选配置/实验写入
+
+私有 pilot JSON 可新增 `writesFile`，用于明确指定写连接、凭据文件和精确目标范围；还需服务目录里的独立写操作权限。
+默认关闭，页面浏览不会执行写入。独立 `scripts/run-write-worker.py --config ...` 启动写 Worker；模拟 Worker 不能替代。
+配置和重启要求见 [写入部署](write-deployment.md)。本轮仅在隔离测试环境验收，没有修改现有 pilot JSON 或重启常驻试点。

@@ -52,7 +52,7 @@ def private_json(path):
 def configuration(path):
     config = private_json(path)
     fields = set(ENV_FIELDS) | {"stateDir", "nodeBinary", "goBinary", "apiPort", "frontendPort", "gitlabCredentialFile"}
-    optional = {"planningAnalyzer", "serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile", "simulationFile"}
+    optional = {"planningAnalyzer", "serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile", "simulationFile", "writesFile"}
     if not fields.issubset(config) or set(config) - fields - optional:
         raise PilotError("pilot configuration has missing or unsupported fields")
     for key in fields - {"apiPort", "frontendPort"}:
@@ -88,7 +88,7 @@ def configuration(path):
         raise PilotError("model credential must be a user-owned regular file with mode 0600")
     if config.get("planningAnalyzer", "literal") not in ("literal", "model"):
         raise PilotError("planningAnalyzer must be literal or model")
-    for optional_file in ("serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile", "simulationFile"):
+    for optional_file in ("serviceCatalogFile", "planningConnectorsFile", "archiveDatabaseFile", "simulationFile", "writesFile"):
         if optional_file not in config:
             continue
         catalog = config[optional_file]
@@ -125,6 +125,8 @@ def environments(config, state, token):
         api["AGENT_PLATFORM_PLANNING_ANALYZER"] = config["planningAnalyzer"]
     if "simulationFile" in config:
         api["AGENT_PLATFORM_SIMULATION_FILE"] = config["simulationFile"]
+    if "writesFile" in config:
+        api["AGENT_PLATFORM_WRITES_FILE"] = config["writesFile"]
     frontend = dict(common, AGENT_PLATFORM_DEV_API_URL=f"http://127.0.0.1:{config['apiPort']}")
     build = dict(common, GOTOOLCHAIN="local", GOCACHE=str(state / "go-cache"), GOPATH=str(state / "go-path"))
     return api, frontend, build

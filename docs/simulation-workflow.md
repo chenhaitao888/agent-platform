@@ -3,7 +3,7 @@
 2026-11-16。本切片在 [持久交付包](durable-delivery.md) 上加入模拟批准、事务 Outbox、逐动作操作记录、
 自托管 Temporal 调度和回执核对。所有批准均为 **SIMULATION**，所有效果均为独立数据库中的合成回执。
 本模拟流程没有配置/AB 写接口，不激活实验；模拟批准不能用于真实写入。
-D5.1/D5.2 已实现独立参考 Writer 和 WRITE 批准/编排控制层，但尚未装配业务入口。
+D5.1～D5.3 已实现独立参考 Writer、WRITE 批准/编排和显式业务入口，见 [写入部署](write-deployment.md)。
 见 [参考写入契约](reference-writes.md)、[写入执行](write-execution.md)；本页 SIMULATION 流程保持独立。
 
 ## 用户流程

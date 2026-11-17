@@ -120,6 +120,8 @@ class LocalPilotTest(unittest.TestCase):
         self.config['archiveDatabaseFile'] = str(self.state / 'archive.json')
         self.write_json('simulation.json', {'temporalAddress': '127.0.0.1:17233'})
         self.config['simulationFile'] = str(self.state / 'simulation.json')
+        self.write_json('writes.json', {'temporalAddress': '127.0.0.1:17233'})
+        self.config['writesFile'] = str(self.state / 'writes.json')
         self.write_json('pilot.json', self.config)
         process = self.launch()
         api = self.wait_for('api.json', process)
@@ -134,6 +136,8 @@ class LocalPilotTest(unittest.TestCase):
         self.assertNotIn('AGENT_PLATFORM_PLANNING_ANALYZER', frontend['env'])
         self.assertEqual(api['env']['AGENT_PLATFORM_SIMULATION_FILE'], self.config['simulationFile'])
         self.assertNotIn('AGENT_PLATFORM_SIMULATION_FILE', frontend['env'])
+        self.assertEqual(api['env']['AGENT_PLATFORM_WRITES_FILE'], self.config['writesFile'])
+        self.assertNotIn('AGENT_PLATFORM_WRITES_FILE', frontend['env'])
         process.send_signal(signal.SIGTERM)
         output = process.communicate(timeout=10)[0]
         self.assertEqual(process.returncode, 0, output)
@@ -155,6 +159,27 @@ class LocalPilotTest(unittest.TestCase):
         current = json.loads((self.state / 'worker.json').read_text())['env']
         self.assertEqual(current['AGENT_PLATFORM_GITLAB_TOKEN'], 'test-gitlab-secret')
         self.assertEqual(current['AGENT_PLATFORM_SIMULATION_FILE'], self.config['simulationFile'])
+        for key in ('OPENAI_API_KEY', 'VITE_SECRET', 'AGENT_PLATFORM_MODEL_CREDENTIAL_FILE', 'AGENT_PLATFORM_REVIEW_ENABLED', 'AGENT_PLATFORM_API_ADDR', 'AGENT_PLATFORM_PLANNING_ANALYZER'):
+            self.assertNotIn(key, current)
+        self.assertNotIn('secret', result.stdout + result.stderr)
+
+    def test_write_worker_requires_explicit_settings_and_filters_model_environment(self):
+        script = SCRIPT.with_name('run-write-worker.py')
+        missing = subprocess.run([sys.executable, '-B', str(script), '--config', str(self.state / 'pilot.json'), '--check'], capture_output=True, text=True, timeout=15)
+        self.assertEqual(missing.returncode, 1)
+        self.config['planningAnalyzer'] = 'model'
+        for key, name in [('serviceCatalogFile', 'catalog.json'), ('planningConnectorsFile', 'planning.json'),
+                          ('archiveDatabaseFile', 'archive.json'), ('writesFile', 'writes.json')]:
+            self.write_json(name, {})
+            self.config[key] = str(self.state / name)
+        self.write_json('pilot.json', self.config)
+        worker = "import json,os,pathlib\nstate=pathlib.Path(__file__).parent.parent\n(state/'worker.json').write_text(json.dumps({'env':dict(os.environ)}))\n"
+        self.executable('bin/go', "import pathlib,sys\np=pathlib.Path(sys.argv[sys.argv.index('-o')+1]); p.write_text(" + repr('#!' + sys.executable + '\n' + worker) + "); p.chmod(0o700)\n")
+        env = dict(os.environ, OPENAI_API_KEY='parent-secret', VITE_SECRET='parent-browser')
+        result = subprocess.run([sys.executable, '-B', str(script), '--config', str(self.state / 'pilot.json')], env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        current = json.loads((self.state / 'worker.json').read_text())['env']
+        self.assertEqual(current['AGENT_PLATFORM_WRITES_FILE'], self.config['writesFile'])
         for key in ('OPENAI_API_KEY', 'VITE_SECRET', 'AGENT_PLATFORM_MODEL_CREDENTIAL_FILE', 'AGENT_PLATFORM_REVIEW_ENABLED', 'AGENT_PLATFORM_API_ADDR', 'AGENT_PLATFORM_PLANNING_ANALYZER'):
             self.assertNotIn(key, current)
         self.assertNotIn('secret', result.stdout + result.stderr)

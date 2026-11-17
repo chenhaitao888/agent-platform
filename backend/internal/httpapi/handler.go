@@ -38,6 +38,7 @@ type handler struct {
 	changes    *change.Service
 	archives   *delivery.Store
 	simulation *delivery.SimulationService
+	writes     *delivery.WriteService
 	// 与 GitLab verifier 使用同一份 token；仅用于遮盖日志，不写入响应。
 	logSecret string
 }
@@ -155,6 +156,7 @@ type DeliveryOptions struct {
 	Planning   *planning.Planner
 	Archives   *delivery.Store
 	Simulation *delivery.SimulationService
+	Writes     *delivery.WriteService
 }
 
 func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, preparer workspace.Preparer, diffReader repository.DiffReader, runner review.Runner, catalog *servicecatalog.Catalog, root, gitlabToken string, options ...DeliveryOptions) (http.Handler, error) {
@@ -180,6 +182,7 @@ func NewHandlerWithDeliveryServices(verifier repository.ReferenceServices, prepa
 	changes.ConfigurePlanning(option.Planning)
 	h.changes, h.archives = changes, option.Archives
 	h.simulation = option.Simulation
+	h.writes = option.Writes
 	return WithChanges(h.routes(), changes), nil
 }
 
@@ -224,6 +227,14 @@ func (h *handler) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/simulations", h.startSimulation)
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/simulations", h.listSimulations)
 	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/simulations/{simulationId}", h.getSimulation)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-access", h.writeAccess)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-approvals", h.approveWrite)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-approvals", h.listWriteApprovals)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-approvals/{approvalId}/revoke", h.revokeWrite)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-executions", h.startWrite)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-executions", h.listWriteExecutions)
+	mux.HandleFunc("GET /api/v1/deliveries/{deliveryId}/write-executions/{executionId}", h.getWriteExecution)
+	mux.HandleFunc("POST /api/v1/deliveries/{deliveryId}/write-executions/{executionId}/reconcile", h.reconcileWrite)
 
 	return requireIdentity(mux)
 }

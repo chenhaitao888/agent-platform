@@ -58,14 +58,29 @@ type WriteOperation struct {
 	State        string                      `json:"state"`
 	ErrorCode    string                      `json:"errorCode,omitempty"`
 	Intent       *resourcewrite.Intent       `json:"intent,omitempty"`
+	IntentHash   string                      `json:"intentHash,omitempty"`
 	Receipt      *resourcewrite.Receipt      `json:"receipt,omitempty"`
 	Verification *resourcewrite.Verification `json:"verification,omitempty"`
 	DispatchedAt *time.Time                  `json:"dispatchedAt,omitempty"`
 	LookupAfter  *time.Time                  `json:"lookupAfter,omitempty"`
 }
 
-// No production assembly exists yet. Only trusted callers may use this service;
-// a future HTTP adapter must authorize reads/reconciliation as well as mutations.
+// Public exposes outcome evidence without the internal dispatch payload.
+func (r WriteExecution) Public() WriteExecution {
+	r = planning.Clone(r)
+	for n := range r.Operations {
+		o := &r.Operations[n]
+		if o.Intent != nil {
+			o.IntentHash = o.Intent.Hash
+		}
+		o.Intent = nil
+		o.LookupAfter = nil
+	}
+	return r
+}
+
+// Deployment supplies a trusted policy. HTTP adapters must authorize current
+// reads/reconciliation as well as mutations; callers never supply a Writer.
 type WriteService struct {
 	Store             *Store
 	Policy            WritePolicy

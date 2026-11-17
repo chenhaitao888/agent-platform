@@ -1,0 +1,30 @@
+{
+  "temporalAddress": "127.0.0.1:17233",
+  "namespace": "agent-platform-d4",
+  "taskQueue": "delivery-writes",
+  "allowSelfApproval": false,
+  "connectors": [
+    {
+      "id": "config-ref",
+      "version": "1",
+      "kind": "config",
+      "baseUrl": "https://config.example.invalid",
+      "caFile": "/absolute/private/config-ca.pem",
+      "credentialFile": "/absolute/private/config-writer-credential.json",
+      "targets": [
+        { "tenantId": "tenant-local", "environment": "test", "connectorRef": "config-ref", "resourceRef": "shared/settings" }
+      ]
+    },
+    {
+      "id": "ab-ref",
+      "version": "1",
+      "kind": "experiment",
+      "baseUrl": "https://experiments.example.invalid",
+      "caFile": "/absolute/private/experiments-ca.pem",
+      "credentialFile": "/absolute/private/experiment-writer-credential.json",
+      "targets": [
+        { "tenantId": "tenant-local", "environment": "test", "connectorRef": "ab-ref", "resourceRef": "checkout-app" }
+      ]
+    }
+  ]
+}

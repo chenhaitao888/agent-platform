@@ -185,7 +185,7 @@ func (s *WriteService) Step(ctx context.Context, ref Ref) (bool, error) {
 		if errors.Is(err, ErrPolicy) || errors.Is(err, ErrDrift) {
 			return false, s.blockUnsent(ctx, ref, "authorization_or_input_changed")
 		}
-		if errors.Is(err, resourcewrite.ErrInvalid) {
+		if errors.Is(err, resourcewrite.ErrInvalid) || errors.Is(err, ErrCorrupt) {
 			return false, ErrCorrupt
 		}
 		return false, ErrUnavailable

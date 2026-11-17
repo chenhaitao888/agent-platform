@@ -156,7 +156,7 @@ func (h *handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []delivery.Bundle{}
 	for _, value := range values {
-		if h.archiveAuthorized(actor, value, "read") {
+		if h.deliveryReadAuthorized(ctx, actor, value) {
 			items = append(items, value.Public())
 		}
 	}
@@ -176,11 +176,21 @@ func (h *handler) loadDelivery(w http.ResponseWriter, r *http.Request) (delivery
 		writeArchiveError(w, err)
 		return delivery.Bundle{}, false
 	}
-	if !h.archiveAuthorized(actor, value, "read") {
+	if !h.deliveryReadAuthorized(ctx, actor, value) {
 		writeChangeError(w, change.ErrForbidden)
 		return delivery.Bundle{}, false
 	}
 	return value, true
+}
+func (h *handler) deliveryReadAuthorized(ctx context.Context, actor servicecatalog.Actor, b delivery.Bundle) bool {
+	if actor.TenantID != b.TenantID {
+		return false
+	}
+	if h.writes != nil {
+		_, err := h.writes.Policy.Authorize(ctx, actor.Subject, b, "read")
+		return err == nil
+	}
+	return h.archiveAuthorized(actor, b, "read")
 }
 func (h *handler) getDelivery(w http.ResponseWriter, r *http.Request) {
 	if value, ok := h.loadDelivery(w, r); ok {

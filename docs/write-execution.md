@@ -1,7 +1,8 @@
 # D5.2：写入批准、持久账本与执行控制层
 
 2026-11-17。D5.1 的参考 Writer 已推送为 `cdf745c`；本步接入独立 WRITE 批准、PostgreSQL 操作账本、
-专用 Temporal Workflow，以及只读结果核对。控制层已通过受控验收，**尚未装配到业务 API、前端或常驻试点**。
+专用 Temporal Workflow，以及只读结果核对，已以 `33f8870` 推送。
+D5.3 已补充业务 API、前端和显式部署，见 [写入部署](write-deployment.md)；常驻试点未更改。
 本步没有公司连接凭据、模型调用、实验激活、配置发布或自动补偿。
 
 ## 入口与部署边界
@@ -13,17 +14,17 @@
 - [资源重验](../backend/internal/resourcewrite/revalidate.go)：基于已核验前缀检查原计划的资源条件。
 
 WritePolicy 必须由可信部署实现，包含当前身份/服务/仓库/环境/资源授权与版本摘要、固定代码引用重验、
-以及按精确目标查找 Writer。当前测试提供受控实现；**实际认证文件、服务目录、GitLab 引用检查和写连接私有文件的装配留给 D5.3**。
-`RevalidateRemaining` 已复用实际 Planning Readers；代码漂移和权限变更在控制层测试中通过策略端口注入。
+以及按精确目标查找 Writer。D5.3 已提供实际认证/目录/私有写连接加载与 GitLab 引用检查的部署实现。
+`RevalidateRemaining` 复用实际 Planning Readers；本控制层测试仍保留策略端口的故障注入。
 
-`RunWrites` 是可调用的 Worker 函数，本步没有新命令或启动环境变量。现有 `cmd/deliveryworker` 仍只启动模拟 Worker。
+`RunWrites` 由 D5.3 新增的 `cmd/writeworker` 调用；`cmd/deliveryworker` 仍只启动模拟 Worker。
 Planning 的部署文件仍只创建 GET Reader，原 SIMULATION API、批准、账本及 `delivery.simulation.v1` 不变。
 
 ## 批准与单次消费
 
 批准绑定交付包摘要、planHash、逐动作 actionHash、目标、Writer 描述、批准主体与策略摘要，要求明确的理由和 Findings 已复核。
 期限 1～3600 秒，默认禁止计划创建者/封存者自行批准；可信部署可显式允许，选项也进入批准策略摘要。
-`approve_write`、`execute_write`、`revoke_write` 是新端口的操作语义，尚未加入业务目录的可用权限项。
+`approve_write`、`execute_write`、`revoke_write` 已由 D5.3 加入目录权限，必须显式授予。
 调用者传入的 PolicyHash 会被服务端计算结果覆盖。SIMULATION 批准 ID 在 WRITE 表中不可见。
 
 Start 在一个 PostgreSQL 事务中：
@@ -69,7 +70,7 @@ DISPATCHED 后有 30 秒等待窗口，避免重复 Activity 在原请求仍在�
 本版不提供解除阻断或继续剩余动作的授权入口。应重新读取现状、生成新计划并另行批准，不能修改原 Intent 重试。
 只有全体动作均已执行并核验时，回查才可能使 UNKNOWN 变为 SUCCEEDED。
 
-Reconcile 对外部平台只使用 GET。未来业务 API 仍须检查调用者当前的包/服务/证据读取权限；
+Reconcile 对外部平台只使用 GET。D5.3 业务 API 会检查调用者当前的包/服务/证据读取权限；
 不能因为允许记录旧执行事实而开放匿名或跨租户回查。
 
 VERIFIED 是该次回读的事实，不是持续观察。`publish_required` 只表示已保存，不能宣称已发布或应用已加载；
@@ -94,9 +95,7 @@ Workflow/Activity 入参只有 tenantId/runId/operationId，活动返回 ID 列�
 参考平台仅为测试 fixture，未做公司平台接入。发送前中断是测试内故障注入；Temporal Worker 重建是进程内 Worker 实例重建，
 不宣称本轮进行了新写 Worker 可执行进程的 SIGKILL 验收。
 
-## 下一步 D5.3
+## 后续接线
 
-装配可信写连接/精确目标允许列表、独立操作权限和当前策略读取；复用 GitLab 的固定引用检查并调用资源前缀重验。
-增加独立 Worker 启动配置、严格业务 API 与前端的批准/执行/撤回/只读核对入口，完成页面到参考平台的验收。
-生产连接信息、主体验证、秘密交付方式和读取证据权限都由部署控制；浏览器/模型不能提供 Writer、URL、Intent 或 Completed。
-完成这些入口后，再做明确补偿及 D6 公司测试空间适配；真实模型候选质量仍是单独的验收工作线。
+D5.3 已完成可信写连接、当前部署策略、独立 Worker、严格业务 API 和前端操作，见 [写入部署](write-deployment.md)。
+下一步 D5.4 准备部分成功的明确处置/补偿计划并独立批准；D6 再接公司测试空间。模型候选质量仍需独立评测。
