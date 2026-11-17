@@ -172,17 +172,33 @@ type Evidence struct {
 	Reason    string `json:"reason,omitempty"`
 }
 type Candidate struct {
+	Reason   string     `json:"reason,omitempty"`
+	Origin   string     `json:"origin,omitempty"`
 	Kind     string     `json:"kind"`
 	Key      string     `json:"key"`
 	Evidence []Evidence `json:"evidence"`
 }
-type AnalysisInput struct{ ServiceID, SnapshotHash, BaseSHA, HeadSHA, Patch string }
+
+// AnalysisInput is assembled by the platform; no credentials or desired values.
+type AnalysisInput struct {
+	ServiceID    string            `json:"serviceId"`
+	SnapshotHash string            `json:"snapshotHash"`
+	BaseSHA      string            `json:"baseSha"`
+	HeadSHA      string            `json:"headSha"`
+	Patch        string            `json:"patch"`
+	Goal         string            `json:"goal"`
+	Environment  string            `json:"environment"`
+	Resources    []ResourceContext `json:"resources"`
+	WorktreePath string            `json:"-"`
+}
 type Analysis struct {
-	SchemaVersion string      `json:"schemaVersion"`
-	SnapshotHash  string      `json:"snapshotHash"`
-	ServiceID     string      `json:"serviceId"`
-	HeadSHA       string      `json:"headSha"`
-	Candidates    []Candidate `json:"candidates"`
+	Trace         *AnalysisTrace     `json:"trace,omitempty"`
+	Questions     []AnalysisQuestion `json:"questions,omitempty"`
+	SchemaVersion string             `json:"schemaVersion"`
+	SnapshotHash  string             `json:"snapshotHash"`
+	ServiceID     string             `json:"serviceId"`
+	HeadSHA       string             `json:"headSha"`
+	Candidates    []Candidate        `json:"candidates"`
 }
 type Analyzer interface {
 	Version() string
@@ -249,16 +265,18 @@ type ReviewEvidence struct {
 	State       string `json:"state"`
 }
 type Source struct {
-	ServiceID          string         `json:"serviceId"`
-	CatalogVersion     string         `json:"catalogVersion"`
-	HeadSHA            string         `json:"headSha"`
-	BaseSHA            string         `json:"baseSha"`
-	Review             ReviewEvidence `json:"review"`
-	ConfigCoverage     string         `json:"configCoverage"`
-	ExperimentCoverage string         `json:"experimentCoverage"`
-	ConfigReason       string         `json:"configReason,omitempty"`
-	ExperimentReason   string         `json:"experimentReason,omitempty"`
-	Candidates         []Candidate    `json:"candidates"`
+	Analysis           *AnalysisTrace     `json:"analysis,omitempty"`
+	Questions          []AnalysisQuestion `json:"questions,omitempty"`
+	ServiceID          string             `json:"serviceId"`
+	CatalogVersion     string             `json:"catalogVersion"`
+	HeadSHA            string             `json:"headSha"`
+	BaseSHA            string             `json:"baseSha"`
+	Review             ReviewEvidence     `json:"review"`
+	ConfigCoverage     string             `json:"configCoverage"`
+	ExperimentCoverage string             `json:"experimentCoverage"`
+	ConfigReason       string             `json:"configReason,omitempty"`
+	ExperimentReason   string             `json:"experimentReason,omitempty"`
+	Candidates         []Candidate        `json:"candidates"`
 }
 type Issue struct {
 	Code      string `json:"code"`
@@ -314,6 +332,7 @@ type Plan struct {
 	CreatedAt       time.Time     `json:"createdAt"`
 }
 type ServiceInput struct {
+	WorktreePath  string
 	Source        Source
 	Bindings      EnvironmentBinding
 	Patch         string
@@ -321,6 +340,7 @@ type ServiceInput struct {
 	Requirement   Requirement
 }
 type Input struct {
+	Goal                                                       string
 	TenantID, Environment, SnapshotID, SnapshotHash, CreatedBy string
 	Services                                                   []ServiceInput
 }

@@ -148,7 +148,9 @@ export function PlanPreview({ plan }: { plan: ChangePlan }) {
     {plan.services.map(source => <div key={source.serviceId} className="plan-source">
       <strong>{source.serviceId}</strong><p>配置：{coverageLabels[source.configCoverage]} · 实验：{coverageLabels[source.experimentCoverage]}</p>
       {source.configReason && <p>配置依据：{source.configReason}</p>}{source.experimentReason && <p>实验依据：{source.experimentReason}</p>}
-      {source.candidates.map(candidate => <details key={`${candidate.kind}:${candidate.key}`}><summary>{candidate.kind === 'config' ? '配置' : '实验'}候选：{candidate.key}</summary>{candidate.evidence.map((e, i) => <p key={i}>{e.source === 'fixed-diff' ? `代码证据：${e.path}:${e.line}` : `业务依据：${e.reason}`}</p>)}</details>)}
+      {source.analysis && <p>已结合模型与规则分析 · {source.analysis.identity.model}。候选仍需人工核对。</p>}
+      {source.questions?.map((question, i) => <p key={i} role="note">待核对（{question.kind === 'config' ? '配置' : '实验'}）：{question.reason}</p>)}
+      {source.candidates.map(candidate => <details key={`${candidate.kind}:${candidate.key}`}><summary>{candidate.kind === 'config' ? '配置' : '实验'}候选：{candidate.key}</summary>{candidate.reason && <p>模型识别依据：{candidate.reason}</p>}{candidate.evidence.map((e, i) => <p key={i}>{e.source === 'fixed-diff' ? `代码证据：${e.path}:${e.line}` : `业务依据：${e.reason}`}</p>)}</details>)}
     </div>)}
     {plan.actions.map(action => <section className="plan-action" key={action.id} aria-label={`${operationLabels[action.operation]} ${action.key}`}>
       <h5>{operationLabels[action.operation]} · {action.key}</h5>

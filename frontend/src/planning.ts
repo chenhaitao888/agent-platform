@@ -12,7 +12,9 @@ export type PlanSource = {
   serviceId: string; headSha: string; baseSha: string
   configCoverage: string; experimentCoverage: string; configReason?: string; experimentReason?: string
   review: { taskId?: string; executionId?: string; artifactId?: string; state: string }
-  candidates: { kind: string; key: string; evidence: Evidence[] }[]
+  analysis?: { schemaVersion: string; inputHash: string; outputHash: string; identity: { model: string; runtimeHash: string } }
+  questions?: { kind: string; reason: string }[]
+  candidates: { kind: string; key: string; reason?: string; origin?: string; evidence: Evidence[] }[]
 }
 export type PlanAction = {
   id: string; hash: string; kind: string; key: string; operation: string; effect: string
@@ -36,6 +38,7 @@ export const planIssues: Record<string, string> = {
   review_incomplete: '该快照的服务审阅尚未完成',
   workspace_required: '请先发起该快照的审阅，准备固定代码工作区',
   diff_unavailable: '固定版本差异读取失败，请检查工作区后生成新计划',
+  analysis_question: '模型发现尚未确定的配置或实验依赖，请核对后重新生成计划',
   analysis_failed: '候选分析失败，不能据此确认没有变更',
   analysis_canceled: '分析已中止，请生成新计划重试',
   binding_unavailable: '请由管理员登记该服务和环境的目标资源',

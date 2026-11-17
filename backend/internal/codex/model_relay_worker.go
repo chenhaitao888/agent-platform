@@ -33,7 +33,7 @@ func ServeModelRelayWorker(ctx context.Context, config ExecConfig, probe bool, i
 		content, _ := json.Marshal(workerResponse{ErrorCode: code})
 		return encoder.Encode(modelRelayFrame{Type: "result", Result: content})
 	}
-	if !scanner.Scan() || len(scanner.Bytes()) > 6*review.MaxReviewPatchBytes+16384 {
+	if !scanner.Scan() || len(scanner.Bytes()) > 6*review.MaxReviewPatchBytes+(1<<20) {
 		return finish("review_input_invalid")
 	}
 	initial := append([]byte(nil), scanner.Bytes()...)

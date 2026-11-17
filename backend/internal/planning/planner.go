@@ -78,7 +78,11 @@ func (p *Planner) Build(ctx context.Context, in Input) Plan {
 			plan.Services = append(plan.Services, source)
 			continue
 		}
-		analysis, err := p.analyzer.Analyze(ctx, AnalysisInput{ServiceID: source.ServiceID, SnapshotHash: in.SnapshotHash, BaseSHA: source.BaseSHA, HeadSHA: source.HeadSHA, Patch: service.Patch})
+		analysisInput := AnalysisInput{ServiceID: source.ServiceID, SnapshotHash: in.SnapshotHash, BaseSHA: source.BaseSHA, HeadSHA: source.HeadSHA, Patch: service.Patch, WorktreePath: service.WorktreePath, Goal: in.Goal, Environment: in.Environment}
+		if contextual, ok := p.analyzer.(interface{ UsesPlatformContext() bool }); ok && contextual.UsesPlatformContext() {
+			analysisInput.Resources = p.analysisContext(ctx, &plan, service, cache)
+		}
+		analysis, err := p.analyzer.Analyze(ctx, analysisInput)
 		if err != nil || !validAnalysis(analysis, in.SnapshotHash, source) {
 			source.ConfigCoverage, source.ExperimentCoverage = "ANALYSIS_FAILED", "ANALYSIS_FAILED"
 			addIssue(&plan, "analysis_failed", source.ServiceID, "", "")
@@ -86,6 +90,10 @@ func (p *Planner) Build(ctx context.Context, in Input) Plan {
 			continue
 		}
 		source.Candidates = Clone(analysis.Candidates)
+		source.Analysis, source.Questions = Clone(analysis.Trace), Clone(analysis.Questions)
+		for _, question := range source.Questions {
+			addIssue(&plan, "analysis_question", source.ServiceID, question.Kind, "")
+		}
 		proposals := map[string]Proposal{}
 		for _, c := range source.Candidates {
 			proposals[c.Kind+":"+c.Key] = Proposal{ServiceID: source.ServiceID, Evidence: c.Evidence}
@@ -154,18 +162,7 @@ func (p *Planner) Build(ctx context.Context, in Input) Plan {
 			}
 			target := Target{TenantID: in.TenantID, Environment: in.Environment, ConnectorRef: binding.ConnectorRef, ResourceRef: binding.ResourceRef}
 			key := resourceKey{kind: kind, target: target}
-			state, exists := cache[key]
-			if !exists {
-				state = p.observe(ctx, kind, target)
-				cache[key] = state
-				if state.err == nil {
-					version := state.config.Version
-					if kind == "experiment" {
-						version = state.experiments.Version
-					}
-					plan.Observations = append(plan.Observations, Observation{Kind: kind, Target: target, Descriptor: state.descriptor, Version: version, ObservedAt: time.Now().UTC()})
-				}
-			}
+			state := p.cachedObservation(ctx, &plan, key, cache)
 			for _, c := range candidates {
 				if state.err != nil {
 					addIssue(&plan, "platform_read_failed", source.ServiceID, kind, c.Key)
@@ -415,4 +412,16 @@ func mergeAction(plan *Plan, next Action) {
 		}
 	}
 	plan.Actions = append(plan.Actions, next)
+}
+
+const ModelPlanTimeout = 10 * time.Minute
+
+func (p *Planner) WithAnalyzer(analyzer Analyzer) (*Planner, error) {
+	return NewPlanner(p.configs, p.experiments, analyzer)
+}
+func (p *Planner) Timeout() time.Duration {
+	if contextual, ok := p.analyzer.(interface{ UsesPlatformContext() bool }); ok && contextual.UsesPlatformContext() {
+		return ModelPlanTimeout
+	}
+	return 30 * time.Second
 }

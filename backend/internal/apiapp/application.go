@@ -16,6 +16,7 @@ import (
 	"agent-platform/backend/internal/connector/gitlab"
 	"agent-platform/backend/internal/gitworkspace"
 	"agent-platform/backend/internal/httpapi"
+	"agent-platform/backend/internal/planning"
 )
 
 type Application struct {
@@ -37,6 +38,7 @@ type deployment struct {
 	authFile, catalogFile, planningFile, archiveFile, simulationFile                              string
 	address, gitlabURL, gitlabToken, root, gitBinary, gitlabCA                                    string
 	reviewEnabled                                                                                 bool
+	planningAnalyzer                                                                              string
 	dockerBinary, dockerHost, image, model, modelURL, principal, credentialFile, modelCA, seccomp string
 	timeout                                                                                       time.Duration
 }
@@ -50,11 +52,18 @@ func loadDeployment() (deployment, error) {
 	config.planningFile = value("PLANNING_CONNECTORS_FILE")
 	config.archiveFile = value("ARCHIVE_DATABASE_FILE")
 	config.simulationFile = value("SIMULATION_FILE")
+	config.planningAnalyzer = value("PLANNING_ANALYZER")
+	if config.planningAnalyzer != "" && config.planningAnalyzer != "literal" && config.planningAnalyzer != "model" {
+		return deployment{}, errors.New("AGENT_PLATFORM_PLANNING_ANALYZER must be literal or model")
+	}
 	enabled := value("REVIEW_ENABLED")
 	if enabled != "" && enabled != "false" && enabled != "true" {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED must be true or false")
 	}
 	config.reviewEnabled = enabled == "true"
+	if config.planningAnalyzer == "model" && (!config.reviewEnabled || config.planningFile == "" || config.authFile == "") {
+		return deployment{}, errors.New("model planning requires Review runtime, authentication and planning connectors")
+	}
 	if config.reviewEnabled && (config.gitlabURL == "" || config.gitlabToken == "" || config.root == "" || config.dockerHost == "" || config.image == "" || config.model == "" || config.modelURL == "" || config.principal == "" || config.credentialFile == "") {
 		return deployment{}, errors.New("AGENT_PLATFORM_REVIEW_ENABLED requires complete GitLab, workspace, Docker, model and service credential configuration")
 	}
@@ -175,9 +184,19 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 	if err := os.MkdirAll(config.root, 0o700); err != nil {
 		return nil, errors.New("prepare deployment workspace root failed")
 	}
-	runner, err := codex.NewDockerRunner(ctx, codex.DockerConfig{Binary: config.dockerBinary, Endpoint: config.dockerHost, Image: config.image, WorkspaceRoot: config.root, Model: config.model, Timeout: config.timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: config.seccomp, Gateway: &codex.GatewayConfig{BaseURL: config.modelURL, ServicePrincipal: config.principal, CredentialFile: config.credentialFile}, ModelRelay: true, ModelHTTPClient: modelClient})
+	runner, err := codex.NewDockerRunner(ctx, codex.DockerConfig{Binary: config.dockerBinary, Endpoint: config.dockerHost, Image: config.image, WorkspaceRoot: config.root, Model: config.model, Timeout: config.timeout, UID: os.Getuid(), GID: os.Getgid(), SeccompPolicy: config.seccomp, Gateway: &codex.GatewayConfig{BaseURL: config.modelURL, ServicePrincipal: config.principal, CredentialFile: config.credentialFile}, ModelRelay: true, ModelHTTPClient: modelClient, CandidateAnalysis: config.planningAnalyzer == "model"})
 	if err != nil {
 		return nil, err
+	}
+	if config.planningAnalyzer == "model" {
+		analyzer, err := planning.NewModelAnalyzer(runner)
+		if err != nil {
+			return nil, err
+		}
+		planner, err = planner.WithAnalyzer(analyzer)
+		if err != nil {
+			return nil, err
+		}
 	}
 	app.Handler, err = httpapi.NewHandlerWithDeliveryServices(verifier, workspacePreparer, reader, runner, catalog, config.root, config.gitlabToken, httpapi.DeliveryOptions{Planning: planner, Archives: archives, Simulation: simulation})
 	if err != nil {
@@ -193,6 +212,9 @@ func /**/ FromEnvironment(ctx context.Context) (*Application, error) {
 		underlying.ServeHTTP(w, r)
 	})
 	app.ShutdownGrace = max(time.Minute, config.timeout+30*time.Second)
+	if config.planningAnalyzer == "model" {
+		app.ShutdownGrace = planning.ModelPlanTimeout + 30*time.Second
+	}
 	app.Handler = authentication.Wrap(app.Handler)
 	assembled = true
 	return app, nil

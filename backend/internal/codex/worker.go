@@ -14,6 +14,8 @@ import (
 )
 
 type workerResponse struct {
+	Analysis            json.RawMessage `json:"analysis,omitempty"`
+	CandidatesSupported bool            `json:"candidatesSupported,omitempty"`
 	Profile             *Profile        `json:"profile,omitempty"`
 	Report              json.RawMessage `json:"report,omitempty"`
 	ErrorCode           string          `json:"errorCode,omitempty"`
@@ -26,7 +28,7 @@ type workerResponse struct {
 // This envelope is used only by deployment-selected gateway Workers. HTTP
 // requests still carry only RunInput coordinates, never these credentials.
 type workerGatewayRequest struct {
-	Input      review.RunInput `json:"input"`
+	Input      workerRunInput  `json:"input"`
 	Credential json.RawMessage `json:"credential"`
 }
 
@@ -46,7 +48,7 @@ func decodeWorkerResponse(data []byte) (workerResponse, error) {
 			return workerResponse{}, review.ErrInvalidFindings
 		}
 		switch key {
-		case "profile", "report", "errorCode", "diagnosticCode", "sandboxVerified", "gatewaySupported", "modelRelaySupported":
+		case "analysis", "candidatesSupported", "profile", "report", "errorCode", "diagnosticCode", "sandboxVerified", "gatewaySupported", "modelRelaySupported":
 		default:
 			return workerResponse{}, review.ErrInvalidFindings
 		}
@@ -66,7 +68,7 @@ func decodeWorkerResponse(data []byte) (workerResponse, error) {
 		return workerResponse{}, review.ErrInvalidFindings
 	}
 	if message.DiagnosticCode != "" && (!review.ValidOutputDiagnostic(message.DiagnosticCode) ||
-		message.ErrorCode == "" || message.Report != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported ||
+		message.ErrorCode == "" || message.Report != nil || message.Analysis != nil || message.CandidatesSupported || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported ||
 		!errors.Is(review.NewOutputError(message.DiagnosticCode), workerError(message.ErrorCode))) {
 		return workerResponse{}, review.ErrInvalidFindings
 	}
@@ -76,9 +78,9 @@ func decodeWorkerResponse(data []byte) (workerResponse, error) {
 // ServeWorker is the image entry point. It accepts only platform-selected review
 // inputs; deployment options arrive separately from the fixed Docker command.
 func ServeWorker(ctx context.Context, config ExecConfig, probe bool, input io.Reader, output io.Writer) error {
-	var request review.RunInput
+	var request workerRunInput
 	if !probe {
-		const maxInput = 6*review.MaxReviewPatchBytes + 16384
+		const maxInput = 6*review.MaxReviewPatchBytes + (1 << 20)
 		content, readErr := io.ReadAll(io.LimitReader(input, maxInput+1))
 		decoder := json.NewDecoder(bytes.NewReader(content))
 		decoder.DisallowUnknownFields()
@@ -122,9 +124,21 @@ func ServeWorker(ctx context.Context, config ExecConfig, probe bool, input io.Re
 			message.SandboxVerified = true
 			message.GatewaySupported = true
 			message.ModelRelaySupported = true
+			message.CandidatesSupported = true
+		}
+	} else if request.Candidates != nil {
+		candidateInput := *request.Candidates
+		candidateInput.WorktreePath = request.WorktreePath
+		candidateInput.Patch = request.Patch
+		content, runErr := runner.RunCandidates(ctx, candidateInput)
+		if runErr != nil {
+			message.ErrorCode = workerErrorCode(runErr)
+			message.DiagnosticCode = review.OutputDiagnostic(runErr)
+		} else {
+			message.Analysis = content
 		}
 	} else {
-		report, runErr := runner.Run(ctx, request)
+		report, runErr := runner.Run(ctx, request.RunInput)
 		if runErr != nil {
 			message.ErrorCode = workerErrorCode(runErr)
 			message.DiagnosticCode = review.OutputDiagnostic(runErr)

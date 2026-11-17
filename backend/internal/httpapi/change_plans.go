@@ -5,7 +5,6 @@ import (
 	"agent-platform/backend/internal/planning"
 	"context"
 	"net/http"
-	"time"
 )
 
 func (h changeHandler) plan(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +15,7 @@ func (h changeHandler) plan(w http.ResponseWriter, r *http.Request) {
 	if !decodeChangeRequest(w, r, &input) || !optionalChangeTenant(w, r, input.TenantID) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), h.service.PlanningTimeout())
 	defer cancel()
 	result, replayed, err := h.service.Plan(ctx, changeActor(r), r.PathValue("id"), input.PlanInput)
 	if err != nil {

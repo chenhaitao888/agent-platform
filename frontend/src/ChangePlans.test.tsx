@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useCallback, useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-import ChangePlans from './ChangePlans'
+import ChangePlans, { PlanPreview } from './ChangePlans'
 import { APIContext } from './api'
 import type { ChangeRequest } from './change'
 import type { ChangePlan } from './planning'
@@ -95,4 +95,18 @@ it('ignores a late plan response after leaving the authenticated view', async ()
   unmount(); expect(signal?.aborted).toBe(true)
   await act(async () => finish(reply({ changeId: change.id, changeVersion: 6, plan: plan() })))
   expect(screen.queryByText('计划存在待补齐或阻断项')).not.toBeInTheDocument()
+})
+
+it('shows model evidence and unresolved dependencies as proposals requiring review', () => {
+  const value = plan()
+  value.services[0].analysis = { schemaVersion: 'model-candidates.v1', inputHash: 'input', outputHash: 'output', identity: { model: 'fixture-model', runtimeHash: 'runtime' } }
+  value.services[0].questions = [{ kind: 'config', reason: '动态 key 需要进一步确认' }]
+  value.services[0].candidates = [{ kind: 'config', key: 'checkout.limit', origin: 'model', reason: '包装函数读取 limitKey', evidence: [{ source: 'fixed-diff', serviceId: 'S1', headSha: 'head', path: 'app.go', line: 2 }] }]
+  value.issues = [{ code: 'analysis_question', serviceId: 'S1', kind: 'config' }]
+  render(<PlanPreview plan={value} />)
+  expect(screen.getByText(/已结合模型与规则分析/)).toHaveTextContent('fixture-model')
+  expect(screen.getByRole('note')).toHaveTextContent('动态 key 需要进一步确认')
+  expect(screen.getByText('模型识别依据：包装函数读取 limitKey')).toBeInTheDocument()
+  expect(screen.getByText('代码证据：app.go:2')).toBeInTheDocument()
+  expect(screen.getByText(/模型发现尚未确定的配置或实验依赖/)).toBeInTheDocument()
 })

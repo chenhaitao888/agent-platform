@@ -38,7 +38,7 @@ func gitFixture(t *testing.T, directory string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
-func newDeploymentFixture(t *testing.T) deploymentFixture {
+func newDeploymentFixture(t *testing.T, feature ...string) deploymentFixture {
 	t.Helper()
 	cleanDeployment(t)
 	fixture := deploymentFixture{root: filepath.Join(t.TempDir(), "workspaces"), directory: t.TempDir(), modelCalls: new(atomic.Int32)}
@@ -53,7 +53,11 @@ func newDeploymentFixture(t *testing.T) deploymentFixture {
 	gitFixture(t, source, "-c", "commit.gpgsign=false", "commit", "-m", "base")
 	fixture.base = gitFixture(t, source, "rev-parse", "HEAD")
 	gitFixture(t, source, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(source, "feature.txt"), []byte("feature-only change\n"), 0o600); err != nil {
+	featureCode := "feature-only change\n"
+	if len(feature) > 0 {
+		featureCode = feature[0]
+	}
+	if err := os.WriteFile(filepath.Join(source, "feature.txt"), []byte(featureCode), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitFixture(t, source, "add", "feature.txt")
@@ -130,7 +134,7 @@ func newDeploymentFixture(t *testing.T) deploymentFixture {
 		t.Fatal(err)
 	}
 	quoted, _ := json.Marshal(fixture.directory)
-	script := "#!" + python + "\n" + `import base64,json,os,sys
+	script := "#!" + python + "\n" + `import base64,hashlib,json,os,sys
 directory=` + string(quoted) + `
 args=sys.argv[1:]
 with open(directory+"/commands.jsonl","a") as capture: capture.write(json.dumps(args)+"\n")
@@ -142,7 +146,7 @@ elif args[0]=="create":
 elif args[0]=="start":
     with open(directory+"/"+args[-1]) as source: created=json.load(source)
     if "--probe" in created:
-        print(json.dumps(dict(modelRelaySupported=not os.path.exists(directory+"/bad-worker"),gatewaySupported=True,sandboxVerified=True,profile=dict(version="0.160.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model","--config"]))))
+        print(json.dumps(dict(candidatesSupported=not os.path.exists(directory+"/old-worker"),modelRelaySupported=not os.path.exists(directory+"/bad-worker"),gatewaySupported=True,sandboxVerified=True,profile=dict(version="0.160.0",binaryPath="/opt/codex/codex",binarySha256="c"*64,integration="exec",sandbox="read-only",ephemeral=True,requiredFlags=["--sandbox","--ephemeral","--output-schema","--output-last-message","--json","--ignore-user-config","--ignore-rules","--no-daemon","--ask-for-approval","--model","--config"]))))
     else:
         initial=json.loads(sys.stdin.readline())
         if "api-model-token" in json.dumps(initial): sys.exit(28)
@@ -156,6 +160,14 @@ elif args[0]=="start":
             if response["type"]=="end": break
         request=initial["input"]
         with open(directory+"/review-inputs.jsonl","a") as capture: capture.write(json.dumps(request)+"\n")
+        if "candidates" in request:
+            candidate=request["candidates"]
+            candidate["patch"]=request["patch"]
+            digest=hashlib.sha256(json.dumps(candidate,separators=(",",":"),ensure_ascii=False).encode()).hexdigest()
+            result=dict(schemaVersion="model-candidates.v1",inputHash=digest,snapshotHash=candidate["snapshotHash"],serviceId=candidate["serviceId"],baseSha=candidate["baseSha"],headSha=candidate["headSha"],candidates=[dict(kind="config",key="checkout.limit",reason="The settings wrapper reads limitKey.",evidence=[dict(path="feature.txt",line=2)])],questions=[])
+            if os.path.exists(directory+"/invalid-candidate"): result["candidates"][0]["evidence"][0]["line"]=9999
+            print(json.dumps(dict(type="result",result=dict(analysis=result))),flush=True)
+            sys.exit(0)
         findings=[]
         if os.path.exists(directory+"/pilot-findings.json"):
             with open(directory+"/pilot-findings.json") as source: findings=json.load(source)

@@ -1,0 +1,112 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": [
+        "model-candidates.v1"
+      ]
+    },
+    "inputHash": {
+      "type": "string"
+    },
+    "snapshotHash": {
+      "type": "string"
+    },
+    "serviceId": {
+      "type": "string"
+    },
+    "baseSha": {
+      "type": "string"
+    },
+    "headSha": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "config",
+              "experiment"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "path",
+                "line"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "key",
+          "reason",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "config",
+              "experiment"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "inputHash",
+    "snapshotHash",
+    "serviceId",
+    "baseSha",
+    "headSha",
+    "candidates",
+    "questions"
+  ],
+  "additionalProperties": false
+}

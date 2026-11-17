@@ -111,6 +111,7 @@ class LocalPilotTest(unittest.TestCase):
         self.assertNotIn('secret', output)
 
     def test_optional_delivery_settings_reach_only_api(self):
+        self.config['planningAnalyzer'] = 'model'
         self.write_json('catalog.json', {'services': [], 'grants': []})
         self.config['serviceCatalogFile'] = str(self.state / 'catalog.json')
         self.write_json('planning.json', {'connectors': []})
@@ -129,6 +130,8 @@ class LocalPilotTest(unittest.TestCase):
         self.assertNotIn('AGENT_PLATFORM_PLANNING_CONNECTORS_FILE', frontend['env'])
         self.assertEqual(api['env']['AGENT_PLATFORM_ARCHIVE_DATABASE_FILE'], self.config['archiveDatabaseFile'])
         self.assertNotIn('AGENT_PLATFORM_ARCHIVE_DATABASE_FILE', frontend['env'])
+        self.assertEqual(api['env']['AGENT_PLATFORM_PLANNING_ANALYZER'], 'model')
+        self.assertNotIn('AGENT_PLATFORM_PLANNING_ANALYZER', frontend['env'])
         self.assertEqual(api['env']['AGENT_PLATFORM_SIMULATION_FILE'], self.config['simulationFile'])
         self.assertNotIn('AGENT_PLATFORM_SIMULATION_FILE', frontend['env'])
         process.send_signal(signal.SIGTERM)
@@ -136,6 +139,7 @@ class LocalPilotTest(unittest.TestCase):
         self.assertEqual(process.returncode, 0, output)
 
     def test_simulation_worker_receives_no_model_or_browser_credentials(self):
+        self.config['planningAnalyzer'] = 'model'
         for key, name in [('serviceCatalogFile', 'catalog.json'), ('planningConnectorsFile', 'planning.json'),
                           ('archiveDatabaseFile', 'archive.json'), ('simulationFile', 'simulation.json')]:
             self.write_json(name, {})
@@ -151,7 +155,7 @@ class LocalPilotTest(unittest.TestCase):
         current = json.loads((self.state / 'worker.json').read_text())['env']
         self.assertEqual(current['AGENT_PLATFORM_GITLAB_TOKEN'], 'test-gitlab-secret')
         self.assertEqual(current['AGENT_PLATFORM_SIMULATION_FILE'], self.config['simulationFile'])
-        for key in ('OPENAI_API_KEY', 'VITE_SECRET', 'AGENT_PLATFORM_MODEL_CREDENTIAL_FILE', 'AGENT_PLATFORM_REVIEW_ENABLED', 'AGENT_PLATFORM_API_ADDR'):
+        for key in ('OPENAI_API_KEY', 'VITE_SECRET', 'AGENT_PLATFORM_MODEL_CREDENTIAL_FILE', 'AGENT_PLATFORM_REVIEW_ENABLED', 'AGENT_PLATFORM_API_ADDR', 'AGENT_PLATFORM_PLANNING_ANALYZER'):
             self.assertNotIn(key, current)
         self.assertNotIn('secret', result.stdout + result.stderr)
 

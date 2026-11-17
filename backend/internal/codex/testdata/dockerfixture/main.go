@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"agent-platform/backend/internal/planning"
 )
 
 func main() {
@@ -66,12 +68,19 @@ func main() {
 		}
 	}
 	var input struct {
-		BaseSHA string `json:"baseSha"`
-		HeadSHA string `json:"headSha"`
-		Patch   string `json:"patch"`
+		InputHash string                  `json:"inputHash"`
+		Input     *planning.AnalysisInput `json:"input"`
+		BaseSHA   string                  `json:"baseSha"`
+		HeadSHA   string                  `json:"headSha"`
+		Patch     string                  `json:"patch"`
 	}
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 		panic(err)
+	}
+	if input.Input != nil {
+		input.BaseSHA = input.Input.BaseSHA
+		input.HeadSHA = input.Input.HeadSHA
+		input.Patch = input.Input.Patch
 	}
 	var output string
 	for i, arg := range args {
@@ -122,6 +131,9 @@ func main() {
 		}
 	}
 	report := map[string]any{"schemaVersion": "1.0", "baseSha": input.BaseSHA, "headSha": input.HeadSHA, "findings": []any{}}
+	if input.Input != nil {
+		report = map[string]any{"schemaVersion": "model-candidates.v1", "inputHash": input.InputHash, "snapshotHash": input.Input.SnapshotHash, "serviceId": input.Input.ServiceID, "baseSha": input.BaseSHA, "headSha": input.HeadSHA, "candidates": []any{map[string]any{"kind": "config", "key": "checkout.limit", "reason": "The wrapper reads limitKey.", "evidence": []any{map[string]any{"path": "feature.txt", "line": 2}}}}, "questions": []any{}}
+	}
 	content, err := json.Marshal(report)
 	if err != nil {
 		panic(err)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"agent-platform/backend/internal/change"
 	"agent-platform/backend/internal/codex"
 )
 
@@ -60,11 +61,18 @@ func TestAPIExecutableDockerIntegration(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build external inference fixture: %v %s", err, output)
 	}
+	buildWorker := exec.Command("go", "build", "-o", filepath.Join(contextPath, "reviewworker"), "./cmd/reviewworker")
+	buildWorker.Dir = "../.."
+	buildWorker.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+images[0].Architecture)
+	if output, err := buildWorker.CombinedOutput(); err != nil {
+		t.Fatalf("build current Worker: %v %s", err, output)
+	}
 	dockerfile := `ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 USER 0
 RUN rm /opt/codex/codex
 COPY codex-fixture /opt/codex/codex
+COPY reviewworker /usr/local/bin/reviewworker
 USER 65534:65534
 `
 	if err := os.WriteFile(filepath.Join(contextPath, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
@@ -80,9 +88,13 @@ USER 65534:65534
 	t.Cleanup(func() { runDocker("image", "rm", "--no-prune", image) })
 	baseline := runDocker("ps", "-a", "--filter", "label=agent-platform.owner=review-worker", "--format", "{{.Names}}")
 	binary := buildAPI(t)
-	for _, scenario := range []string{"archive_and_replay", "shutdown_during_model_request"} {
+	for _, scenario := range []string{"archive_and_replay", "shutdown_during_model_request", "model_candidates"} {
 		t.Run(scenario, func(t *testing.T) {
-			fixture := newDeploymentFixture(t)
+			feature := "feature-only change\n"
+			if scenario == "model_candidates" {
+				feature = "const limitKey = \"checkout.limit\"\nlimit := settings.Integer(limitKey)\n// feature-only change\n"
+			}
+			fixture := newDeploymentFixture(t, feature)
 			fixture.configure(t, true)
 			for key, value := range map[string]string{"DOCKER_BINARY": docker, "DOCKER_HOST": endpoint, "REVIEW_WORKER_IMAGE": image, "REVIEW_SECCOMP_POLICY": codex.SeccompCodexBwrap} {
 				t.Setenv("AGENT_PLATFORM_"+key, value)
@@ -93,7 +105,25 @@ USER 65534:65534
 					t.Fatal(err)
 				}
 			}
+			if scenario == "model_candidates" {
+				installPlanningFixture(t, fixture, true)
+				t.Setenv("AGENT_PLATFORM_PLANNING_ANALYZER", "model")
+			}
 			process := startAPI(t, binary)
+			if scenario == "model_candidates" {
+				address := process.address
+				apiNetworkWrite(t, address, "POST", "/api/v1/changes", `{"idempotencyKey":"create","title":"Model boundary","environment":"test","services":[{"serviceId":"S1","sourceBranch":"feature"}]}`, 201)
+				apiNetworkWrite(t, address, "POST", "/api/v1/changes/change-1/snapshots", `{"idempotencyKey":"freeze","expectedVersion":1,"services":[{"serviceId":"S1","sourceBranch":"feature"}]}`, 201)
+				apiNetworkWrite(t, address, "POST", "/api/v1/changes/change-1/reviews", `{"idempotencyKey":"review","expectedVersion":2,"snapshotId":"snapshot-1"}`, 201)
+				data := apiNetworkWrite(t, address, "POST", "/api/v1/changes/change-1/plans", `{"idempotencyKey":"plan","expectedVersion":4,"snapshotId":"snapshot-1"}`, 201)
+				var result change.PlanResult
+				if json.Unmarshal(data, &result) != nil || len(result.Plan.Services) != 1 || result.Plan.Services[0].Analysis == nil || len(result.Plan.Actions) != 1 || result.Plan.Actions[0].Key != "checkout.limit" || fixture.modelCalls.Load() != 2 {
+					t.Fatalf("Docker candidates: %s", data)
+				}
+				process.stop(t)
+				return
+			}
+
 			prepareAPINetwork(t, process.address, fixture)
 			body := `{"requestId":"review","idempotencyKey":"review","tenantId":"test","expectedWorkspaceVersion":3}`
 			if scenario == "archive_and_replay" {

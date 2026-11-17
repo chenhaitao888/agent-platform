@@ -135,3 +135,10 @@ GitLab 只读凭据已于 2026-10-27 替换，新的到期日为 **2026-11-26**�
 ```bash
 python3 -B -m unittest discover -s scripts -p 'test_local_pilot.py' -v
 ```
+
+## 模型配置/AB 候选
+
+可选私有启动配置 `"planningAnalyzer":"model"` 启用模型候选；默认省略仍为规则模式。
+需已有 planningConnectorsFile、服务目录与支持 candidatesSupported 的新 Worker 镜像。
+只在明确生成新计划时调用模型，不由启动/浏览/刷新触发。部署步骤和输入边界见 [模型候选分析](model-candidates.md)。
+2026-11-17 的验证未修改常驻试点配置或读取真实模型 key；本功能尚未在现有试点启用。

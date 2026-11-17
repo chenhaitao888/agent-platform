@@ -33,6 +33,7 @@ type DockerConfig struct {
 	Gateway                                       *GatewayConfig
 	ModelRelay                                    bool
 	ModelHTTPClient                               *http.Client
+	CandidateAnalysis                             bool
 }
 
 type DockerProfile struct {
@@ -139,10 +140,13 @@ func NewDockerRunner(ctx context.Context, config DockerConfig) (*DockerRunner, e
 	if err == nil && message.ErrorCode == "runtime_sandbox_unavailable" {
 		return nil, fmt.Errorf("%w: native read-only sandbox could not start", ErrIncompatibleRuntime)
 	}
-	if err != nil || message.Profile == nil || message.Report != nil || message.ErrorCode != "" || !message.SandboxVerified || !validWorkerProfile(*message.Profile) {
+	if err != nil || message.Profile == nil || message.Report != nil || message.Analysis != nil || message.ErrorCode != "" || !message.SandboxVerified || !validWorkerProfile(*message.Profile) {
 		return nil, ErrIncompatibleRuntime
 	}
 	if config.Gateway != nil && !message.GatewaySupported {
+		return nil, ErrIncompatibleRuntime
+	}
+	if config.CandidateAnalysis && !message.CandidatesSupported {
 		return nil, ErrIncompatibleRuntime
 	}
 	if config.ModelRelay && !message.ModelRelaySupported {
@@ -203,72 +207,82 @@ func (r *DockerRunner) RunWithUsage(ctx context.Context, input review.RunInput) 
 }
 
 func (r *DockerRunner) run(ctx context.Context, input review.RunInput, usage *usageAccumulator) (review.FindingsReport, error) {
-	if err := ctx.Err(); err != nil {
-		return review.FindingsReport{}, err
-	}
-	if err := input.Validate(); err != nil {
-		return review.FindingsReport{}, err
-	}
-	worktree, err := resolveWorktree(r.config.WorkspaceRoot, input.WorktreePath)
+	message, err := r.runWorker(ctx, workerRunInput{RunInput: input}, usage)
 	if err != nil {
 		return review.FindingsReport{}, err
 	}
+	return review.ParseFindings(message.Report, input.BaseSHA, input.HeadSHA)
+}
+
+func (r *DockerRunner) runWorker(ctx context.Context, input workerRunInput, usage *usageAccumulator) (workerResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return workerResponse{}, err
+	}
+	if err := input.Validate(); err != nil {
+		return workerResponse{}, err
+	}
+	worktree, err := resolveWorktree(r.config.WorkspaceRoot, input.WorktreePath)
+	if err != nil {
+		return workerResponse{}, err
+	}
 	if strings.ContainsAny(worktree, ",\"\r\n") {
-		return review.FindingsReport{}, review.ErrInvalidRunInput
+		return workerResponse{}, review.ErrInvalidRunInput
 	}
 	var payload any = input
 	var credential gatewayCredential
 	if r.config.Gateway != nil {
 		credential, err = r.config.Gateway.credential(r.config.Timeout, r.config.WorkspaceRoot)
 		if err != nil {
-			return review.FindingsReport{}, err
+			return workerResponse{}, err
 		}
 		workerCredential := credential
 		if r.config.ModelRelay {
 			var nonce [32]byte
 			if _, err := rand.Read(nonce[:]); err != nil {
-				return review.FindingsReport{}, review.ErrExecutionFailed
+				return workerResponse{}, review.ErrExecutionFailed
 			}
 			workerCredential = gatewayCredential{ServicePrincipal: credential.ServicePrincipal, Token: fmt.Sprintf("%x", nonce)}
 		}
 		encoded, err := json.Marshal(workerCredential)
 		if err != nil {
-			return review.FindingsReport{}, ErrGatewayCredentialUnavailable
+			return workerResponse{}, ErrGatewayCredentialUnavailable
 		}
 		payload = workerGatewayRequest{Input: input, Credential: encoded}
 	}
 	request, err := json.Marshal(payload)
 	if err != nil {
-		return review.FindingsReport{}, review.ErrInvalidRunInput
+		return workerResponse{}, review.ErrInvalidRunInput
 	}
 	execution, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
 	data, err := r.containerWithCredential(execution, worktree, request, false, credential, usage)
 	if err != nil {
-		return review.FindingsReport{}, err
+		return workerResponse{}, err
 	}
 	message, err := decodeWorkerResponse(data)
-	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported || (message.Report == nil) == (message.ErrorCode == "") {
-		return review.FindingsReport{}, review.NewOutputError("worker_protocol_invalid")
+	if err != nil || message.Profile != nil || message.SandboxVerified || message.GatewaySupported || message.ModelRelaySupported || message.CandidatesSupported || ((message.Report == nil && message.Analysis == nil) == (message.ErrorCode == "")) || (message.Report != nil && message.Analysis != nil) {
+		return workerResponse{}, review.NewOutputError("worker_protocol_invalid")
 	}
 	if message.ErrorCode != "" {
 		if message.DiagnosticCode != "" {
-			return review.FindingsReport{}, review.NewOutputError(message.DiagnosticCode)
+			return workerResponse{}, review.NewOutputError(message.DiagnosticCode)
 		}
-		return review.FindingsReport{}, workerError(message.ErrorCode)
+		return workerResponse{}, workerError(message.ErrorCode)
 	}
-	// Reapply the platform contract after crossing the Docker process boundary.
-	report, err := review.ParseFindings(message.Report, input.BaseSHA, input.HeadSHA)
-	if err != nil {
-		return review.FindingsReport{}, err
+	content := message.Report
+	if input.Candidates != nil {
+		content = message.Analysis
 	}
-	if findingsContainCredential(report, credential.Token) {
-		return review.FindingsReport{}, review.NewOutputError("credential_in_output")
+	if content == nil {
+		return workerResponse{}, review.NewOutputError("worker_protocol_invalid")
+	}
+	if outputContainsCredential(content, credential.Token) {
+		return workerResponse{}, review.NewOutputError("credential_in_output")
 	}
 	if err := execution.Err(); err != nil {
-		return review.FindingsReport{}, err
+		return workerResponse{}, err
 	}
-	return report, nil
+	return message, nil
 }
 
 func (r *DockerRunner) container(ctx context.Context, worktree string, input []byte, probe bool) (output []byte, resultErr error) {

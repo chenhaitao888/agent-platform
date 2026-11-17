@@ -12,8 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"agent-platform/backend/internal/review"
 )
 
 var ErrGatewayCredentialUnavailable = errors.New("model service credential unavailable")
@@ -138,16 +136,16 @@ func (config *GatewayConfig) credential(timeout time.Duration, root string) (gat
 	return parseGatewayCredential(content, config.ServicePrincipal, timeout)
 }
 
-func findingsContainCredential(report review.FindingsReport, token string) bool {
+func outputContainsCredential(content []byte, token string) bool {
 	if token == "" {
 		return false
 	}
-	for _, finding := range report.Findings {
-		for _, field := range []string{finding.Title, finding.Description, finding.Path} {
-			if strings.Contains(field, token) {
-				return true
-			}
-		}
+	// Decode strings before checking to also reject JSON escape obfuscation.
+	var value any
+	if json.Unmarshal(content, &value) != nil {
+		return false
 	}
-	return false
+	decoded, _ := json.Marshal(value)
+	encoded, _ := json.Marshal(token)
+	return bytes.Contains(decoded, encoded[1:len(encoded)-1])
 }

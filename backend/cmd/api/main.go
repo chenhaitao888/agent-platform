@@ -32,6 +32,7 @@ func main() {
 	server := newServer(application.Handler)
 	defer application.Close()
 	server.Addr = application.ListenAddress
+	server.WriteTimeout = max(server.WriteTimeout, application.ShutdownGrace)
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		log.Fatalf("listen for API requests: %v", err)

@@ -1,6 +1,6 @@
 # D3：只读配置与实验计划契约
 
-2026-11-16。本文描述已实现的参考契约，不代表已接入某家公司的配置/AB 系统。
+2026-11-17。本文描述已实现的参考契约，不代表已接入某家公司的配置/AB 系统。
 核心接口是 `planning.ConfigReader`、`ExperimentReader` 和版本化 `Analyzer`；
 `connector/reference` 只提供 GET 读取，没有 Apply、批准、发布或实验激活方法。
 
@@ -118,14 +118,16 @@ spec 含 variants（名称和整数 weight，总和 100，2～10 组）、audien
 不自动创建 Task、准备工作区或启动 Review。尚无可用工作区时记录 NOT_ANALYZED 和 workspace_required；
 已有工作区但审阅未成功时可提供候选，计划仍以 review_incomplete 阻断。
 
-首版 `literal-calls.v1` 在新增 diff 行识别字面调用：
+默认规则模式 `literal-calls.v1` 在新增 diff 行识别字面调用：
 
 - `config.Get/GetString/GetBool/GetInt/get("key", ...)`
 - `experiments.Variant/variant("key", ...)`
 
 输出独立契约 `change-candidates.v1`，绑定 serviceId/snapshotHash/headSha，证据为路径和行号。
 它不复制代码片段或默认值，不推断期望业务值，不修改原 Findings schema，也不调用模型。
-这是有限的文本候选识别；别名、动态 key、企业私有 API、完整上下文与可选结构化清单尚未分析。
+这是有限的文本候选识别。现已增加可显式启用的模型候选通路，结合只读代码上下文与平台元数据，
+输出理由、固定新增行证据及待核对问题，随后与规则候选合并。启用和限制见 [模型候选分析](model-candidates.md)。
+模型通路目前用受控推理 fixture 验证，企业私有 API/复杂动态 key 的真实模型识别质量及结构化清单接入仍待验证。
 “识别到字符串”仍是候选，不是写入指令。未识别到候选不能自动证明没有配置/实验变化。
 
 每服务/领域分别展示 NOT_ANALYZED、ANALYSIS_FAILED、NO_CANDIDATES、NOT_INVOLVED、CANDIDATES_FOUND。
@@ -160,7 +162,7 @@ requirements 可省略以先分析。配置 desired 缺失时保留待补项；�
 READY_FOR_REVIEW 仅表示当前参考规则没有发现待补/阻断项，仍需人工核对 Findings、业务要求与平台语义；
 不是批准、写入许可、上线结论或需求交付完成。
 
-生成开始和结束各增加一次需求 version，与快照解析/Review 互斥。整次请求限时 30 秒。
+生成开始和结束各增加一次需求 version，与快照解析/Review 互斥。规则模式整次请求限时 30 秒，显式模型模式 10 分钟；单服务模型调用沿用 REVIEW_TIMEOUT。
 同键同输入等待/返回原记录；相同键不同输入冲突；新键需当前 version，重新读取平台现状并生成新计划版本。
 失败/取消的已记录计划仍可重放，不隐式重试。浏览器响应丢失时沿用原 body；刷新丢失键后先读取历史。
 共享资源在一次计划内只观察一次，避免各服务分别读取到不一致的基线。

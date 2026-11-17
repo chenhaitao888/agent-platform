@@ -132,7 +132,7 @@ func (s *Service) Plan(ctx context.Context, actor servicecatalog.Actor, id strin
 	op := &planOperation{key: input.IdempotencyKey, hash: digest, done: make(chan struct{}), result: PlanResult{ChangeID: id, ChangeVersion: r.value.Version, Plan: planning.Plan{ID: planID, Revision: revision, SchemaVersion: "change-plan.v1", TenantID: actor.TenantID, Environment: current.Environment, CreatedBy: actor.Subject, CreatedAt: time.Now().UTC(), SnapshotID: snapshot.ID, SnapshotHash: snapshot.InputHash, State: "RUNNING", Services: []planning.Source{}, Actions: []planning.Action{}, Issues: []planning.Issue{}, Observations: []planning.Observation{}}}}
 	r.plans = append(r.plans, op)
 	s.mu.Unlock()
-	build := planning.Input{TenantID: actor.TenantID, Environment: current.Environment, SnapshotID: snapshot.ID, SnapshotHash: snapshot.InputHash, CreatedBy: actor.Subject, Services: []planning.ServiceInput{}}
+	build := planning.Input{Goal: current.Title + "\n" + current.Description, TenantID: actor.TenantID, Environment: current.Environment, SnapshotID: snapshot.ID, SnapshotHash: snapshot.InputHash, CreatedBy: actor.Subject, Services: []planning.ServiceInput{}}
 	for i, item := range snapshot.Services {
 		source := planning.Source{ServiceID: item.ServiceID, CatalogVersion: item.CatalogVersion, HeadSHA: item.Repository.HeadSHA, BaseSHA: item.Repository.BaseSHA, Review: planning.ReviewEvidence{State: "NOT_STARTED"}}
 		for _, prior := range evidence.Services {
@@ -154,7 +154,7 @@ func (s *Service) Plan(ctx context.Context, actor servicecatalog.Actor, id strin
 				break
 			}
 		}
-		service.Patch, service.AnalysisError = s.planPatch(ctx, current.ID, snapshot.ID, current.TenantID, item, source.Review.TaskID)
+		service.Patch, service.WorktreePath, service.AnalysisError = s.planPatch(ctx, current.ID, snapshot.ID, current.TenantID, item, source.Review.TaskID)
 		build.Services = append(build.Services, service)
 	}
 	plan := s.planner.Build(ctx, build)
@@ -168,23 +168,30 @@ func (s *Service) Plan(ctx context.Context, actor servicecatalog.Actor, id strin
 	close(op.done)
 	return planning.Clone(op.result), false, nil
 }
-func (s *Service) planPatch(ctx context.Context, changeID, snapshotID, tenantID string, item ServiceSnapshot, taskID string) (string, string) {
+func (s *Service) planPatch(ctx context.Context, changeID, snapshotID, tenantID string, item ServiceSnapshot, taskID string) (string, string, string) {
 	if ctx.Err() != nil {
-		return "", "analysis_canceled"
+		return "", "", "analysis_canceled"
 	}
 	child, ok := s.tasks.Get(taskID, tenantID)
 	if !ok || child.Change.ChangeID != changeID || child.Change.SnapshotID != snapshotID || child.Change.ServiceID != item.ServiceID || child.Repository != *item.Repository {
-		return "", "workspace_required"
+		return "", "", "workspace_required"
 	}
 	ws, ok := s.workspaces.Get(taskID, tenantID)
 	if !ok || ws.State != workspace.StateReady {
-		return "", "workspace_required"
+		return "", "", "workspace_required"
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	diff, err := s.reviews.Get(readCtx, review.GetInput{TaskID: taskID, TenantID: tenantID})
 	if err != nil || diff.TaskID != taskID || diff.WorkspaceID != ws.ID || diff.HeadSHA != item.Repository.HeadSHA || diff.BaseSHA != item.Repository.BaseSHA {
-		return "", "diff_unavailable"
+		return "", "", "diff_unavailable"
 	}
-	return diff.Patch, ""
+	return diff.Patch, ws.Path, ""
+}
+
+func (s *Service) PlanningTimeout() time.Duration {
+	if s.planner == nil {
+		return 30 * time.Second
+	}
+	return s.planner.Timeout()
 }
