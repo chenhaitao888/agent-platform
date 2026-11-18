@@ -1,0 +1,5 @@
+{
+  "connectors": [
+    { "id": "company-config", "version": "1", "kind": "config", "mcpFile": "/absolute/private/company-pilot/mcp.json" }
+  ]
+}

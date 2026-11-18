@@ -20,11 +20,12 @@ type WritePolicy interface {
 }
 
 type WriteBinding struct {
-	ActionID   string              `json:"actionId"`
-	ActionHash string              `json:"actionHash"`
-	Kind       string              `json:"kind"`
-	Target     planning.Target     `json:"target"`
-	Writer     planning.Descriptor `json:"writer"`
+	CompanyFlow bool                `json:"companyFlow,omitempty"`
+	ActionID    string              `json:"actionId"`
+	ActionHash  string              `json:"actionHash"`
+	Kind        string              `json:"kind"`
+	Target      planning.Target     `json:"target"`
+	Writer      planning.Descriptor `json:"writer"`
 }
 type WriteApproval struct {
 	Approval
@@ -37,6 +38,7 @@ type WriteStartInput struct {
 	ApprovalID                  string `json:"approvalId"`
 }
 type WriteExecution struct {
+	CompanyFlow  bool             `json:"companyFlow,omitempty"`
 	ID           string           `json:"id"`
 	TenantID     string           `json:"tenantId"`
 	BundleID     string           `json:"bundleId"`
@@ -53,6 +55,7 @@ type WriteExecution struct {
 	EvidenceHash string           `json:"evidenceHash,omitempty"`
 }
 type WriteOperation struct {
+	Company      *CompanyOperation           `json:"company,omitempty"`
 	ID           string                      `json:"id"`
 	ActionID     string                      `json:"actionId"`
 	ActionHash   string                      `json:"actionHash"`
@@ -77,6 +80,9 @@ func (r WriteExecution) Public() WriteExecution {
 		}
 		o.Intent = nil
 		o.LookupAfter = nil
+		if o.Company != nil {
+			o.Company.LookupAfter = nil
+		}
 	}
 	return r
 }

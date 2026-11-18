@@ -1,0 +1,21 @@
+{
+  "services": [
+    {
+      "tenantId": "company-pilot", "serviceId": "S1", "name": "首个测试服务", "catalogVersion": "1",
+      "repository": {
+        "connectorRef": "gitlab", "repositoryId": "101",
+        "defaultTargetBranch": "main", "allowedTargetBranches": ["main"]
+      },
+      "environments": ["test"],
+      "planning": [
+        { "environment": "test", "config": { "connectorRef": "company-config", "resourceRef": "app/test-namespace" } }
+      ]
+    }
+  ],
+  "grants": [
+    {
+      "subject": "company-developer", "tenantId": "company-pilot", "serviceId": "S1", "environment": "test",
+      "operations": ["read", "create", "snapshot", "review", "plan", "archive", "approve_write", "execute_write", "revoke_write"]
+    }
+  ]
+}

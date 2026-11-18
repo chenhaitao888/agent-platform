@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"agent-platform/backend/internal/connector/mcpbridge"
 	"agent-platform/backend/internal/connector/reference"
 	"agent-platform/backend/internal/planning"
 	"agent-platform/backend/internal/servicecatalog"
@@ -15,6 +16,7 @@ import (
 )
 
 type planningConnection struct {
+	MCPFile        string `json:"mcpFile,omitempty"`
 	ID             string `json:"id"`
 	Version        string `json:"version"`
 	Kind           string `json:"kind"`
@@ -48,6 +50,22 @@ func loadPlanning(filename, root string, catalog *servicecatalog.Catalog) (*plan
 			return nil, planning.ErrInvalid
 		}
 		seen[item.ID] = true
+		if item.MCPFile != "" {
+			if item.Kind != "config" || item.BaseURL != "" || item.CAFile != "" || item.CredentialFile != "" {
+				return nil, planning.ErrInvalid
+			}
+			adapter, _, err := loadMCP(item.MCPFile, root, item.ID, item.Version, false)
+			if err != nil {
+				return nil, err
+			}
+			for _, target := range adapter.Targets {
+				if !catalog.HasPlanningTarget("config", target) {
+					return nil, planning.ErrInvalid
+				}
+			}
+			configs[item.ID] = mcpbridge.Reader{Adapter: adapter}
+			continue
+		}
 		client, err := deploymentHTTPClient(item.CAFile, 5*time.Second)
 		if err != nil {
 			return nil, planning.ErrInvalid

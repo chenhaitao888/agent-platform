@@ -11,6 +11,22 @@ const run = { id: 'write-1', tenantId: bundle.tenantId, bundleId: bundle.id, mod
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status })
 const read = (path: string, approvals: unknown[] = [], runs: unknown[] = [], access = permission) => reply(path.endsWith('write-access') ? access : { items: path.endsWith('compensations') ? [] : path.endsWith('write-approvals') ? approvals : runs })
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+it('shows configurable company execution and keeps saved evidence distinct from publication', async () => {
+  let published = false
+  const companyBundle = { ...bundle, plan: { ...bundle.plan, actions: bundle.plan.actions.map(a => ({ ...a, descriptor: { kind: 'config', implementationVersion: 'mcp-company.v1', contractVersion: 'config-read.v1', connectionVersion: 'v1' } })) } }
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => read(path, [], [{ ...run, companyFlow: true, state: published ? 'SUCCEEDED' : 'WAITING_COMPANY', operations: [{ ...run.operations[0], state: 'VERIFIED', receipt: { id: 'saved-1', effect: 'publish_required', status: 'APPLIED', recordedAt: 'saved' }, company: { state: published ? 'PUBLISHED' : 'WAITING_PUBLICATION', ticket: { id: 'order-1', changeId: 'change-1', changeVersion: 'v2' }, ...(published ? { observation: { state: 'PUBLISHED', effectiveVersion: 'release-v2', observedAt: 'checked' } } : {}) } }] }])))
+  render(<WritePanel bundle={companyBundle} />)
+  await screen.findByText('公司审批通过，等待自动发布')
+  expect(screen.getByRole('button', { name: '批准保存与提单' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '保存配置并提交公司工单' })).toBeDisabled()
+  expect(screen.getByText('配置已保存，保存结果已核验')).toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: '公司交付完成 · 测试环境已核验' })).not.toBeInTheDocument()
+  published = true; fireEvent.click(screen.getByRole('button', { name: '刷新写入记录' }))
+  await screen.findByRole('heading', { name: '公司交付完成 · 测试环境已核验' })
+  expect(screen.getByText('测试环境生效版本：release-v2')).toBeInTheDocument()
+})
+
 async function fillApproval() {
   await waitFor(() => expect(screen.getByRole('button', { name: '批准写入' })).toBeEnabled())
   fireEvent.change(screen.getByLabelText('写入批准理由'), { target: { value: '已复核业务值与 Findings' } })

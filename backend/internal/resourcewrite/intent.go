@@ -46,6 +46,7 @@ type Intent struct {
 // Receipt is immutable provider evidence. It contains digests, never raw values.
 // Both APPLIED and REJECTED receipts must be stored atomically with the decision.
 type Receipt struct {
+	Company               *CompanyChange  `json:"company,omitempty"`
 	SchemaVersion         string          `json:"schemaVersion"`
 	ID                    string          `json:"id"`
 	OperationID           string          `json:"operationId"`
@@ -139,13 +140,16 @@ func (r Receipt) ValidFor(i Intent) bool {
 		return false
 	}
 	if r.Status == "REJECTED" {
-		return slices.Contains([]string{"precondition_failed", "intent_expired", "unsupported", "value_rejected"}, r.Code) && r.BeforeResourceVersion == "" && r.ResourceVersion == "" && r.ItemVersion == "" && r.ValueHash == "" && r.Effect == ""
+		return r.Company == nil && slices.Contains([]string{"precondition_failed", "intent_expired", "unsupported", "value_rejected"}, r.Code) && r.BeforeResourceVersion == "" && r.ResourceVersion == "" && r.ItemVersion == "" && r.ValueHash == "" && r.Effect == ""
 	}
 	if r.Status != "APPLIED" || r.Code != "" || r.RecordedAt.After(i.ExpiresAt) || r.BeforeResourceVersion != i.ResourceVersion || !planning.ValidIdentifier(r.ResourceVersion) || !planning.ValidIdentifier(r.ItemVersion) || r.ValueHash != i.ValueDigest() || r.Effect != i.Effect {
 		return false
 	}
 	if i.Operation == "config.no_change" {
 		return r.ResourceVersion == i.ResourceVersion && r.ItemVersion == i.ExpectedVersion
+	}
+	if i.Writer.ImplementationVersion == CompanyImplementation && (r.Company == nil || !planning.ValidIdentifier(r.Company.ID) || !planning.ValidIdentifier(r.Company.Version)) {
+		return false
 	}
 	return r.ResourceVersion != i.ResourceVersion && (i.MustNotExist || r.ItemVersion != i.ExpectedVersion)
 }

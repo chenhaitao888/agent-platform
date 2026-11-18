@@ -152,7 +152,12 @@ func (s *Store) startWrite(ctx context.Context, in WriteStartInput, stamp string
 	r := WriteExecution{ID: "write-" + rand.Text(), TenantID: in.TenantID, BundleID: in.BundleID, ApprovalID: a.ID, Subject: in.Subject, PolicyHash: stamp, Mode: "WRITE", State: "QUEUED", CreatedAt: now, Operations: []WriteOperation{}}
 	r.WorkflowID = "delivery-" + r.ID
 	for _, binding := range a.Bindings {
-		r.Operations = append(r.Operations, WriteOperation{ID: "write-operation-" + rand.Text(), ActionID: binding.ActionID, ActionHash: binding.ActionHash, State: "NOT_STARTED"})
+		op := WriteOperation{ID: "write-operation-" + rand.Text(), ActionID: binding.ActionID, ActionHash: binding.ActionHash, State: "NOT_STARTED"}
+		if binding.CompanyFlow {
+			r.CompanyFlow = true
+			op.Company = &CompanyOperation{State: "NOT_SUBMITTED", RequestID: "ticket-" + rand.Text()}
+		}
+		r.Operations = append(r.Operations, op)
 	}
 	a.State = "CONSUMED"
 	a.ConsumedBy = r.ID

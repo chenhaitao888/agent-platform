@@ -31,7 +31,7 @@ API 部署显式设置 `AGENT_PLATFORM_PLANNING_ANALYZER=model`；省略或设�
    未填值、未知依赖、读取失败或覆盖缺口仍阻断计划。
 
 模型不接收平台写工具或凭据；其输出不能指定目标连接、环境、批准或执行动作。
-真实公司 Skill/MCP 的接入仍由后续 Connector 工作完成，不能把此模型通路视为已经接入公司平台。
+公司 Skill/MCP 现由独立的 [MCP 接入与确认绑定](company-mcp-pilot.md) 完成；这个代码候选模型本身不获得 MCP 写工具。
 原始代码和需求文本沿用 Review 的输入边界；本步没有实现通用秘密扫描或数据脱敏，仓库中的硬编码秘密不会自动被移除。
 
 ## 输出与证据
@@ -74,4 +74,4 @@ Schema 文件：[model-candidates-v1.json](../backend/internal/planning/model-ca
 
 D5.1 已补齐 [参考 Writer 契约](reference-writes.md)：配置 CAS、未激活 AB 草稿、未知结果回查及逐项核验。
 D5.2/D5.3 已完成 [写入控制层](write-execution.md) 和 [部署/API/前端](write-deployment.md)，默认关闭；D5.4 已补充 [独立配置补偿](compensation.md)。
-在公司平台文档和测试空间到位后，再实现对应 MCP/API adapter；SIMULATION 批准始终不能用于真实写入。
+D6 已有通用 MCP adapter，待公司电脑配置并验收；SIMULATION 批准始终不能用于真实写入。

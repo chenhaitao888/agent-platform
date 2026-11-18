@@ -1,0 +1,13 @@
+{
+  "connection": {
+    "transport": "streamable-http",
+    "url": "https://config.company.example/mcp",
+    "readCredentialFile": "/absolute/private/company-pilot/mcp-read.json",
+    "writeCredentialFile": "/absolute/private/company-pilot/mcp-write.json"
+  },
+  "bindingFile": "/absolute/private/company-pilot/binding-v1.json",
+  "skillFile": "/absolute/private/company-pilot/company-process.md",
+  "targets": [
+    { "tenantId": "company-pilot", "environment": "test", "connectorRef": "company-config", "resourceRef": "app/test-namespace" }
+  ]
+}

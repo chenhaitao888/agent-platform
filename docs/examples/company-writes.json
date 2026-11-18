@@ -1,0 +1,15 @@
+{
+  "temporalAddress": "127.0.0.1:17239",
+  "namespace": "agent-platform-d4",
+  "taskQueue": "company-delivery",
+  "allowSelfApproval": true,
+  "connectors": [
+    {
+      "id": "company-config", "version": "1", "kind": "config",
+      "mcpFile": "/absolute/private/company-pilot/mcp.json",
+      "targets": [
+        { "tenantId": "company-pilot", "environment": "test", "connectorRef": "company-config", "resourceRef": "app/test-namespace" }
+      ]
+    }
+  ]
+}

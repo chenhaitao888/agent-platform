@@ -78,8 +78,18 @@ func DispatchWritesOnce(ctx context.Context, store *delivery.Store, c client.Cli
 		return err
 	}
 	for _, job := range jobs {
+		name := WriteWorkflowName
+		var input any = delivery.Ref{TenantID: job.TenantID, RunID: job.RunID}
+		run, err := store.GetWriteExecution(ctx, delivery.Ref{TenantID: job.TenantID, RunID: job.RunID})
+		if err != nil {
+			return err
+		}
+		if run.CompanyFlow {
+			name = CompanyWorkflowName
+			input = CompanyInput{Ref: delivery.Ref{TenantID: job.TenantID, RunID: job.RunID}}
+		}
 		call, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, err := c.ExecuteWorkflow(call, client.StartWorkflowOptions{ID: job.WorkflowID, TaskQueue: queue, WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowExecutionErrorWhenAlreadyStarted: true}, WriteWorkflowName, delivery.Ref{TenantID: job.TenantID, RunID: job.RunID})
+		_, err = c.ExecuteWorkflow(call, client.StartWorkflowOptions{ID: job.WorkflowID, TaskQueue: queue, WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enumspb.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowExecutionErrorWhenAlreadyStarted: true}, name, input)
 		cancel()
 		var started *serviceerror.WorkflowExecutionAlreadyStarted
 		if err == nil || errors.As(err, &started) {
@@ -111,11 +121,14 @@ func RunWrites(ctx context.Context, service *delivery.WriteService, address, nam
 	}
 	w := worker.New(c, queue, worker.Options{MaxConcurrentActivityExecutionSize: 4, WorkerStopTimeout: 5 * time.Second})
 	w.RegisterWorkflowWithOptions(WriteWorkflow, workflow.RegisterOptions{Name: WriteWorkflowName})
+	w.RegisterWorkflowWithOptions(CompanyWorkflow, workflow.RegisterOptions{Name: CompanyWorkflowName})
 	a := writeActivities{service: service}
 	w.RegisterActivityWithOptions(a.Begin, activity.RegisterOptions{Name: "write.begin"})
 	w.RegisterActivityWithOptions(a.Step, activity.RegisterOptions{Name: "write.step"})
 	w.RegisterActivityWithOptions(a.Block, activity.RegisterOptions{Name: "write.block"})
 	w.RegisterActivityWithOptions(a.Finish, activity.RegisterOptions{Name: "write.finish"})
+	w.RegisterActivityWithOptions(a.CompanySubmit, activity.RegisterOptions{Name: "company.submit"})
+	w.RegisterActivityWithOptions(a.CompanyObserve, activity.RegisterOptions{Name: "company.observe"})
 	if err := w.Start(); err != nil {
 		return errors.New("temporal worker start failed")
 	}

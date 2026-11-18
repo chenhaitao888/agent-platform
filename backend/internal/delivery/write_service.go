@@ -41,7 +41,11 @@ func (s *WriteService) bindings(ctx context.Context, b Bundle) ([]WriteBinding, 
 		}
 		seen[resource+":"+a.Key] = true
 		baselines[resource] = baseline
-		result = append(result, WriteBinding{ActionID: a.ID, ActionHash: a.Hash, Kind: a.Kind, Target: a.Target, Writer: writer.Describe()})
+		_, company := writer.(resourcewrite.CompanyWriter)
+		if company != (writer.Describe().ImplementationVersion == resourcewrite.CompanyImplementation) {
+			return nil, ErrPolicy
+		}
+		result = append(result, WriteBinding{ActionID: a.ID, ActionHash: a.Hash, Kind: a.Kind, Target: a.Target, Writer: writer.Describe(), CompanyFlow: company})
 	}
 	return result, nil
 }
@@ -431,7 +435,11 @@ func (s *WriteService) Finish(ctx context.Context, ref Ref) (string, error) {
 			return ErrBusy
 		}
 		state = r.State
-		if state != "UNKNOWN" && r.CompletedAt == nil {
+		if r.CompanyFlow {
+			r.State = companyState(*r, r.State)
+			state = r.State
+		}
+		if state != "UNKNOWN" && state != "WAITING_COMPANY" && r.CompletedAt == nil {
 			r.CompletedAt = &now
 		}
 		return nil
@@ -454,6 +462,15 @@ func (s *WriteService) Reconcile(ctx context.Context, ref Ref) (string, error) {
 		step.OperationID = o.ID
 		if _, err := s.reconcile(ctx, step, o); err != nil {
 			return "", err
+		}
+	}
+	if r.CompanyFlow {
+		for _, o := range r.Operations {
+			step := ref
+			step.OperationID = o.ID
+			if _, err := s.CompanyObserve(ctx, step); err != nil {
+				return "", err
+			}
 		}
 	}
 	return s.Finish(ctx, ref)

@@ -17,6 +17,7 @@ export type PlanSource = {
   candidates: { kind: string; key: string; reason?: string; origin?: string; evidence: Evidence[] }[]
 }
 export type PlanAction = {
+	 descriptor?: { implementationVersion: string; connectionVersion: string; contractVersion: string; kind: string }
   id: string; hash: string; kind: string; key: string; operation: string; effect: string
   target: { tenantId: string; environment: string; connectorRef: string; resourceRef: string }
   resourceVersion: string; expectedVersion?: string; mustNotExist: boolean

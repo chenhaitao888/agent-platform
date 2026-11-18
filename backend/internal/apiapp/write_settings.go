@@ -16,6 +16,7 @@ import (
 )
 
 type WriteConnectionSettings struct {
+	MCPFile        string            `json:"mcpFile,omitempty"`
 	ID             string            `json:"id"`
 	Version        string            `json:"version"`
 	Kind           string            `json:"kind"`
@@ -76,17 +77,42 @@ func readWriteSettings(config deployment, catalog *servicecatalog.Catalog) (writ
 		}
 		matched := false
 		for _, reader := range paired.Connectors {
-			if reader.ID == item.ID && reader.Kind == item.Kind && reader.Version == item.Version && reader.BaseURL == item.BaseURL && reader.CAFile == item.CAFile {
+			if reader.ID == item.ID && reader.Kind == item.Kind && reader.Version == item.Version && reader.BaseURL == item.BaseURL && reader.CAFile == item.CAFile && reader.MCPFile == item.MCPFile {
 				matched = true
 			}
 		}
-		if !matched || item.CredentialFile == "" {
+		if !matched || item.CredentialFile == "" && item.MCPFile == "" {
 			return result, delivery.ErrConfiguration
 		}
 		for _, target := range item.Targets {
 			if !catalog.HasPlanningTarget(item.Kind, target) {
 				return result, delivery.ErrConfiguration
 			}
+		}
+		if item.MCPFile != "" {
+			if item.Kind != "config" || item.BaseURL != "" || item.CAFile != "" || item.CredentialFile != "" || len(item.Targets) == 0 || len(item.Targets) > 64 {
+				return result, delivery.ErrConfiguration
+			}
+			adapter, stamp, err := loadMCP(item.MCPFile, config.root, item.ID, item.Version, true)
+			if err != nil {
+				return result, delivery.ErrConfiguration
+			}
+			for _, target := range item.Targets {
+				found := false
+				for _, allowed := range adapter.Targets {
+					if target == allowed {
+						found = true
+					}
+				}
+				if !found {
+					return result, delivery.ErrConfiguration
+				}
+			}
+			adapter.Targets = item.Targets
+			result.writers[item.ID] = adapter
+			result.targets[item.ID] = item.Targets
+			hashes = append(hashes, stamp)
+			continue
 		}
 		credentials, err := readPlanningFile(item.CredentialFile, config.root, 8192)
 		var credential struct {
